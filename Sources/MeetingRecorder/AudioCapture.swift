@@ -1,5 +1,5 @@
 import AVFoundation
-import ScreenCaptureKit
+import CoreAudio
 
 final class MicrophoneCapture {
     private let engine = AVAudioEngine()
@@ -19,57 +19,92 @@ final class MicrophoneCapture {
     }
 }
 
-final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
+struct CoreAudioError: LocalizedError {
+    let operation: String
+    let status: OSStatus
+
+    var errorDescription: String? { "System audio: \(operation) failed (\(status))." }
+}
+
+/// Records everything the Mac plays (the other participants) through a Core Audio process tap.
+/// Needs macOS 14.2 and the "System Audio Recording Only" permission, not Screen Recording.
+/// The app plays no audio, so nothing is excluded; excluding our own process stops the IOProc from running.
+final class SystemAudioCapture {
     private let normalizer = PCMNormalizer()
     private let queue = DispatchQueue(label: "system-audio")
-    private var stream: SCStream?
-    private var mixer: AudioMixer?
+    private var tap = AudioObjectID(kAudioObjectUnknown)
+    private var device = AudioObjectID(kAudioObjectUnknown)
+    private var proc: AudioDeviceIOProcID?
 
-    func start(into mixer: AudioMixer) async throws {
-        self.mixer = mixer
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let display = content.displays.first else { throw PermissionError.screenRecording }
-
-        let config = SCStreamConfiguration()
-        config.capturesAudio = true
-        config.excludesCurrentProcessAudio = true
-        config.sampleRate = Int(PCMNormalizer.format.sampleRate)
-        config.channelCount = 1
-        config.width = 2
-        config.height = 2
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-
-        let stream = SCStream(filter: SCContentFilter(display: display, excludingWindows: []), configuration: config, delegate: self)
-        try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue)
-        try await stream.startCapture()
-        self.stream = stream
+    func start(into mixer: AudioMixer) throws {
+        guard #available(macOS 14.2, *) else {
+            throw CoreAudioError(operation: "process tap (needs macOS 14.2)", status: kAudioHardwareUnsupportedOperationError)
+        }
+        do {
+            try startTap(into: mixer)
+        } catch {
+            stop()
+            throw error
+        }
     }
 
-    func stop() async {
-        try? await stream?.stopCapture()
-        stream = nil
+    @available(macOS 14.2, *)
+    private func startTap(into mixer: AudioMixer) throws {
+        let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
+        description.uuid = UUID()
+        description.isPrivate = true
+        description.muteBehavior = .unmuted
+        try check("create tap", AudioHardwareCreateProcessTap(description, &tap))
+
+        var streamDescription = AudioStreamBasicDescription()
+        guard AudioObjects.read(kAudioTapPropertyFormat, of: tap, into: &streamDescription),
+              let format = AVAudioFormat(streamDescription: &streamDescription)
+        else { throw CoreAudioError(operation: "read tap format", status: kAudioHardwareUnspecifiedError) }
+
+        let aggregate: [String: Any] = [
+            kAudioAggregateDeviceNameKey: "Meeting Recorder System Audio",
+            kAudioAggregateDeviceUIDKey: UUID().uuidString,
+            kAudioAggregateDeviceIsPrivateKey: true,
+            kAudioAggregateDeviceTapAutoStartKey: true,
+            kAudioAggregateDeviceTapListKey: [[kAudioSubTapUIDKey: description.uuid.uuidString,
+                                               kAudioSubTapDriftCompensationKey: true]],
+        ]
+        try check("create aggregate device", AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &device))
+        try check("create IOProc", AudioDeviceCreateIOProcIDWithBlock(&proc, device, queue) { [normalizer] _, input, _, _, _ in
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, bufferListNoCopy: input, deallocator: nil) else { return }
+            mixer.append(normalizer.samples(from: buffer), from: .system)
+        })
+        try check("start device", AudioDeviceStart(device, proc))
     }
 
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .audio, let buffer = sampleBuffer.pcmBuffer else { return }
-        mixer?.append(normalizer.samples(from: buffer), from: .system)
+    func stop() {
+        if let proc {
+            AudioDeviceStop(device, proc)
+            AudioDeviceDestroyIOProcID(device, proc)
+        }
+        if device != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(device) }
+        if tap != kAudioObjectUnknown, #available(macOS 14.2, *) { AudioHardwareDestroyProcessTap(tap) }
+        proc = nil
+        device = AudioObjectID(kAudioObjectUnknown)
+        tap = AudioObjectID(kAudioObjectUnknown)
+    }
+
+    private func check(_ operation: String, _ status: OSStatus) throws {
+        guard status == noErr else { throw CoreAudioError(operation: operation, status: status) }
     }
 }
 
-private extension CMSampleBuffer {
-    var pcmBuffer: AVAudioPCMBuffer? {
-        guard CMSampleBufferIsValid(self),
-              let description = formatDescription,
-              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(description)
-        else { return nil }
-        var streamDescription = asbd.pointee
-        guard let format = AVAudioFormat(streamDescription: &streamDescription),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(numSamples))
-        else { return nil }
-        buffer.frameLength = buffer.frameCapacity
-        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            self, at: 0, frameCount: Int32(numSamples), into: buffer.mutableAudioBufferList
-        )
-        return status == noErr ? buffer : nil
+enum AudioObjects {
+    static let system = AudioObjectID(kAudioObjectSystemObject)
+
+    static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+                                   mElement: kAudioObjectPropertyElementMain)
+    }
+
+    static func read<T: BitwiseCopyable>(_ selector: AudioObjectPropertySelector, of object: AudioObjectID, into value: inout T) -> Bool {
+        var address = address(selector)
+        var size = UInt32(MemoryLayout<T>.size)
+        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr
     }
 }

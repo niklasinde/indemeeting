@@ -1,18 +1,11 @@
 import AVFoundation
 import AppKit
-import CoreGraphics
 import UserNotifications
 
 enum PermissionError: LocalizedError {
     case microphone
-    case screenRecording
 
-    var errorDescription: String? {
-        switch self {
-        case .microphone: return "Microphone access denied."
-        case .screenRecording: return "Screen Recording access denied (needed for system audio)."
-        }
-    }
+    var errorDescription: String? { "Microphone access denied." }
 }
 
 enum Permissions {
@@ -21,7 +14,24 @@ enum Permissions {
     }
 
     static var microphoneStatus: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .audio) }
-    static var screenRecordingGranted: Bool { CGPreflightScreenCaptureAccess() }
+
+    /// "System Audio Recording Only" (kTCCServiceAudioCapture) has no public status API; the TCC calls are looked up at
+    /// runtime and report `.unknown` when missing. The first process tap start also triggers the prompt.
+    static var systemAudio: SystemAudioAccess {
+        guard let preflight = TCC.preflight else { return .unknown }
+        switch preflight(TCC.audioCapture, nil) {
+        case 0: return .granted
+        case 1: return .denied
+        default: return .unknown
+        }
+    }
+
+    static func requestSystemAudio() async -> Bool {
+        guard let request = TCC.request else { return false }
+        return await withCheckedContinuation { continuation in
+            request(TCC.audioCapture, nil) { continuation.resume(returning: $0) }
+        }
+    }
 
     static func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
@@ -47,13 +57,19 @@ enum Permissions {
 
     static func openNotificationSettings() { openSettings("com.apple.preference.notifications") }
     static func openMicrophoneSettings() { openPrivacySettings(pane: "Privacy_Microphone") }
-    static func openScreenRecordingSettings() { openPrivacySettings(pane: "Privacy_ScreenCapture") }
+    static func openSystemAudioSettings() { openPrivacySettings(pane: "Privacy_ScreenCapture") }
+}
 
-    static func relaunch() {
-        let configuration = NSWorkspace.OpenConfiguration()
-        configuration.createsNewApplicationInstance = true
-        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, _ in
-            DispatchQueue.main.async { NSApp.terminate(nil) }
-        }
+private enum TCC {
+    typealias Preflight = @convention(c) (CFString, CFDictionary?) -> Int
+    typealias Request = @convention(c) (CFString, CFDictionary?, @escaping (Bool) -> Void) -> Void
+
+    static let audioCapture = "kTCCServiceAudioCapture" as CFString
+    private static let handle = dlopen("/System/Library/PrivateFrameworks/TCC.framework/Versions/A/TCC", RTLD_NOW)
+    static let preflight = symbol("TCCAccessPreflight", as: Preflight.self)
+    static let request = symbol("TCCAccessRequest", as: Request.self)
+
+    private static func symbol<T>(_ name: String, as type: T.Type) -> T? {
+        handle.flatMap { dlsym($0, name) }.map { unsafeBitCast($0, to: type) }
     }
 }

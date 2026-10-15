@@ -1,16 +1,36 @@
 # MeetingRecorder
 
-Menu-bar app that records the microphone, plus system audio (ScreenCaptureKit) when Screen Recording is granted, into one mono AAC file at
-`~/Movies/MeetingRecordings/Meeting-YYYY-MM-DD-HHmm.m4a`. All sources are converted to 48 kHz mono float,
-summed, and encoded. Works independently of Notion or any other meeting tool.
+Menu-bar app that records you (the microphone) and the meeting (system audio, i.e. the other participants, through a
+Core Audio process tap) into one mono AAC file at `~/Movies/MeetingRecordings/Meeting-YYYY-MM-DD-HHmm.m4a`
+(`-2`, `-3`, … when a minute already has one). All sources are converted to 48 kHz mono float, summed, and encoded.
+Works independently of Notion or any other meeting tool.
+
+While recording, the file is named `Meeting-…-HHmm.recording.m4a`; Stop Recording finalizes it and renames it. Quitting
+the app (menu, Cmd-Q, logout, `kill`/SIGTERM, SIGINT, SIGHUP) stops and finalizes the recording first. Only a hard crash
+or `kill -9` leaves a `.recording.m4a` behind. It has no index, so players cannot open it, but the audio written so far
+is in it as raw AAC (48 kHz mono) and can be decoded with ffmpeg's libavcodec.
 
 ## Build
 
     ./build.sh
 
-Produces `MeetingRecorder.app`, ad-hoc signed with `MeetingRecorder.entitlements`. Recording needs macOS 13+;
-transcription and summaries need macOS 26+. Builds with `swift build` (Command Line Tools 27 / Swift 6.4 or Xcode); if
+Produces `MeetingRecorder.app`, signed with `MeetingRecorder.entitlements`. Recording needs macOS 13+ (system audio
+needs 14.2+); transcription and summaries need macOS 26+. Builds with `swift build` (Command Line Tools 27 / Swift 6.4 or Xcode); if
 SwiftPM fails, the script falls back to plain `swiftc`.
+
+### Keep permissions across rebuilds
+
+macOS ties privacy grants to the app's code signature. An ad-hoc signature (`codesign --sign -`) changes with every
+build, so macOS treats each build as a new app and asks again (or silently keeps the old, now useless, grant). Create a
+stable local signing identity once:
+
+    scripts/make-signing-identity.sh
+
+It creates a self-signed code-signing certificate "MeetingRecorder Local" in the login keychain and trusts it for code
+signing (macOS asks for your password; the first build may ask to let `codesign` use the key, choose Always Allow).
+`build.sh` signs with it whenever `security find-identity -v -p codesigning` lists it and otherwise falls back to ad-hoc
+with a warning. After the first build with the stable identity, remove the old Meeting Recorder entries in Privacy &
+Security, grant the permissions once more, and they then persist across rebuilds.
 
 ## Test
 
@@ -60,11 +80,19 @@ For a headless check, run the binary with a file:
 
 It prints the progress and output paths and exits non-zero on failure, without starting the menu-bar app.
 
+To record headlessly through the same code path as the menu:
+
+    .build/debug/MeetingRecorder --record 5 --out /tmp/test.m4a   # --out optional, defaults to the recordings folder
+
+It prints the RMS level of each source (`(silent)` below 0.001) and the saved path. Ctrl-C stops early and still
+finalizes the file. Privacy prompts are attributed to the process that launched the binary (e.g. Terminal), so run
+the app itself to test with its own grants.
+
 ## First-run setup
 
 On first launch a Setup window opens (it does not depend on the menu-bar icon being visible). It walks through
-Microphone, optional Screen Recording (with a Relaunch button), optional Notifications, a 5-second test recording and a tip on finding the menu-bar
-icon. Reopen it any time from the menu bar via "Setup & Help…".
+Microphone, System audio (the other participants), optional Notifications, a 5-second test recording and a tip on
+finding the menu-bar icon. The system audio step shows the live status with Allow and Open Settings buttons. Reopen it any time from the menu bar via "Setup & Help…".
 
 ## Meeting notifications
 
@@ -76,13 +104,15 @@ so stopping your own recording mid-meeting does not bring it back. Turn it off w
 
 ## Permissions
 
-Only the microphone is required. On first start macOS asks for:
+- Microphone (required): records you.
+- System Audio Recording Only (needed to record the meeting): records what the Mac plays, i.e. the other participants.
+  macOS asks the first time recording starts or when you press Allow System Audio in Setup. It is listed in System
+  Settings > Privacy & Security > Screen & System Audio Recording, under "System Audio Recording Only". Screen Recording is
+  not needed and no relaunch is required.
 
-- Microphone: allow.
-- Screen Recording (optional, needed for system audio, i.e. the other participants): allow in System Settings > Privacy & Security >
-  Screen & System Audio Recording, then quit and reopen the app, since macOS applies it on relaunch.
+If system audio is denied the app still records the microphone and the menu shows "Microphone only — system audio
+off". If the microphone is denied the menu shows a message and an "Open Privacy Settings" button. Build with the stable
+signing identity (above) so the grants survive rebuilds.
 
-Without Screen Recording the app records your microphone only and the menu shows "Microphone only — system audio off".
-The same fallback applies if system audio fails to start. If the microphone is denied the menu shows a message and an
-"Open Privacy Settings" button. Ad-hoc signing changes the app identity on each rebuild, so a Screen Recording grant may
-need to be redone (remove the old entry and add the app again).
+There is no public API for the system audio permission status; Setup reads it through the TCC framework at runtime and
+shows it as not yet known when that is unavailable. Without the grant macOS delivers silence rather than an error.

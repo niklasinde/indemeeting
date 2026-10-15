@@ -19,5 +19,13 @@ cp "$BIN" "$APP/Contents/MacOS/MeetingRecorder"
 cp Info.plist "$APP/Contents/Info.plist"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
-codesign --force --deep --sign - --entitlements MeetingRecorder.entitlements "$APP"
+IDENTITY="MeetingRecorder Local"
+if security find-identity -v -p codesigning | grep -q "\"$IDENTITY\""; then
+    SIGN="$IDENTITY"
+else
+    SIGN=-
+    echo "warning: no \"$IDENTITY\" signing identity, signing ad-hoc. macOS will ask for permissions again after every"
+    echo "         rebuild. Run scripts/make-signing-identity.sh once to keep them."
+fi
+codesign --force --deep --sign "$SIGN" --entitlements MeetingRecorder.entitlements "$APP"
 echo "Built $(pwd)/$APP"

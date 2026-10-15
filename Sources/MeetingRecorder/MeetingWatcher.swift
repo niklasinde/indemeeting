@@ -58,8 +58,8 @@ final class MicrophoneActivityMonitor {
 
     init(onChange: @escaping @MainActor () -> Void) {
         self.onChange = onChange
-        var address = Self.address(kAudioHardwarePropertyDefaultInputDevice)
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main) { [weak self] _, _ in
+        var address = AudioObjects.address(kAudioHardwarePropertyDefaultInputDevice)
+        AudioObjectAddPropertyListenerBlock(AudioObjects.system, &address, .main) { [weak self] _, _ in
             self?.attach()
             self?.notify()
         }
@@ -68,7 +68,7 @@ final class MicrophoneActivityMonitor {
 
     var isInUse: Bool {
         var running: UInt32 = 0
-        return Self.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
+        return AudioObjects.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
     }
 
     private func notify() {
@@ -76,28 +76,17 @@ final class MicrophoneActivityMonitor {
     }
 
     private func attach() {
-        var address = Self.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
+        var address = AudioObjects.address(kAudioDevicePropertyDeviceIsRunningSomewhere)
         if let deviceListener {
             AudioObjectRemovePropertyListenerBlock(device, &address, .main, deviceListener)
         }
         deviceListener = nil
         device = AudioObjectID(kAudioObjectUnknown)
-        guard Self.read(kAudioHardwarePropertyDefaultInputDevice, of: AudioObjectID(kAudioObjectSystemObject), into: &device),
+        guard AudioObjects.read(kAudioHardwarePropertyDefaultInputDevice, of: AudioObjects.system, into: &device),
               device != kAudioObjectUnknown
         else { return }
         let listener: AudioObjectPropertyListenerBlock = { [weak self] _, _ in self?.notify() }
         AudioObjectAddPropertyListenerBlock(device, &address, .main, listener)
         deviceListener = listener
-    }
-
-    private static func address(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
-                                   mElement: kAudioObjectPropertyElementMain)
-    }
-
-    private static func read<T: FixedWidthInteger>(_ selector: AudioObjectPropertySelector, of object: AudioObjectID, into value: inout T) -> Bool {
-        var address = address(selector)
-        var size = UInt32(MemoryLayout<T>.size)
-        return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr
     }
 }

@@ -44,7 +44,7 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 @MainActor
 final class OnboardingModel: ObservableObject {
     @Published var microphone = Permissions.microphoneStatus
-    @Published var screenRecording = Permissions.screenRecordingGranted
+    @Published var systemAudio = Permissions.systemAudio
     @Published var notifications = UNAuthorizationStatus.notDetermined
     @Published var testing = false
     @Published var testFile: URL?
@@ -54,12 +54,13 @@ final class OnboardingModel: ObservableObject {
 
     func refresh() {
         microphone = Permissions.microphoneStatus
-        screenRecording = Permissions.screenRecordingGranted
+        systemAudio = Permissions.systemAudio
         Task { notifications = await Permissions.notificationStatus }
     }
 
     func requestMicrophone() { request { _ = await Permissions.requestMicrophone() } }
     func requestNotifications() { request { _ = await Permissions.requestNotifications() } }
+    func requestSystemAudio() { request { _ = await Permissions.requestSystemAudio() } }
 
     private func request(_ ask: @escaping () async -> Void) {
         Task {
@@ -72,7 +73,7 @@ final class OnboardingModel: ObservableObject {
         testing = true
         testFailed = false
         Task {
-            testFile = await recorder.recordTest()
+            testFile = await recorder.record(seconds: 5)
             testFailed = testFile == nil
             testing = false
         }
@@ -87,9 +88,9 @@ struct OnboardingView: View {
 
     private let poll = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     private var microphone: AVAuthorizationStatus { model.microphone }
-    private var screenRecording: Bool { model.screenRecording }
+    private var systemAudio: Bool { model.systemAudio == .granted }
     private var testFile: URL? { model.testFile }
-    private var allSet: Bool { microphone == .authorized && testFile != nil }
+    private var allSet: Bool { microphone == .authorized && systemAudio && testFile != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -97,7 +98,7 @@ struct OnboardingView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
                 Text("Set up Meeting Recorder").font(.title2.bold())
             }
-            Text("Meeting Recorder lives in the menu bar and has no Dock icon. Allow the microphone, then run a quick test. Screen recording is optional.")
+            Text("Meeting Recorder lives in the menu bar and has no Dock icon. Allow the microphone and system audio, then run a quick test.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -110,12 +111,12 @@ struct OnboardingView: View {
                 }
             }
 
-            step("2. Screen & System Audio Recording (Optional)", done: screenRecording,
-                 detail: screenRecording ? "Granted. Other participants will be recorded too." : "Without it only your own voice is recorded, not other participants. After allowing it, macOS requires a relaunch.") {
-                if !screenRecording {
-                    Button("Allow Screen Recording") { _ = CGRequestScreenCaptureAccess() }
-                    Button("Open Settings") { Permissions.openScreenRecordingSettings() }
-                    Button("Relaunch App") { Permissions.relaunch() }
+            step("2. System audio (the other participants)", done: systemAudio, detail: systemAudioDetail) {
+                if model.systemAudio != .granted {
+                    if model.systemAudio != .denied {
+                        Button("Allow System Audio") { model.requestSystemAudio() }
+                    }
+                    Button("Open Settings") { Permissions.openSystemAudioSettings() }
                 }
             }
 
@@ -170,7 +171,15 @@ struct OnboardingView: View {
     private var testDetail: String {
         if model.testFailed { return recorder.errorMessage ?? "The test recording failed." }
         if let testFile { return "Saved \(testFile.lastPathComponent)." }
-        return screenRecording ? "Confirms that both microphone and system audio work." : "Confirms that the microphone works."
+        return systemAudio ? "Confirms that both microphone and system audio work." : "Confirms that the microphone works."
+    }
+
+    private var systemAudioDetail: String {
+        switch model.systemAudio {
+        case .granted: return "Granted. The other participants are recorded too."
+        case .denied: return "Denied, so only your own voice is recorded. Allow Meeting Recorder under System Audio Recording Only in Settings."
+        case .unknown: return "Required to record the meeting: other participants come through system audio. Uses System Audio Recording Only, not Screen Recording."
+        }
     }
 
     private func step<Actions: View>(_ title: String, done: Bool, detail: String,

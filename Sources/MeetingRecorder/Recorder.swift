@@ -12,8 +12,8 @@ final class Recorder: ObservableObject {
     private let microphone = MicrophoneCapture()
     private let system = SystemAudioCapture()
     private var mixer: AudioMixer?
-    private var outputURL: URL?
     private var timer: Timer?
+    private var lastLevels: [LevelMeter]?
 
     var elapsedText: String {
         RecordingLogic.elapsedText(elapsed)
@@ -24,34 +24,30 @@ final class Recorder: ObservableObject {
             .appendingPathComponent("MeetingRecordings", isDirectory: true)
     }
 
-    func start() async {
+    func start(to output: URL? = nil) async {
         guard !isRecording else { return }
         errorMessage = nil
         notice = nil
         permissionDenied = false
         do {
             try await Permissions.ensureMicrophone()
-            try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-            let url = Self.folder.appendingPathComponent(RecordingLogic.fileName(for: Date()))
+            let url = output ?? RecordingLogic.availableURL(in: Self.folder, for: Date())
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             let mixer = try AudioMixer(url: url)
             self.mixer = mixer
-            outputURL = url
             try microphone.start(into: mixer)
-            await startSystemAudio(into: mixer)
+            startSystemAudio(into: mixer)
             beginTimer()
             isRecording = true
         } catch {
-            await teardown()
+            _ = teardown()
             permissionDenied = error is PermissionError
             errorMessage = error.localizedDescription
         }
     }
 
-    private func startSystemAudio(into mixer: AudioMixer) async {
-        var active = false
-        if RecordingLogic.attemptsSystemAudio(screenRecordingGranted: Permissions.screenRecordingGranted) {
-            active = (try? await system.start(into: mixer)) != nil
-        }
+    private func startSystemAudio(into mixer: AudioMixer) {
+        let active = RecordingLogic.attemptsSystemAudio(Permissions.systemAudio) && (try? system.start(into: mixer)) != nil
         notice = RecordingLogic.notice(systemAudioActive: active)
     }
 
@@ -59,17 +55,21 @@ final class Recorder: ObservableObject {
     func stop(reveal: Bool = true) async -> URL? {
         guard isRecording else { return nil }
         isRecording = false
-        let url = outputURL
-        await teardown()
+        let url = teardown()
         if reveal, let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         return url
     }
 
-    func recordTest(seconds: Double = 5) async -> URL? {
-        await start()
+    func record(seconds: Double, to output: URL? = nil) async -> URL? {
+        await start(to: output)
         guard isRecording else { return nil }
         try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
         return await stop(reveal: false)
+    }
+
+    /// Levels of the last finished recording, per source.
+    func level(of source: AudioSource) -> LevelMeter? {
+        lastLevels?[source.rawValue]
     }
 
     func openFolder() {
@@ -77,13 +77,16 @@ final class Recorder: ObservableObject {
         NSWorkspace.shared.open(Self.folder)
     }
 
-    private func teardown() async {
+    private func teardown() -> URL? {
         timer?.invalidate()
         timer = nil
         microphone.stop()
-        await system.stop()
-        mixer?.finish()
-        mixer = nil
+        system.stop()
+        defer { mixer = nil }
+        guard let mixer else { return nil }
+        let url = mixer.finish()
+        lastLevels = AudioSource.allCases.map(mixer.level)
+        return url
     }
 
     private func beginTimer() {

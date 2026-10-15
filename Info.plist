@@ -14,6 +14,8 @@
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>Meeting Recorder records your microphone together with system audio.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Meeting Recorder records system audio so the other meeting participants are in the recording.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Meeting Recorder transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>

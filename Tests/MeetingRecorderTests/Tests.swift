@@ -80,11 +80,74 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(RecordingLogic.fileName(for: evening, timeZone: zone) == "Meeting-2026-12-31-2359.m4a", "24 hour clock")
     }),
 
-    ("system audio only attempted with screen recording granted", {
-        check(RecordingLogic.attemptsSystemAudio(screenRecordingGranted: true), "granted")
-        check(!RecordingLogic.attemptsSystemAudio(screenRecordingGranted: false), "not granted")
+    ("system audio is attempted unless access is denied", {
+        check(RecordingLogic.attemptsSystemAudio(.granted), "granted")
+        check(RecordingLogic.attemptsSystemAudio(.unknown), "unknown still asks")
+        check(!RecordingLogic.attemptsSystemAudio(.denied), "denied")
         check(RecordingLogic.notice(systemAudioActive: true) == nil, "no notice when active")
         check(RecordingLogic.notice(systemAudioActive: false) == RecordingLogic.microphoneOnlyNotice, "mic-only notice")
+    }),
+
+    ("recordings are written under a partial name and moved into place on finish", {
+        let url = tempURL()
+        let partial = RecordingLogic.partialURL(for: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        check(partial.lastPathComponent == url.deletingPathExtension().lastPathComponent + ".recording.m4a", "partial name \(partial.lastPathComponent)")
+        let mixer = try AudioMixer(url: url)
+        feed(mixer, .microphone, sine(440, seconds: 0.5))
+        Thread.sleep(forTimeInterval: 0.3)
+        check(FileManager.default.fileExists(atPath: partial.path), "partial exists while recording")
+        check(!FileManager.default.fileExists(atPath: url.path), "final name absent while recording")
+        check(mixer.finish() == url, "finish returns the final url")
+        check(!FileManager.default.fileExists(atPath: partial.path), "partial removed")
+        let duration = try seconds(of: url)
+        check(abs(duration - 0.5) < 0.1, "readable while the mixer is still alive, duration \(duration)")
+        mixer.append(sine(440, seconds: 0.5), from: .microphone)
+        Thread.sleep(forTimeInterval: 0.2)
+        let after = try seconds(of: url)
+        check(after == duration, "appends after finish are ignored, \(after) vs \(duration)")
+    }),
+
+    ("file names stay unique within a minute", {
+        let folder = URL(fileURLWithPath: "/tmp/rec")
+        let zone = TimeZone(identifier: "Europe/Stockholm")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let date = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15, hour: 13, minute: 38))!
+        let free = RecordingLogic.availableURL(in: folder, for: date, timeZone: zone) { _ in false }
+        check(free.path == "/tmp/rec/Meeting-2026-10-15-1338.m4a", "free \(free.path)")
+        let taken: Set<String> = ["Meeting-2026-10-15-1338.m4a", "Meeting-2026-10-15-1338-2.recording.m4a"]
+        let next = RecordingLogic.availableURL(in: folder, for: date, timeZone: zone) { taken.contains($0.lastPathComponent) }
+        check(next.lastPathComponent == "Meeting-2026-10-15-1338-3.m4a", "skips finished and in-progress, got \(next.lastPathComponent)")
+    }),
+
+    ("level meter reports rms and silence", {
+        var meter = LevelMeter()
+        check(meter.rms == 0 && meter.isSilent, "empty is silent")
+        meter.add([Float](repeating: 0.0001, count: 480))
+        check(meter.isSilent, "near-zero is silent")
+        meter.add(sine(440, seconds: 1))
+        check(!meter.isSilent && abs(meter.rms - rms([Float](repeating: 0.0001, count: 480) + sine(440, seconds: 1))) < 1e-6, "rms \(meter.rms)")
+        check(meter.count == 480 + Int(rate), "counts samples")
+    }),
+
+    ("mixer tracks the level of each source", {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let mixer = try AudioMixer(url: url)
+        feed(mixer, .system, sine(440, seconds: 0.5))
+        mixer.finish()
+        check(mixer.level(of: .microphone).isSilent, "no mic samples")
+        check(abs(mixer.level(of: .system).rms - 0.2 / 2.0.squareRoot()) < 0.01, "system rms \(mixer.level(of: .system).rms)")
+    }),
+
+    ("record flag takes seconds and an optional output", {
+        check(RecordingLogic.recordArguments(["app"]) == nil, "no flag")
+        check(RecordingLogic.recordArguments(["app", "--record", "x"]) == nil, "not a number")
+        check(RecordingLogic.recordArguments(["app", "--record", "0"]) == nil, "must be positive")
+        let job = RecordingLogic.recordArguments(["app", "--record", "5", "--out", "/tmp/a.m4a"])
+        check(job?.seconds == 5 && job?.output?.path == "/tmp/a.m4a", "with output")
+        check(RecordingLogic.recordArguments(["app", "--record", "2.5"])?.output == nil, "output optional")
     }),
 
     ("mic-only output is written with the expected duration", {

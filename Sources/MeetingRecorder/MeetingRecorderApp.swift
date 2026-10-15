@@ -6,7 +6,50 @@ enum Main {
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current)
         }
+        if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
+            recordFromCommandLine(seconds: job.seconds, to: job.output)
+        }
         MeetingRecorderApp.main()
+    }
+
+    private static func recordFromCommandLine(seconds: Double, to output: URL?) -> Never {
+        if let output, FileManager.default.fileExists(atPath: output.path) {
+            FileHandle.standardError.write(Data("Failed: \(output.path) already exists\n".utf8))
+            exit(1)
+        }
+        Task { @MainActor in
+            let recorder = Recorder()
+            let recording = Task { await recorder.record(seconds: seconds, to: output) }
+            TerminationSignals.observe { recording.cancel() }
+            print("Recording \(seconds)s\u{2026}")
+            guard let url = await recording.value else {
+                FileHandle.standardError.write(Data("Failed: \(recorder.errorMessage ?? "not recording")\n".utf8))
+                exit(1)
+            }
+            if let notice = recorder.notice { print(notice) }
+            for source in AudioSource.allCases {
+                guard let level = recorder.level(of: source) else { continue }
+                print("\(source): \(level.count) samples, rms \(String(format: "%.5f", level.rms))\(level.isSilent ? " (silent)" : "")")
+            }
+            print("Saved: \(url.path)")
+            exit(0)
+        }
+        dispatchMain()
+    }
+}
+
+/// Turns SIGTERM, SIGINT and SIGHUP into a clean shutdown so a recording in progress is finalized.
+enum TerminationSignals {
+    private static var sources: [DispatchSourceSignal] = []
+
+    static func observe(_ handler: @escaping () -> Void) {
+        sources = [SIGTERM, SIGINT, SIGHUP].map { number in
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler(handler: handler)
+            source.resume()
+            return source
+        }
     }
 }
 
@@ -34,8 +77,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        TerminationSignals.observe { NSApp.terminate(nil) }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.showIfSetupNeeded()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard recorder.isRecording else { return .terminateNow }
+        Task {
+            await recorder.stop(reveal: false)
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
