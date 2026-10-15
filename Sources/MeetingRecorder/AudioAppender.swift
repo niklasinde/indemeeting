@@ -54,12 +54,48 @@ enum AudioAppender {
             try track.insertTimeRange(range, of: source, at: cursor)
             cursor = cursor + range.duration
         }
-        guard let session = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
-            throw CocoaError(.fileWriteUnknown)
+        try await encode(composition, to: output)
+    }
+
+    /// Decodes the composition to 48 kHz mono PCM and writes it with the recorder's AAC settings.
+    private static func encode(_ asset: AVAsset, to output: URL) async throws {
+        let reader = try AVAssetReader(asset: asset)
+        let pcm: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: PCMNormalizer.format.sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        nonisolated(unsafe) let source = AVAssetReaderAudioMixOutput(audioTracks: try await asset.loadTracks(withMediaType: .audio), audioSettings: pcm)
+        reader.add(source)
+        let writer = try AVAssetWriter(outputURL: output, fileType: .m4a)
+        nonisolated(unsafe) let input = AVAssetWriterInput(mediaType: .audio, outputSettings: AudioMixer.encoderSettings)
+        input.expectsMediaDataInRealTime = false
+        writer.add(input)
+        guard reader.startReading(), writer.startWriting() else {
+            throw reader.error ?? writer.error ?? CocoaError(.fileWriteUnknown)
         }
-        session.outputURL = output
-        session.outputFileType = .m4a
-        await session.export()
-        guard session.status == .completed else { throw session.error ?? CocoaError(.fileWriteUnknown) }
+        writer.startSession(atSourceTime: .zero)
+        let queue = DispatchQueue(label: "audio-appender")
+        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+            input.requestMediaDataWhenReady(on: queue) {
+                while input.isReadyForMoreMediaData {
+                    guard let buffer = source.copyNextSampleBuffer(), input.append(buffer) else {
+                        input.markAsFinished()
+                        done.resume()
+                        return
+                    }
+                }
+            }
+        }
+        guard reader.status == .completed else {
+            writer.cancelWriting()
+            throw reader.error ?? writer.error ?? CocoaError(.fileReadUnknown)
+        }
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
     }
 }

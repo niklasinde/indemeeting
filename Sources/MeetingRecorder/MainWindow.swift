@@ -1,20 +1,27 @@
 import AVFoundation
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class MainWindow {
-    private let library = RecordingLibrary()
+    let library: RecordingLibrary
     private let playback = AudioPlayback()
     private let window: AppWindow
 
-    init(recorder: Recorder, processor: MeetingProcessor) {
+    init(recorder: Recorder, processor: MeetingProcessor, store: MeetingStore) {
+        library = RecordingLibrary(store: store)
         let view = MainView(recorder: recorder, processor: processor, library: library, playback: playback)
         window = AppWindow(onClose: { [playback] in playback.pause() }) { Self.makeWindow(view) }
     }
 
-    func show() {
+    func show(selecting meeting: URL? = nil) {
         library.start()
+        if let meeting {
+            library.query = ""
+            library.selection = meeting
+            library.tab = .summary
+        }
         window.show()
     }
 
@@ -36,42 +43,45 @@ enum DetailTab: String, CaseIterable {
     case transcript = "Transcript"
 }
 
+/// The recordings on disk joined with their rows in the store, plus the content of the selected meeting.
 @MainActor
 final class RecordingLibrary: ObservableObject {
-    private struct CachedText {
-        let modified: Date
-        let text: String
-    }
-
-    private static let indexedSuffixes = [".summary.md", ".transcript.md", ".meta.json"]
-
     @Published private(set) var recordings: [RecordingEntry] = []
-    @Published var selection: URL?
-    @Published var query = ""
+    @Published var selection: URL? { didSet { if oldValue != selection { loadContent() } } }
+    @Published var query = "" { didSet { if oldValue != query { search() } } }
     @Published var tab = DetailTab.summary
     @Published var confirmingDelete = false
     /// The meeting being recorded, listed before its file exists.
     @Published var recording: URL? { didSet { if oldValue != recording { rebuild() } } }
-    @Published private var texts: [String: CachedText] = [:]
+    @Published private var meetings: [String: Meeting] = [:]
+    @Published private var matches: Set<String>?
+    @Published private var content: MeetingContent?
 
     let folder: URL
+    private let store: MeetingStore
     private var files: [FolderItem] = []
     private var durations: [String: (modified: Date, seconds: TimeInterval)] = [:]
     private var watcher: DispatchSourceFileSystemObject?
+    private var observer: NSObjectProtocol?
 
-    init(folder: URL = Recorder.folder) {
+    init(store: MeetingStore, folder: URL = AppPaths.recordings) {
+        self.store = store
         self.folder = folder
     }
 
     var selected: RecordingEntry? { recordings.first { $0.id == selection } }
 
     var visibleRecordings: [RecordingEntry] {
-        recordings.filter { LibraryLogic.matches(query, in: [title(of: $0), text(of: $0.transcript) ?? ""]) }
+        guard let matches else { return recordings }
+        return recordings.filter { matches.contains($0.fileName) }
     }
 
     func start() {
         defer { refresh() }
         guard watcher == nil else { return }
+        observer = NotificationCenter.default.addObserver(forName: MeetingStore.didChange, object: store, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reload() }
+        }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let descriptor = open(folder.path, O_EVTONLY)
         guard descriptor >= 0 else { return }
@@ -88,21 +98,21 @@ final class RecordingLibrary: ObservableObject {
         let values = urls.map { (url: $0, values: try? $0.resourceValues(forKeys: keys)) }
         let modified = Dictionary(values.map { ($0.url.lastPathComponent, $0.values?.contentModificationDate ?? .distantPast) }) { $1 }
         files = values.map { FolderItem(name: $0.url.lastPathComponent, created: $0.values?.creationDate ?? .distantPast) }
-        texts = Dictionary(uniqueKeysWithValues: values.compactMap { url, values in
-            let name = url.lastPathComponent
-            guard Self.indexedSuffixes.contains(where: name.hasSuffix) else { return nil }
-            let modified = values?.contentModificationDate ?? .distantPast
-            if let cached = texts[name], cached.modified == modified { return (name, cached) }
-            return (name, CachedText(modified: modified, text: (try? String(contentsOf: url, encoding: .utf8)) ?? ""))
-        })
-        rebuild()
+        do {
+            try store.sync(folder: folder, files: files)
+        } catch {
+            FileHandle.standardError.write(Data("Sync failed: \(error.localizedDescription)\n".utf8))
+        }
+        reload()
         let missing = files.map(\.name).filter { LibraryLogic.isListed($0) && durations[$0]?.modified != modified[$0] }
         guard !missing.isEmpty else { return }
         let folder = folder
+        let store = store
         Task.detached(priority: .utility) {
             let found = missing.compactMap { name in
                 (try? AudioFiles.duration(of: folder.appendingPathComponent(name))).map { (name, (modified[name] ?? .distantPast, $0)) }
             }
+            try? store.setDurations(Dictionary(found.map { ($0.0, $0.1.1) }) { $1 })
             await MainActor.run {
                 self.durations.merge(found) { $1 }
                 self.rebuild()
@@ -110,38 +120,49 @@ final class RecordingLibrary: ObservableObject {
         }
     }
 
+    private func reload() {
+        meetings = Dictionary(((try? store.meetings()) ?? []).map { ($0.audioFile, $0) }) { $1 }
+        search()
+        loadContent()
+        rebuild()
+    }
+
     private func rebuild() {
-        let listed = LibraryLogic.recordings(in: folder, files: files, durations: durations.mapValues(\.seconds))
+        let known = meetings.compactMapValues(\.duration).merging(durations.mapValues(\.seconds)) { $1 }
+        let listed = LibraryLogic.recordings(in: folder, files: files, durations: known)
         recordings = LibraryLogic.withRecording(recording, in: listed, now: Date())
     }
 
-    func text(of url: URL) -> String? { texts[url.lastPathComponent]?.text }
-
-    func meta(of entry: RecordingEntry) -> MeetingMeta { MeetingMeta.decode(text(of: entry.meta).map { Data($0.utf8) }) }
-
-    func summary(of entry: RecordingEntry) -> ParsedSummary? {
-        text(of: entry.summary).map { LibraryLogic.parseSummary($0, meta: meta(of: entry)) }
+    private func search() {
+        matches = try? store.search(query)
     }
 
-    func title(of entry: RecordingEntry) -> String {
-        LibraryLogic.title(override: meta(of: entry).title, aiTitle: summary(of: entry)?.title)
+    private func loadContent() {
+        content = selection.flatMap { try? store.content(of: $0.lastPathComponent) }
     }
 
-    func language(of entry: RecordingEntry) -> MeetingLanguage {
-        [entry.transcript, entry.summary].lazy.compactMap { self.text(of: $0).flatMap(LibraryLogic.language(in:)) }.first
-            ?? .current
+    func meeting(of entry: RecordingEntry) -> Meeting? { meetings[entry.fileName] }
+
+    func content(of entry: RecordingEntry) -> MeetingContent? {
+        content?.meeting.audioFile == entry.fileName ? content : nil
     }
 
-    func updateMeta(of entry: RecordingEntry, _ change: (inout MeetingMeta) -> Void) {
-        var meta = meta(of: entry)
-        change(&meta)
-        let data = meta.encoded()
-        do {
-            try data.write(to: entry.meta, options: .atomic)
-            texts[entry.meta.lastPathComponent] = CachedText(modified: .distantPast, text: String(decoding: data, as: UTF8.self))
-        } catch {
-            NSAlert(error: error).runModal()
-        }
+    func title(of entry: RecordingEntry) -> String { meeting(of: entry)?.title ?? LibraryLogic.fallbackTitle }
+
+    func language(of entry: RecordingEntry) -> MeetingLanguage { meeting(of: entry)?.language ?? .current }
+
+    func setTitle(_ title: String, of entry: RecordingEntry) {
+        let override = LibraryLogic.titleOverride(title, aiTitle: meeting(of: entry)?.aiTitle)
+        perform { try store.setTitleOverride(entry.fileName, override) }
+    }
+
+    func setNotes(_ notes: String, of entry: RecordingEntry) {
+        perform { try store.setNotes(entry.fileName, notes) }
+    }
+
+    func setChecked(_ item: ChecklistItem, _ checked: Bool) {
+        guard let id = Int64(item.key) else { return }
+        perform { try store.setChecked(actionItem: id, checked) }
     }
 
     func moveSelection(by offset: Int) {
@@ -154,12 +175,30 @@ final class RecordingLibrary: ObservableObject {
     func trash(_ entry: RecordingEntry) {
         Task {
             do {
-                _ = try await NSWorkspace.shared.recycle(entry.files)
+                _ = try await NSWorkspace.shared.recycle([entry.audio])
+                try store.delete(entry.fileName)
             } catch {
                 NSAlert(error: error).runModal()
             }
             refresh()
         }
+    }
+
+    func exportMarkdown(_ entry: RecordingEntry) {
+        guard let content = try? store.content(of: entry.fileName) else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export as Markdown"
+        let title = content.meeting.title
+        let name = title == LibraryLogic.fallbackTitle ? entry.audio.deletingPathExtension().lastPathComponent : title
+        panel.nameFieldStringValue = name.replacingOccurrences(of: "/", with: "-") + ".md"
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        perform { try ProcessingLogic.exportMarkdown(content).write(to: url, atomically: true, encoding: .utf8) }
+    }
+
+    private func perform(_ body: () throws -> Void) {
+        do { try body() } catch { NSAlert(error: error).runModal() }
     }
 }
 
@@ -254,7 +293,7 @@ struct MainView: View {
                             isPresented: $library.confirmingDelete) {
             Button("Move to Trash", role: .destructive) { deleteSelected() }
         } message: {
-            Text("Its transcript, summary and notes are moved too.")
+            Text("Its transcript, summary and notes are deleted.")
         }
     }
 
@@ -318,6 +357,7 @@ struct MainView: View {
                 Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
                 Button("Transcribe & summarise") { processor.process(entry.audio) }
                     .disabled(processor.processing == entry.audio)
+                Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
                 Divider()
                 Button("Delete\u{2026}", role: .destructive) { library.confirmingDelete = true }
             }
@@ -478,5 +518,15 @@ struct ContinueButton: View {
         }
         .disabled(recorder.isBusy)
         .help("Record more of this meeting; it is added to the end of the same recording")
+    }
+}
+
+struct ExportCommand: View {
+    @ObservedObject var library: RecordingLibrary
+
+    var body: some View {
+        Button("Export as Markdown\u{2026}") { library.selected.map(library.exportMarkdown) }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
+            .disabled(library.selected?.inProgress ?? true)
     }
 }

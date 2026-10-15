@@ -5,13 +5,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private static let meetingCategory = "meeting-started"
     private static let recordAction = "record"
     private static let meetingIdentifier = "meeting-started"
-    private static let fileKey = "file"
+    private static let meetingKey = "meeting"
 
     private let onRecord: @MainActor @Sendable () async -> Void
+    private let onOpen: @MainActor @Sendable (URL) -> Void
     private let center = UNUserNotificationCenter.current()
 
-    init(onRecord: @escaping @MainActor @Sendable () async -> Void) {
+    init(onRecord: @escaping @MainActor @Sendable () async -> Void, onOpen: @escaping @MainActor @Sendable (URL) -> Void) {
         self.onRecord = onRecord
+        self.onOpen = onOpen
         super.init()
         center.delegate = self
         let record = UNNotificationAction(identifier: Self.recordAction, title: "Record", options: [])
@@ -25,9 +27,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content, identifier: Self.meetingIdentifier)
     }
 
-    func postProcessed(title: String, body: String, file: URL?) {
+    func postProcessed(title: String, body: String, meeting: URL) {
         let content = content(title: title, body: body)
-        if let file { content.userInfo = [Self.fileKey: file.path] }
+        content.userInfo = [Self.meetingKey: meeting.path]
         post(content, identifier: UUID().uuidString)
     }
 
@@ -54,9 +56,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
-        if let path = content.userInfo[Self.fileKey] as? String {
+        if let path = content.userInfo[Self.meetingKey] as? String {
             if response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-                await MainActor.run { _ = NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
+                await onOpen(URL(fileURLWithPath: path))
             }
             return
         }

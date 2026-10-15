@@ -9,7 +9,7 @@ enum Main {
         }
         #endif
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
-            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current)
+            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, store: .openDefault())
         }
         if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
             recordFromCommandLine(job)
@@ -63,9 +63,12 @@ struct MeetingRecorderApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: delegate.recorder, processor: delegate.processor) { delegate.mainWindow.show() }
+            MenuContent(recorder: delegate.recorder, processor: delegate.processor) { delegate.mainWindow.show(selecting: $0) }
         } label: {
             MenuLabel(recorder: delegate.recorder)
+        }
+        .commands {
+            CommandGroup(after: .saveItem) { ExportCommand(library: delegate.mainWindow.library) }
         }
     }
 }
@@ -73,10 +76,12 @@ struct MeetingRecorderApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let recorder = Recorder()
-    private lazy var notifier = Notifier { [recorder] in await recorder.start() }
-    lazy var processor = MeetingProcessor(notifier: notifier)
+    private let store = MeetingStore.openDefault()
+    private lazy var notifier: Notifier = Notifier(onRecord: { [recorder] in await recorder.start() },
+                                         onOpen: { [weak self] in self?.mainWindow.show(selecting: $0) })
+    lazy var processor: MeetingProcessor = MeetingProcessor(notifier: notifier, store: store)
     private lazy var meetingWatcher = MeetingWatcher(recorder: recorder, notifier: notifier)
-    lazy var mainWindow = MainWindow(recorder: recorder, processor: processor)
+    lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         meetingWatcher.start()
@@ -115,12 +120,12 @@ struct MenuLabel: View {
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
-    let openApp: () -> Void
+    let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
 
     var body: some View {
-        Button("Open Meeting Recorder") { openApp() }
+        Button("Open Meeting Recorder") { openApp(nil) }
             .keyboardShortcut("o")
         Divider()
         if recorder.isRecording {
@@ -148,8 +153,8 @@ struct MenuContent: View {
         Divider()
         if let status = processor.status { Text(status) }
         if let message = processor.errorMessage { Text(message) }
-        if let summary = processor.latestSummary {
-            Button("Open summary") { NSWorkspace.shared.open(summary) }
+        if let meeting = processor.latestMeeting {
+            Button("Open summary") { openApp(meeting) }
         }
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
         Picker("Meeting language", selection: $language) {

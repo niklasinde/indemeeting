@@ -17,13 +17,16 @@ enum MeetingLanguage: String, CaseIterable, Identifiable {
 
     var headings: Headings {
         switch self {
-        case .swedish: return Headings(transcript: "Transkription", actionItems: "Åtgärdspunkter", unavailable: "Ingen sammanfattning")
-        case .english: return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary")
+        case .swedish:
+            return Headings(transcript: "Transkription", actionItems: "Åtgärdspunkter", unavailable: "Ingen sammanfattning",
+                            notes: "Anteckningar")
+        case .english:
+            return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary", notes: "Notes")
         }
     }
 
     struct Headings {
-        let transcript, actionItems, unavailable: String
+        let transcript, actionItems, unavailable, notes: String
     }
 }
 
@@ -38,6 +41,7 @@ struct MeetingSummary: Codable, Equatable {
     struct ActionItem: Codable, Equatable {
         let task: String
         let owner: String?
+        var done: Bool? = nil
     }
 
     struct Topic: Codable, Equatable {
@@ -51,6 +55,24 @@ struct MeetingSummary: Codable, Equatable {
 
     static func decode(json: String) throws -> MeetingSummary {
         try JSONDecoder().decode(MeetingSummary.self, from: Data(json.utf8))
+    }
+}
+
+extension MeetingSummary {
+    init(_ parsed: ParsedSummary, title: String) {
+        self.init(title: title,
+                  actionItems: parsed.actionItems.map { ActionItem(task: $0.task, owner: $0.owner, done: $0.done) },
+                  topics: parsed.sections.map { Topic(title: $0.heading, points: $0.lines.map(\.text)) })
+    }
+}
+
+extension ParsedSummary {
+    init(_ summary: MeetingSummary) {
+        self.init(title: summary.title,
+                  actionItems: summary.actionItems.enumerated().map { index, item in
+                      ChecklistItem(key: String(index), task: item.task, owner: item.owner, done: item.done ?? false)
+                  },
+                  sections: summary.topics.map { SummarySection(heading: $0.title, lines: $0.points.map(MarkdownBlock.bullet)) })
     }
 }
 
@@ -114,10 +136,6 @@ enum ProcessingLogic {
     static func summaryURL(for audio: URL) -> URL { sibling(of: audio, suffix: "summary.md") }
     static func notesURL(for audio: URL) -> URL { sibling(of: audio, suffix: "notes.md") }
     static func metaURL(for audio: URL) -> URL { sibling(of: audio, suffix: "meta.json") }
-
-    static func companionURLs(for audio: URL) -> [URL] {
-        [transcriptURL(for: audio), summaryURL(for: audio), notesURL(for: audio), metaURL(for: audio)]
-    }
 
     private static func sibling(of audio: URL, suffix: String) -> URL {
         audio.deletingPathExtension().appendingPathExtension(suffix)
@@ -200,7 +218,7 @@ enum ProcessingLogic {
             parts.append("## \(language.headings.actionItems)")
             parts.append(summary.actionItems.map { item in
                 let owner = item.owner?.trimmingCharacters(in: .whitespaces) ?? ""
-                return "- [ ] " + (owner.isEmpty ? "" : "\(owner): ") + item.task
+                return (item.done == true ? "- [x] " : "- [ ] ") + (owner.isEmpty ? "" : "\(owner): ") + item.task
             }.joined(separator: "\n"))
         }
         for topic in summary.topics where !topic.points.isEmpty {
@@ -219,6 +237,23 @@ enum ProcessingLogic {
         The transcript is in `\(transcriptURL(for: URL(fileURLWithPath: audioName)).lastPathComponent)`.
 
         """
+    }
+
+    /// The summary with its action items, the notes and the transcript of a meeting in one document.
+    static func exportMarkdown(_ content: MeetingContent) -> String {
+        let meeting = content.meeting
+        let language = meeting.language ?? .current
+        let hasSummary = !content.summary.isEmpty
+        var parts = [summaryMarkdown(MeetingSummary(content.summary, title: meeting.title),
+                                     audioName: hasSummary ? meeting.audioFile : nil, language: language)]
+        if !hasSummary, let reason = meeting.statusMessage { parts.append(reason + "\n") }
+        let notes = meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !notes.isEmpty { parts.append("## \(language.headings.notes)\n\n\(notes)\n") }
+        if !content.segments.isEmpty {
+            parts.append(transcriptMarkdown(audioName: meeting.audioFile, language: language,
+                                            engine: meeting.transcriptEngine ?? "transcription", segments: content.segments))
+        }
+        return parts.joined(separator: "\n")
     }
 
     private static func baseName(_ audioName: String) -> String {

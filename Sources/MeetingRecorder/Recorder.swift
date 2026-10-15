@@ -30,10 +30,7 @@ final class Recorder: ObservableObject {
 
     var isBusy: Bool { isRecording || meeting != nil }
 
-    nonisolated static var folder: URL {
-        FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MeetingRecordings", isDirectory: true)
-    }
+    nonisolated static var folder: URL { AppPaths.recordings }
 
     /// Records a new part of an existing meeting; Stop appends it to the meeting's file.
     func start(continuing meeting: URL) async {

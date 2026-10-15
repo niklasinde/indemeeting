@@ -22,9 +22,18 @@ enum PreviewRenderer {
             FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
-        let library = RecordingLibrary(folder: folder)
+        let database = output.appendingPathComponent("library.sqlite")
+        ["", "-wal", "-shm"].forEach { try? FileManager.default.removeItem(atPath: database.path + $0) }
+        let store: MeetingStore
+        do {
+            store = try MeetingStore.open(at: database)
+        } catch {
+            FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+        let library = RecordingLibrary(store: store, folder: folder)
         library.start()
-        let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil),
+        let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
                                                     library: library, playback: AudioPlayback()))
         window.setContentSize(NSSize(width: 1040, height: 760))
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))

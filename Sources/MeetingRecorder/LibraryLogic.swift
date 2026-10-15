@@ -9,20 +9,12 @@ struct RecordingEntry: Identifiable, Hashable {
     let audio: URL
     let date: Date
     let duration: TimeInterval?
-    /// The companion files (transcript, summary, notes, meta) that exist next to the audio.
-    let companions: [URL]
     /// Being recorded as a new meeting; its audio file does not exist yet.
     var inProgress = false
 
     var id: URL { audio }
     var name: String { audio.deletingPathExtension().lastPathComponent }
-    var transcript: URL { ProcessingLogic.transcriptURL(for: audio) }
-    var summary: URL { ProcessingLogic.summaryURL(for: audio) }
-    var notes: URL { ProcessingLogic.notesURL(for: audio) }
-    var meta: URL { ProcessingLogic.metaURL(for: audio) }
-    var hasTranscript: Bool { companions.contains(transcript) }
-    var hasSummary: Bool { companions.contains(summary) }
-    var files: [URL] { [audio] + companions }
+    var fileName: String { audio.lastPathComponent }
 }
 
 enum MarkdownBlock: Equatable {
@@ -30,6 +22,22 @@ enum MarkdownBlock: Equatable {
     case bullet(String)
     case task(String, done: Bool)
     case paragraph(String)
+
+    var text: String {
+        switch self {
+        case .heading(_, let text), .bullet(let text), .task(let text, _), .paragraph(let text): return text
+        }
+    }
+}
+
+/// What the sidecar files of a recording held before the database.
+struct Sidecars: Equatable {
+    var language: MeetingLanguage?
+    var engine: String?
+    var titleOverride: String?
+    var notes = ""
+    var segments: [TranscriptSegment] = []
+    var summary: ParsedSummary?
 }
 
 /// The `<base>.meta.json` sidecar: edits made in the app, kept apart from the generated files.
@@ -108,21 +116,17 @@ enum LibraryLogic {
                               timeZone: TimeZone = .current) -> [RecordingEntry] {
         guard let recording, !entries.contains(where: { $0.audio == recording }) else { return entries }
         let date = RecordingLogic.date(fromFileName: recording.lastPathComponent, timeZone: timeZone) ?? now
-        return [RecordingEntry(audio: recording, date: date, duration: nil, companions: [], inProgress: true)] + entries
+        return [RecordingEntry(audio: recording, date: date, duration: nil, inProgress: true)] + entries
     }
 
     /// Newest first: by the minute in the file name (creation date otherwise), then `-3` before `-2` before the first.
     static func recordings(in folder: URL, files: [FolderItem], durations: [String: TimeInterval],
                            timeZone: TimeZone = .current) -> [RecordingEntry] {
-        let names = Set(files.map(\.name))
-        return files.filter { isListed($0.name) }
+        files.filter { isListed($0.name) }
             .map { item in
-                let audio = folder.appendingPathComponent(item.name)
-                return RecordingEntry(
-                    audio: audio,
-                    date: RecordingLogic.date(fromFileName: item.name, timeZone: timeZone) ?? item.created,
-                    duration: durations[item.name],
-                    companions: ProcessingLogic.companionURLs(for: audio).filter { names.contains($0.lastPathComponent) })
+                RecordingEntry(audio: folder.appendingPathComponent(item.name),
+                               date: RecordingLogic.date(fromFileName: item.name, timeZone: timeZone) ?? item.created,
+                               duration: durations[item.name])
             }
             .sorted { $0.date != $1.date ? $0.date > $1.date : $0.name.localizedStandardCompare($1.name) == .orderedDescending }
     }
@@ -221,11 +225,28 @@ enum LibraryLogic {
         return DateGroup.allCases.compactMap { group in groups[group].map { (group, $0) } }
     }
 
-    /// Every word of the query appears in one of the texts, ignoring case and diacritics.
-    static func matches(_ query: String, in texts: [String]) -> Bool {
-        query.split(whereSeparator: \.isWhitespace).allSatisfy { word in
-            texts.contains { $0.range(of: word, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
-        }
+    /// An FTS5 query that needs every word of the search text as a word prefix; nil when there are no words.
+    static func ftsQuery(_ text: String) -> String? {
+        let words = text.split(whereSeparator: \.isWhitespace).map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"*" }
+        return words.isEmpty ? nil : words.joined(separator: " ")
+    }
+
+    static func sidecars(transcript: String?, summary: String?, notes: String?, meta: Data?) -> Sidecars {
+        let meta = MeetingMeta.decode(meta)
+        return Sidecars(
+            language: [transcript, summary].lazy.compactMap { $0.flatMap(language(in:)) }.first,
+            engine: transcript.flatMap(engine(in:)),
+            titleOverride: meta.title,
+            notes: notes ?? "",
+            segments: transcript.map(transcriptSegments) ?? [],
+            summary: summary.map { parseSummary($0, meta: meta) })
+    }
+
+    /// The engine named in the `_file · Svenska · on-device engine_` line of a transcript.
+    static func engine(in markdown: String) -> String? {
+        guard let start = markdown.range(of: "\u{00B7} on-device "),
+              let end = markdown[start.upperBound...].firstIndex(of: "_") else { return nil }
+        return String(markdown[start.upperBound..<end])
     }
 
     /// The `[hh:mm:ss] sentence` lines of a transcript file.

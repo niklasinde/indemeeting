@@ -37,9 +37,9 @@ Security, grant the permissions once more, and they then persist across rebuilds
     ./test.sh
     swift test
 
-`test.sh` compiles the mixer, the appender and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
-names, paused time, part and combined files and their length check, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
-failure). `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
+`test.sh` compiles the mixer, the appender, the database layer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
+names, paused time, part and combined files and their length and bit rate, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
+migrations, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
 ## Run
@@ -58,9 +58,10 @@ Quitting while paused saves the recording like Stop.
 "Open Meeting Recorder" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
 main window (with a Dock icon while it is open). The sidebar lists the recordings in `~/Movies/MeetingRecordings`
 grouped by Today, Yesterday, This week and Earlier. Each row shows the meeting title (a rename, else the title of the
-summary, else "Meeting") and the time and length. The search field at the top filters by title and transcript text
-(every word has to match, ignoring case and accents); the arrow keys move through the list. In-progress
-`.recording.m4a` files are left out, and the list follows the folder as files appear or are removed.
+summary, else "Meeting") and the time and length. The search field at the top searches titles, transcripts, summaries
+and notes in the database (every word has to match as the start of a word, ignoring case and accents); the arrow keys
+move through the list. In-progress `.recording.m4a` files are left out, and the list follows the folder as files
+appear or are removed.
 
 A selected meeting shows its title (click to rename), the date, time, length and language, and three tabs:
 
@@ -71,8 +72,10 @@ A selected meeting shows its title (click to rename), the date, time, length and
 
 A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has New Meeting (Pause/Resume and
 Stop with the elapsed time while recording, like the menu; a recording stopped here is selected instead of revealed in
-Finder) and a "…" menu with Continue Recording, Reveal in Finder, Transcribe & summarise (same processing as the menu) and Delete, which moves the audio and
-all its companion files to the Trash after a confirmation. When a permission is missing the sidebar offers
+Finder) and a "…" menu with Continue Recording, Reveal in Finder, Transcribe & summarise (same processing as the menu),
+Export as Markdown… and Delete, which moves the audio to the Trash and deletes the meeting's data after a confirmation.
+Export as Markdown… (also File > Export as Markdown…, Shift-Cmd-E) writes the summary, the action items with their
+checked state, the notes and the transcript into one `.md` file you choose. When a permission is missing the sidebar offers
 "Open Setup…".
 
 Two ways to record from the window:
@@ -83,36 +86,56 @@ Two ways to record from the window:
 - Continue Recording (next to a meeting's title, in the toolbar and in the "…" menu, when nothing is recording) picks a
   meeting back up. The new part is recorded to `Meeting-…-HHmm.part-<time>.m4a`; on Stop it is appended to the
   meeting's own file, so the meeting keeps its name, row, notes, title and checked action items, and it is then
-  transcribed and summarised again as a whole. The append exports the meeting plus the part (Apple M4A, so the file is
-  re-encoded) to `Meeting-…-HHmm.combined.m4a`, checks that its length is the old length plus the part's (within half a
+  transcribed and summarised again as a whole. The append decodes the meeting plus the part and encodes them with the
+  same AAC settings as a recording (48 kHz mono, 96 kbit/s) to `Meeting-…-HHmm.combined.m4a`, checks that its length is the old length plus the part's (within half a
   second, or 0.1% for long meetings) and only then replaces the meeting. If anything fails the meeting is left as it
   was, the part file is kept next to it and the error names it. Part and combined files are not listed.
 
-Edits never touch the recording or the generated files. A rename and the checked action items are kept in
-`Meeting-…-HHmm.meta.json` (`{"title": "…", "checked": {"<action item line>": true}}`), the notes in
-`Meeting-…-HHmm.notes.md`. Transcribing again keeps both; a checked item stays checked as long as the new summary has
-the same line.
+Edits never touch the recording. Renames, notes and checked action items are saved in the database. Transcribing again
+keeps them; a checked item stays checked as long as the new summary has the same owner and task.
+
+## Data
+
+The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else is in one SQLite database,
+`~/Library/Application Support/MeetingRecorder/meetings.sqlite` (WAL mode, foreign keys on, opened through the system
+`SQLite3` library):
+
+- `meetings`: one row per audio file name, with the date, length, language, renamed title, summary title, notes,
+  processing status (`none`, `summarised`, `unavailable`, `failed`) with its message (for example why there is no
+  summary) and the transcription engine.
+- `transcript_segments` (start time and sentence), `action_items` (owner, task, checked), `summary_topics` and
+  `summary_points`, all deleted with their meeting.
+- `meetings_fts`: an FTS5 index over the title, transcript, summary and notes, used by the sidebar search.
+- `schema_version`: the migrations applied; new ones are appended to `MeetingStore.migrations` and run once, in order,
+  on launch.
+
+The list is the audio files on disk joined with their rows: a new `.m4a` gets a row, a row whose file is gone is
+hidden (and kept). Earlier versions kept the data next to each recording in `<name>.transcript.md`, `<name>.summary.md`,
+`<name>.meta.json` and `<name>.notes.md`. When a recording gets its row (on the first launch of this version for
+existing ones) those files are read once and imported; they are never changed or used again, so after checking the
+app you can delete them.
+
+`--data-dir <folder>` (or `MEETING_RECORDER_DATA_DIR=<folder>`) makes the app use `<folder>/MeetingRecordings` and
+`<folder>/meetings.sqlite` instead, for trying a copy of the library without touching the real one.
 
 To check the window's layout without a screen, a debug build can render it offscreen with a Swedish sample meeting
 (the sample data and the flag are only compiled into debug builds):
 
     swift build && .build/debug/MeetingRecorder --render-previews /tmp/previews
 
-It writes the sample library to `/tmp/previews/library` and PNGs of the Summary, Notes and Transcript tabs, an older
+It writes the sample library to `/tmp/previews/library` as audio and old-style sidecar files, imports it into
+`/tmp/previews/library.sqlite` and saves PNGs of the Summary, Notes and Transcript tabs, an older
 summary and a missing summary, each in light and dark appearance.
 
 ## Transcripts and summaries
 
 Everything runs on the Mac; no audio or text leaves it. After Stop Recording the app transcribes the file and then
-summarises it, writing next to the recording:
+summarises it into the database: the transcript as timed sentences, and a short title, the action items (with an owner
+only when someone is named) and two to five topics with bullets, in the meeting language. Summaries imported from
+earlier versions (summary, key points, decisions) still show in the app.
 
-- `Meeting-YYYY-MM-DD-HHmm.transcript.md`: one `[hh:mm:ss] sentence` line per sentence.
-- `Meeting-YYYY-MM-DD-HHmm.summary.md`: a short title (`# …`), the action items as `- [ ] Owner: task` lines (the owner
-  only when someone is named) and two to five topics, each a `## Topic` heading with bullets, in the meeting language.
-  Summaries written by earlier versions (summary, key points, decisions) still show in the app.
-
-The menu shows "Transcribing…", "Summarising…" and then "Open summary"; a notification opens the summary when it is
-ready. "Transcribe & summarise a recording…" processes any existing audio file. Errors are shown in the menu and as a
+The menu shows "Transcribing…", "Summarising…" and then "Open summary", which opens the meeting in the app window; so
+does the notification when it is ready. "Transcribe & summarise a recording…" processes any existing audio file. Errors are shown in the menu and as a
 notification. The audio file is only read, never changed or deleted.
 
 "Meeting language" (Svenska / English, default Svenska) picks the transcription language and the language of the
@@ -124,14 +147,15 @@ summary.
 - Summaries use Apple's on-device Foundation Models (`SystemLanguageModel`), which require Apple Intelligence. Its
   context is about 4,096 tokens, so long transcripts are summarised in parts and the part summaries are combined. If the
   model is unavailable (Apple Intelligence off, Mac not eligible, model still downloading, language unsupported) the
-  transcript is still written, the summary file and the menu say why, and how to enable it in System Settings >
+  transcript is still saved, the meeting and the menu say why, and how to enable it in System Settings >
   Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards.
 
 For a headless check, run the binary with a file:
 
     .build/debug/MeetingRecorder --process /path/to/Meeting.m4a --language sv-SE   # or en-US
 
-It prints the progress and output paths and exits non-zero on failure, without starting the menu-bar app.
+It prints the progress, the database it saved to and the summary title (or why there is none) and exits non-zero on
+failure, without starting the menu-bar app.
 
 To record headlessly through the same code path as the menu:
 

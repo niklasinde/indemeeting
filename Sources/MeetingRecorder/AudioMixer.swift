@@ -55,6 +55,14 @@ struct LevelMeter {
 /// that stopped delivering (e.g. no system audio) no longer holds back the other.
 /// The file is written under a `.recording.m4a` name and moved to `url` once finalized.
 final class AudioMixer {
+    /// AAC as every recording is written; appended meetings are re-encoded with the same settings.
+    static let encoderSettings: [String: Any] = [
+        AVFormatIDKey: kAudioFormatMPEG4AAC,
+        AVSampleRateKey: PCMNormalizer.format.sampleRate,
+        AVNumberOfChannelsKey: 1,
+        AVEncoderBitRateKey: 96_000,
+    ]
+
     private static let staleAfter: TimeInterval = 1
     private static let flushInterval: DispatchTimeInterval = .milliseconds(100)
 
@@ -74,12 +82,7 @@ final class AudioMixer {
         partialURL = RecordingLogic.partialURL(for: url)
         file = try AVAudioFile(
             forWriting: partialURL,
-            settings: [
-                AVFormatIDKey: kAudioFormatMPEG4AAC,
-                AVSampleRateKey: PCMNormalizer.format.sampleRate,
-                AVNumberOfChannelsKey: 1,
-                AVEncoderBitRateKey: 96_000,
-            ],
+            settings: Self.encoderSettings,
             commonFormat: .pcmFormatFloat32,
             interleaved: false
         )

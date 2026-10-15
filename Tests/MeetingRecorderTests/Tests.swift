@@ -6,8 +6,12 @@ import Foundation
 
 nonisolated(unsafe) var failures: [String] = []
 
-func check(_ condition: @autoclosure () -> Bool, _ message: String, line: Int = #line) {
-    if !condition() { failures.append("line \(line): \(message)") }
+func check(_ condition: @autoclosure () throws -> Bool, _ message: String, line: Int = #line) {
+    do {
+        if try !condition() { failures.append("line \(line): \(message)") }
+    } catch {
+        failures.append("line \(line): \(message), threw \(error)")
+    }
 }
 
 private let rate = PCMNormalizer.format.sampleRate
@@ -51,7 +55,7 @@ private func write(to url: URL, _ body: (AudioMixer) throws -> Void) throws {
     mixer.finish()
 }
 
-private func blocking(_ body: @escaping @Sendable () async throws -> Void) throws {
+func blocking(_ body: @escaping @Sendable () async throws -> Void) throws {
     let done = DispatchSemaphore(value: 0)
     nonisolated(unsafe) var failure: Error?
     Task.detached {
@@ -72,7 +76,9 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = [
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + storeTests
+
+private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
         check(RecordingLogic.elapsedText(0) == "00:00:00", "zero")
         check(RecordingLogic.elapsedText(59.9) == "00:00:59", "truncates fractions")
@@ -215,7 +221,7 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         calendar.timeZone = zone
         let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15, hour: 16, minute: 47))!
         let old = RecordingEntry(audio: URL(fileURLWithPath: "/tmp/Meeting-2026-10-15-0900.m4a"), date: now - 3600,
-                                 duration: 60, companions: [])
+                                 duration: 60)
         check(LibraryLogic.withRecording(nil, in: [old], now: now) == [old], "nothing recording")
         let new = URL(fileURLWithPath: "/tmp/Meeting-2026-10-15-1646.m4a")
         let listed = LibraryLogic.withRecording(new, in: [old], now: now, timeZone: zone)
@@ -254,6 +260,8 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(!FileManager.default.fileExists(atPath: RecordingLogic.combinedURL(for: meeting).path), "no combined file left")
         let level = rms(try decode(meeting))
         check(level > 0.1, "audio kept, rms \(level)")
+        let bitRate = Double(try Data(contentsOf: meeting).count) * 8 / duration
+        check(bitRate < 120_000, "encoded like a recording, \(Int(bitRate)) bit/s")
     }),
 
     ("a failed append keeps the meeting and the part", {
@@ -496,7 +504,7 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(RecordingLogic.date(fromFileName: "Interview.m4a", timeZone: zone) == nil, "other names")
     }),
 
-    ("library lists finished audio newest first with its companion files", {
+    ("library lists finished audio newest first", {
         let zone = TimeZone(identifier: "Europe/Stockholm")!
         let folder = URL(fileURLWithPath: "/tmp/rec")
         let created = Date(timeIntervalSince1970: 2_000_000_000)
@@ -512,14 +520,7 @@ let allTests: [(name: String, run: () throws -> Void)] = [
             "Interview.MP3", "Meeting-2026-10-15-1430-10.m4a", "Meeting-2026-10-15-1430-2.m4a",
             "Meeting-2026-10-15-1430.m4a", "Meeting-2026-10-14-0900.m4a",
         ], "order \(entries.map(\.audio.lastPathComponent))")
-        let first = entries[3]
-        check(first.hasTranscript && first.hasSummary, "both companions")
-        check(first.files.map(\.lastPathComponent) == Array(names.prefix(3)) + ["Meeting-2026-10-15-1430.notes.md",
-                                                                                  "Meeting-2026-10-15-1430.meta.json"], "files to trash")
-        check(first.duration == nil, "duration unknown")
-        let older = entries[4]
-        check(older.hasTranscript && !older.hasSummary && older.duration == 61, "transcript only, duration")
-        check(older.files.count == 2, "audio and transcript")
+        check(entries[3].duration == nil && entries[4].duration == 61, "durations")
         check(entries[0].date == created, "creation date when the name has no date")
     }),
 
@@ -634,20 +635,17 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(LibraryLogic.dateGroup(date(11), now: now, calendar: calendar) == .earlier, "last sunday")
         let monday = date(12, 9)
         check(LibraryLogic.dateGroup(date(11), now: monday, calendar: calendar) == .yesterday, "yesterday wins over last week")
-        let entries = [15, 14, 13, 1].map { RecordingEntry(audio: URL(fileURLWithPath: "/tmp/\($0).m4a"), date: date($0), duration: nil, companions: []) }
+        let entries = [15, 14, 13, 1].map { RecordingEntry(audio: URL(fileURLWithPath: "/tmp/\($0).m4a"), date: date($0), duration: nil) }
         let groups = LibraryLogic.grouped(entries, now: now, calendar: calendar)
         check(groups.map(\.group) == [.today, .yesterday, .thisWeek, .earlier], "order \(groups.map(\.group))")
         check(groups.map(\.entries.count) == [1, 1, 1, 1], "one each")
         check(LibraryLogic.grouped([], now: now, calendar: calendar).isEmpty, "empty groups left out")
     }),
 
-    ("search matches every word in the title or transcript", {
-        let texts = ["Daglig standup", "[00:00:04] Vi har sex öppna tickets."]
-        check(LibraryLogic.matches("", in: texts), "empty query")
-        check(LibraryLogic.matches("STANDUP", in: texts), "case")
-        check(LibraryLogic.matches("oppna", in: texts), "diacritics")
-        check(LibraryLogic.matches("standup tickets", in: texts), "words across texts")
-        check(!LibraryLogic.matches("standup budget", in: texts), "all words needed")
+    ("search text becomes a prefix query needing every word", {
+        check(LibraryLogic.ftsQuery("  ") == nil, "empty query")
+        check(LibraryLogic.ftsQuery("standup öppna") == #""standup"* "öppna"*"#, "words")
+        check(LibraryLogic.ftsQuery(#"say "hi" OR"#) == #""say"* """hi"""* "OR"*"#, "quotes and operators are literal")
     }),
 
     ("transcripts parse back into timed paragraphs", {

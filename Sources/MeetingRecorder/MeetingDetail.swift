@@ -19,11 +19,11 @@ final class MeetingEditor: ObservableObject {
         self.library = library
         load {
             title = library.title(of: entry)
-            notes = (try? String(contentsOf: entry.notes, encoding: .utf8)) ?? ""
+            notes = library.meeting(of: entry)?.notes ?? ""
         }
     }
 
-    func titleDidChangeOnDisk(_ title: String) {
+    func titleDidChange(_ title: String) {
         guard !titleChanged else { return }
         load { self.title = title }
     }
@@ -31,17 +31,8 @@ final class MeetingEditor: ObservableObject {
     func save() {
         pending?.cancel()
         guard let entry, let library else { return }
-        if titleChanged {
-            let aiTitle = library.summary(of: entry)?.title
-            library.updateMeta(of: entry) { $0.title = LibraryLogic.titleOverride(title, aiTitle: aiTitle) }
-        }
-        if notesChanged {
-            if notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try? FileManager.default.removeItem(at: entry.notes)
-            } else {
-                try? notes.write(to: entry.notes, atomically: true, encoding: .utf8)
-            }
-        }
+        if titleChanged { library.setTitle(title, of: entry) }
+        if notesChanged { library.setNotes(notes, of: entry) }
         titleChanged = false
         notesChanged = false
     }
@@ -90,7 +81,7 @@ struct RecordingDetail: View {
             editor.open(entry, library: library)
         }
         .onDisappear { editor.save() }
-        .onChange(of: library.title(of: entry)) { editor.titleDidChangeOnDisk($0) }
+        .onChange(of: library.title(of: entry)) { editor.titleDidChange($0) }
         .onChange(of: entry.duration) { _ in playback.load(entry.audio, force: true) }
     }
 
@@ -193,8 +184,10 @@ struct SummaryView: View {
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
 
+    private var content: MeetingContent? { library.content(of: entry) }
+
     var body: some View {
-        if let summary = library.summary(of: entry), summary.unavailable == nil, !summary.isEmpty {
+        if let summary = content?.summary, !summary.isEmpty {
             VStack(alignment: .leading, spacing: 26) {
                 if !summary.actionItems.isEmpty {
                     VStack(alignment: .leading, spacing: 9) {
@@ -211,14 +204,22 @@ struct SummaryView: View {
             }
             .textSelection(.enabled)
         } else {
-            let unavailable = library.summary(of: entry)?.unavailable
-            EmptyState(entry: entry, processor: processor, title: unavailable == nil ? "No summary yet" : "Summary unavailable",
-                       message: unavailable ?? emptyMessage)
+            let meeting = content?.meeting
+            EmptyState(entry: entry, processor: processor, title: emptyTitle(meeting?.status),
+                       message: meeting?.statusMessage ?? emptyMessage)
+        }
+    }
+
+    private func emptyTitle(_ status: ProcessingStatus?) -> String {
+        switch status {
+        case .unavailable: return "Summary unavailable"
+        case .failed: return "Processing failed"
+        default: return "No summary yet"
         }
     }
 
     private var emptyMessage: String {
-        entry.hasTranscript
+        content?.segments.isEmpty == false
             ? "There is a transcript but no summary. Summarise it on this Mac with Apple Intelligence."
             : "Transcribe and summarise this recording on this Mac. Nothing leaves your computer."
     }
@@ -241,9 +242,7 @@ struct SummaryView: View {
     }
 
     private func checklistRow(_ item: ChecklistItem) -> some View {
-        Toggle(isOn: Binding(get: { item.done }, set: { done in
-            library.updateMeta(of: entry) { $0.checked[item.key] = done }
-        })) {
+        Toggle(isOn: Binding(get: { item.done }, set: { library.setChecked(item, $0) })) {
             Text(checklistText(item))
                 .foregroundStyle(item.done ? .secondary : .primary)
         }
@@ -269,7 +268,7 @@ struct TranscriptView: View {
     let playback: AudioPlayback
 
     var body: some View {
-        let paragraphs = LibraryLogic.paragraphs(LibraryLogic.transcriptSegments(library.text(of: entry.transcript) ?? ""))
+        let paragraphs = LibraryLogic.paragraphs(library.content(of: entry)?.segments ?? [])
         if paragraphs.isEmpty {
             EmptyState(entry: entry, processor: processor, title: "No transcript yet",
                        message: "Transcribe this recording on this Mac. Nothing leaves your computer.")
