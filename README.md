@@ -56,6 +56,10 @@ need real permissions, hardware, speech models or Apple Intelligence are not cov
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
 
+⌃⌥⌘R starts and stops recording from anywhere (a Carbon `RegisterEventHotKey` hot key, so no Accessibility permission
+is needed); the menu shows it next to Start/Stop Recording. Stopping with the shortcut does not reveal the file in
+Finder; the recording is transcribed and summarised as usual.
+
 Pause Recording (menu or the window's toolbar) stops writing until Resume Recording: the menu, toolbar and sidebar show
 "Paused 00:12:34", the timer stands still and the file simply continues where it left off, without the paused gap.
 Quitting while paused saves the recording like Stop.

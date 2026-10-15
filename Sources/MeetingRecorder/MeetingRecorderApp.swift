@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store)
 
     var databaseError: DatabaseUnavailable? { store.openError }
+    private var hotKey: GlobalHotKey?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         meetingWatcher.start()
@@ -102,12 +103,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         TerminationSignals.observe { NSApp.terminate(nil) }
+        hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
+            self?.toggleRecording()
+        }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.showIfSetupNeeded()
     }
 
     private func stopRecording() async {
         await processor.finishRecording(recorder, reveal: false)
+    }
+
+    private func toggleRecording() {
+        Task {
+            if recorder.isRecording { await stopRecording() } else { await recorder.start() }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -160,10 +170,12 @@ struct MenuContent: View {
             Button("Stop Recording") {
                 Task { await processor.finishRecording(recorder) }
             }
+            .keyboardShortcut(GlobalHotKey.record.key, modifiers: GlobalHotKey.record.modifiers)
         } else if recorder.meeting != nil {
             Text("Adding to meeting\u{2026}")
         } else {
             Button("Start Recording") { Task { await recorder.start() } }
+                .keyboardShortcut(GlobalHotKey.record.key, modifiers: GlobalHotKey.record.modifiers)
         }
         if let notice = recorder.notice {
             Divider()
