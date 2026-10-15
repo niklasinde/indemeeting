@@ -7,6 +7,7 @@ final class Recorder: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var errorMessage: String?
     @Published private(set) var permissionDenied = false
+    @Published private(set) var notice: String?
 
     private let microphone = MicrophoneCapture()
     private let system = SystemAudioCapture()
@@ -19,6 +20,8 @@ final class Recorder: ObservableObject {
         return String(format: "%02d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
     }
 
+    static let microphoneOnlyNotice = "Microphone only \u{2014} system audio off"
+
     private static var folder: URL {
         FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MeetingRecordings", isDirectory: true)
@@ -27,22 +30,35 @@ final class Recorder: ObservableObject {
     func start() async {
         guard !isRecording else { return }
         errorMessage = nil
+        notice = nil
         permissionDenied = false
         do {
-            try await Permissions.ensureAll()
+            try await Permissions.ensureMicrophone()
             try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
             let url = Self.folder.appendingPathComponent(Self.fileName(for: Date()))
             let mixer = try AudioMixer(url: url)
             self.mixer = mixer
             outputURL = url
             try microphone.start(into: mixer)
-            try await system.start(into: mixer)
+            await startSystemAudio(into: mixer)
             beginTimer()
             isRecording = true
         } catch {
             await teardown()
             permissionDenied = error is PermissionError
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func startSystemAudio(into mixer: AudioMixer) async {
+        guard Permissions.screenRecordingGranted else {
+            notice = Self.microphoneOnlyNotice
+            return
+        }
+        do {
+            try await system.start(into: mixer)
+        } catch {
+            notice = Self.microphoneOnlyNotice
         }
     }
 

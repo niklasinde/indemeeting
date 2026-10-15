@@ -11,10 +11,11 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
     var recorder: Recorder?
     private var window: NSWindow?
 
-    func showIfFirstLaunch() {
-        guard !UserDefaults.standard.bool(forKey: Self.seenKey) else { return }
+    func showIfSetupNeeded() {
+        let seen = UserDefaults.standard.bool(forKey: Self.seenKey)
+        let ready = Permissions.microphoneStatus == .authorized
         UserDefaults.standard.set(true, forKey: Self.seenKey)
-        show()
+        if !seen || !ready { show() }
     }
 
     func show() {
@@ -80,7 +81,7 @@ struct OnboardingView: View {
     private var microphone: AVAuthorizationStatus { model.microphone }
     private var screenRecording: Bool { model.screenRecording }
     private var testFile: URL? { model.testFile }
-    private var allSet: Bool { microphone == .authorized && screenRecording && testFile != nil }
+    private var allSet: Bool { microphone == .authorized && testFile != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -88,8 +89,9 @@ struct OnboardingView: View {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
                 Text("Set up Meeting Recorder").font(.title2.bold())
             }
-            Text("Meeting Recorder lives in the menu bar and has no Dock icon. Grant two permissions, then run a quick test.")
+            Text("Meeting Recorder lives in the menu bar and has no Dock icon. Allow the microphone, then run a quick test. Screen recording is optional.")
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             step("1. Microphone", done: microphone == .authorized,
                  detail: microphone == .denied ? "Access denied. Enable it in Privacy settings." : "Records your own voice.") {
@@ -100,8 +102,8 @@ struct OnboardingView: View {
                 }
             }
 
-            step("2. Screen & System Audio Recording", done: screenRecording,
-                 detail: screenRecording ? "Granted." : "Needed to capture the other participants. After allowing it, macOS requires a relaunch.") {
+            step("2. Screen & System Audio Recording (Optional)", done: screenRecording,
+                 detail: screenRecording ? "Granted. Other participants will be recorded too." : "Without it only your own voice is recorded, not other participants. After allowing it, macOS requires a relaunch.") {
                 if !screenRecording {
                     Button("Allow Screen Recording") { _ = CGRequestScreenCaptureAccess() }
                     Button("Open Settings") { Permissions.openScreenRecordingSettings() }
@@ -111,7 +113,7 @@ struct OnboardingView: View {
 
             step("3. Record a 5-second test", done: testFile != nil, detail: testDetail) {
                 Button(model.testing ? "Recording…" : "Record Test") { model.runTest(with: recorder) }
-                    .disabled(model.testing || microphone != .authorized || !screenRecording)
+                    .disabled(model.testing || microphone != .authorized)
                 if let testFile {
                     Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([testFile]) }
                 }
@@ -121,6 +123,7 @@ struct OnboardingView: View {
                   systemImage: "menubar.arrow.up.rectangle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
             HStack {
@@ -144,7 +147,7 @@ struct OnboardingView: View {
     private var testDetail: String {
         if model.testFailed { return recorder.errorMessage ?? "The test recording failed." }
         if let testFile { return "Saved \(testFile.lastPathComponent)." }
-        return "Confirms that both microphone and system audio work."
+        return screenRecording ? "Confirms that both microphone and system audio work." : "Confirms that the microphone works."
     }
 
     private func step<Actions: View>(_ title: String, done: Bool, detail: String,
@@ -154,8 +157,8 @@ struct OnboardingView: View {
                 .font(.title2)
                 .foregroundStyle(done ? Color.green : Color.secondary)
             VStack(alignment: .leading, spacing: 6) {
-                Text(title).font(.headline)
-                Text(detail).font(.callout).foregroundStyle(.secondary)
+                Text(title).font(.headline).fixedSize(horizontal: false, vertical: true)
+                Text(detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 HStack { actions() }
             }
         }

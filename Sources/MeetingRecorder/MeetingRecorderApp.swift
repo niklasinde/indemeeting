@@ -19,7 +19,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         OnboardingWindow.shared.recorder = recorder
-        OnboardingWindow.shared.showIfFirstLaunch()
+        OnboardingWindow.shared.showIfSetupNeeded()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        OnboardingWindow.shared.show()
+        return true
     }
 }
 
@@ -40,6 +45,10 @@ struct MenuContent: View {
             Button("Stop Recording") { Task { await recorder.stop() } }
         } else {
             Button("Start Recording") { Task { await recorder.start() } }
+        }
+        if let notice = recorder.notice {
+            Divider()
+            Text(notice)
         }
         if let message = recorder.errorMessage {
             Divider()

@@ -15,11 +15,8 @@ enum PermissionError: LocalizedError {
 }
 
 enum Permissions {
-    static func ensureAll() async throws {
+    static func ensureMicrophone() async throws {
         guard await AVCaptureDevice.requestAccess(for: .audio) else { throw PermissionError.microphone }
-        guard CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess() else {
-            throw PermissionError.screenRecording
-        }
     }
 
     static var microphoneStatus: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .audio) }
