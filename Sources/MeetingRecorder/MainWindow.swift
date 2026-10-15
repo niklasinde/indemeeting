@@ -27,7 +27,7 @@ final class MainWindow {
 
     static func makeWindow(_ view: MainView) -> NSWindow {
         let controller = NSHostingController(rootView: view)
-        if #available(macOS 14, *) { controller.sceneBridgingOptions = [.toolbars] }
+        controller.sceneBridgingOptions = [.toolbars]
         let window = NSWindow(contentViewController: controller)
         window.title = "Meeting Recorder"
         window.titleVisibility = .hidden

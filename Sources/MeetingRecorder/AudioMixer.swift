@@ -191,7 +191,7 @@ final class AudioTrackWriter {
 
     @discardableResult
     func finish() -> URL {
-        if #available(macOS 15, *) { file?.close() }
+        file?.close()
         file = nil
         do {
             try FileManager.default.moveItem(at: partialURL, to: url)

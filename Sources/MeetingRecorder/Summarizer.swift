@@ -7,17 +7,15 @@ enum Summarizer {
     static func summarise(_ segments: [TranscriptSegment], language: MeetingLanguage,
                           progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary {
         #if canImport(FoundationModels)
-        if #available(macOS 26.0, *) {
-            return try await OnDeviceSummarizer(language: language)
-                .summarise(segments.map { $0.line(language) }, progress: progress)
-        }
-        #endif
+        return try await OnDeviceSummarizer(language: language)
+            .summarise(segments.map { $0.line(language) }, progress: progress)
+        #else
         throw SummaryUnavailable.requiresMacOS26
+        #endif
     }
 }
 
 #if canImport(FoundationModels)
-@available(macOS 26.0, *)
 private struct OnDeviceSummarizer {
     private static let reservedTokens = 2200
     private static let charactersPerToken = 3

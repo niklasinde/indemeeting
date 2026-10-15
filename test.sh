@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 OUT="$(mktemp -d)/tests"
-swiftc -swift-version 5 -target "$(uname -m)-apple-macos13.0" \
+swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/AudioMixer.swift \
     Sources/MeetingRecorder/AudioAppender.swift \
     Sources/MeetingRecorder/RecordingLogic.swift \

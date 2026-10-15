@@ -27,7 +27,7 @@ struct CoreAudioError: LocalizedError {
 }
 
 /// Records everything the Mac plays (the other participants) through a Core Audio process tap.
-/// Needs macOS 14.2 and the "System Audio Recording Only" permission, not Screen Recording.
+/// Needs the "System Audio Recording Only" permission, not Screen Recording.
 /// The app plays no audio, so nothing is excluded; excluding our own process stops the IOProc from running.
 final class SystemAudioCapture {
     private let normalizer = PCMNormalizer()
@@ -37,9 +37,6 @@ final class SystemAudioCapture {
     private var proc: AudioDeviceIOProcID?
 
     func start(into mixer: AudioMixer) throws {
-        guard #available(macOS 14.2, *) else {
-            throw CoreAudioError(operation: "process tap (needs macOS 14.2)", status: kAudioHardwareUnsupportedOperationError)
-        }
         do {
             try startTap(into: mixer)
         } catch {
@@ -48,7 +45,6 @@ final class SystemAudioCapture {
         }
     }
 
-    @available(macOS 14.2, *)
     private func startTap(into mixer: AudioMixer) throws {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         description.uuid = UUID()
@@ -83,7 +79,7 @@ final class SystemAudioCapture {
             AudioDeviceDestroyIOProcID(device, proc)
         }
         if device != kAudioObjectUnknown { AudioHardwareDestroyAggregateDevice(device) }
-        if tap != kAudioObjectUnknown, #available(macOS 14.2, *) { AudioHardwareDestroyProcessTap(tap) }
+        if tap != kAudioObjectUnknown { AudioHardwareDestroyProcessTap(tap) }
         proc = nil
         device = AudioObjectID(kAudioObjectUnknown)
         tap = AudioObjectID(kAudioObjectUnknown)

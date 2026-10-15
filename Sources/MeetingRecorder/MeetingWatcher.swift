@@ -109,9 +109,8 @@ final class MicrophoneActivityMonitor {
         return AudioObjects.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
     }
 
-    /// Whether a process other than this app is taking audio input; false before macOS 14.2.
+    /// Whether a process other than this app is taking audio input.
     var isInUseByOthers: Bool {
-        guard #available(macOS 14.2, *) else { return false }
         let own = getpid()
         return AudioObjects.objects(kAudioHardwarePropertyProcessObjectList, of: AudioObjects.system).contains { process in
             var pid: pid_t = 0

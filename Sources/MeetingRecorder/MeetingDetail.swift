@@ -81,8 +81,8 @@ struct RecordingDetail: View {
             editor.open(entry, library: library)
         }
         .onDisappear { editor.save() }
-        .onChange(of: library.title(of: entry)) { editor.titleDidChange($0) }
-        .onChange(of: entry.duration) { _ in playback.load(entry.audio, force: true) }
+        .onChange(of: library.title(of: entry)) { editor.titleDidChange($1) }
+        .onChange(of: entry.duration) { playback.load(entry.audio, force: true) }
     }
 
     private var header: some View {

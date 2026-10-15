@@ -15,13 +15,43 @@ the app (menu, Cmd-Q, logout, `kill`/SIGTERM, SIGINT, SIGHUP) stops and finalize
 or `kill -9` leaves a `.recording.m4a` behind. It has no index, so players cannot open it, but the audio written so far
 is in it as raw AAC (48 kHz mono) and can be decoded with ffmpeg's libavcodec.
 
+## Install (for friends)
+
+Needs macOS 26 (Tahoe) or later. Download `MeetingRecorder-<version>.dmg` from the GitHub release and open it.
+
+1. Drag Meeting Recorder onto Applications.
+2. Open it. macOS says "Apple could not verify…" because the app is not notarized; click Done.
+3. System Settings → Privacy & Security, scroll down, click **Open Anyway** next to Meeting Recorder and confirm.
+   (Since macOS 15, right-click → Open no longer gets past this.)
+4. In the Setup window, allow the Microphone and System Audio Recording, then record the test.
+5. For summaries, turn on Apple Intelligence (System Settings → Apple Intelligence & Siri). The Siri language and the
+   Mac's language must match.
+
+The app lives in the menu bar (waveform icon, no Dock icon). Updates: drag the new version over the old one; the
+permissions are kept.
+
 ## Build
 
     ./build.sh
 
-Produces `MeetingRecorder.app`, signed with `MeetingRecorder.entitlements`. Recording needs macOS 13+ (system audio
-needs 14.2+); transcription and summaries need macOS 26+. Builds with `swift build` (Command Line Tools 27 / Swift 6.4 or Xcode); if
-SwiftPM fails, the script falls back to plain `swiftc`.
+Produces `MeetingRecorder.app`, signed with `MeetingRecorder.entitlements` and the hardened runtime, versioned with
+`CFBundleShortVersionString` from `Info.plist` and `git rev-list --count HEAD` as the build number. Needs macOS 26+
+(SpeechAnalyzer for transcription, Foundation Models for summaries). Builds with `swift build` (Command Line Tools 27 /
+Swift 6.4 or Xcode); if SwiftPM fails, the script falls back to plain `swiftc`. `./build.sh --release <path>.app`
+builds a universal (arm64 + x86_64) app at that path and fails instead of signing ad-hoc.
+
+### Release
+
+    scripts/package.sh
+
+Builds `--release` into `dist/`, verifies the signature (`codesign --verify --deep --strict`, and `spctl`, which
+rejects it because it is not notarized), and creates `dist/MeetingRecorder-<version>.dmg` with the app, an
+Applications link and `How to open.txt` (from `scripts/`). Upload it as a GitHub release asset. Bump
+`CFBundleShortVersionString` in `Info.plist` for a new version.
+
+Releases must be signed with the "MeetingRecorder Local" identity: it is what lets friends keep their permissions
+across updates. Back it up with `scripts/export-signing-identity.sh [file.p12]` (default
+`~/Documents/MeetingRecorder-Local-signing.p12`, password protected); the script prints how to restore it.
 
 ### Keep permissions across rebuilds
 
@@ -218,7 +248,7 @@ Its Record button, or clicking it, starts recording. It is shown once per meetin
 so stopping your own recording mid-meeting does not bring it back. Turn it off with "Notify when a meeting starts" in the menu.
 
 While recording, the app also checks every second which processes take audio input (Core Audio process objects,
-macOS 14.2+, no extra permission). Once another app has held the microphone during the recording (the meeting that was
+no extra permission). Once another app has held the microphone during the recording (the meeting that was
 detected, or any call you started recording in) and then releases it, a notification "Meeting ended — stop recording?"
 appears with Stop and Keep recording. Stop finishes the recording like the menu (without revealing it in Finder) and
 transcribes it. Keep recording turns auto-stop off for the rest of this recording. If the notification is ignored,

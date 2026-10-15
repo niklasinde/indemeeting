@@ -9,7 +9,7 @@ let testSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: testin
 
 let package = Package(
     name: "MeetingRecorder",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS("26.0")],
     targets: [
         .executableTarget(name: "MeetingRecorder", path: "Sources/MeetingRecorder"),
         .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests",

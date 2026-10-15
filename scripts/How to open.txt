@@ -1,0 +1,23 @@
+Meeting Recorder - how to install
+
+Needs macOS 26 (Tahoe) or later.
+
+1. Drag "Meeting Recorder" onto the Applications folder in this window.
+
+2. Open it from Applications. macOS says "Apple could not verify..." because the app
+   is not from the App Store. Click Done (not Move to Trash).
+
+3. Open System Settings > Privacy & Security, scroll down to Security, and click
+   "Open Anyway" next to Meeting Recorder. Confirm with your password.
+   (Right-click > Open no longer does this on macOS 15 and later.)
+
+4. The Setup window opens. Allow the Microphone and System Audio Recording,
+   then record the 5-second test.
+
+5. Look for the waveform icon in the menu bar. That is the app; it has no Dock icon.
+
+Summaries use Apple Intelligence: turn it on in System Settings > Apple Intelligence & Siri.
+The Siri language and the Mac's language must match for it to work.
+
+Everything (recording, transcription, summaries) stays on your Mac.
+Updates: drag the new version over the old one. Your permissions are kept.

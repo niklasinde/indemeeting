@@ -85,7 +85,10 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 12) {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
-                Text("Set up Meeting Recorder").font(.title2.bold())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Set up Meeting Recorder").font(.title2.bold())
+                    Text(version).font(.caption).foregroundStyle(.secondary)
+                }
             }
             Text("Meeting Recorder lives in the menu bar and has no Dock icon. Allow the microphone and system audio, then run a quick test.")
                 .foregroundStyle(.secondary)
@@ -148,6 +151,11 @@ struct OnboardingView: View {
         .padding(24)
         .frame(width: 520)
         .onReceive(poll) { _ in model.refresh() }
+    }
+
+    private var version: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        return "Version \(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
     }
 
     private var notificationsAllowed: Bool { [.authorized, .provisional].contains(model.notifications) }

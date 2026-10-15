@@ -2,13 +2,11 @@ import AVFoundation
 import Speech
 
 enum TranscriptionError: LocalizedError {
-    case requiresMacOS26
     case unsupportedLanguage(MeetingLanguage)
     case noSpeech(String)
 
     var errorDescription: String? {
         switch self {
-        case .requiresMacOS26: return "On-device transcription needs macOS 26 or later."
         case .unsupportedLanguage(let language): return "On-device transcription does not support \(language.englishName) on this Mac."
         case .noSpeech(let name): return "No speech was recognised in \(name)."
         }
@@ -22,8 +20,7 @@ struct Transcript {
 
 enum Transcriber {
     static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
-        guard #available(macOS 26.0, *) else { throw TranscriptionError.requiresMacOS26 }
-        return try await SpeechAnalyzerTranscriber.transcribe(audio, language: language)
+        try await SpeechAnalyzerTranscriber.transcribe(audio, language: language)
     }
 
     /// A meeting with stems is transcribed per stem, so every segment has a speaker; others from the mix.
@@ -48,18 +45,14 @@ enum Transcriber {
     }
 }
 
-@available(macOS 26.0, *)
 private protocol TextResult: SpeechModuleResult {
     var text: AttributedString { get }
 }
 
-@available(macOS 26.0, *)
 extension SpeechTranscriber.Result: TextResult {}
 
-@available(macOS 26.0, *)
 extension DictationTranscriber.Result: TextResult {}
 
-@available(macOS 26.0, *)
 private enum SpeechAnalyzerTranscriber {
     static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
         let locale = language.locale
