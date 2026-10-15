@@ -19,22 +19,36 @@ enum MeetingLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .swedish:
             return Headings(transcript: "Transkription", actionItems: "Åtgärdspunkter", unavailable: "Ingen sammanfattning",
-                            notes: "Anteckningar")
+                            notes: "Anteckningar", you: "Du", others: "Övriga")
         case .english:
-            return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary", notes: "Notes")
+            return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary", notes: "Notes",
+                            you: "You", others: "Others")
         }
     }
 
     struct Headings {
-        let transcript, actionItems, unavailable, notes: String
+        let transcript, actionItems, unavailable, notes, you, others: String
+    }
+}
+
+/// Who spoke a segment: the microphone stem is you, the system audio stem the other participants.
+enum Speaker: String {
+    case you
+    case others
+
+    func name(in language: MeetingLanguage) -> String {
+        self == .you ? language.headings.you : language.headings.others
     }
 }
 
 struct TranscriptSegment: Equatable {
     let start: TimeInterval
     let text: String
+    var speaker: Speaker? = nil
 
-    var line: String { "\(ProcessingLogic.timestamp(start)) \(text)" }
+    func line(_ language: MeetingLanguage) -> String {
+        "\(ProcessingLogic.timestamp(start)) " + (speaker.map { "\($0.name(in: language)): " } ?? "") + text
+    }
 }
 
 struct MeetingSummary: Codable, Equatable {
@@ -162,6 +176,43 @@ enum ProcessingLogic {
         return segments
     }
 
+    static let echoWindow: TimeInterval = 3
+    static let echoSimilarity = 0.7
+
+    /// One transcript from the two stems, by start time. A microphone segment that repeats a system segment spoken at
+    /// the same time is the other participants bleeding into the microphone, so only the system one is kept.
+    static func mergeSpeakers(you: [TranscriptSegment], others: [TranscriptSegment]) -> [TranscriptSegment] {
+        let others = others.map { TranscriptSegment(start: $0.start, text: $0.text, speaker: .others) }
+        let you = you.filter { mine in !others.contains { isEcho(mine, of: $0) } }
+            .map { TranscriptSegment(start: $0.start, text: $0.text, speaker: .you) }
+        return (others + you).enumerated()
+            .sorted { $0.element.start != $1.element.start ? $0.element.start < $1.element.start : $0.offset < $1.offset }
+            .map(\.element)
+    }
+
+    static func isEcho(_ segment: TranscriptSegment, of source: TranscriptSegment) -> Bool {
+        abs(segment.start - source.start) <= echoWindow && similarity(segment.text, source.text) >= echoSimilarity
+    }
+
+    /// Dice coefficient of the words, ignoring case, accents and punctuation.
+    static func similarity(_ a: String, _ b: String) -> Double {
+        let left = words(a), right = words(b)
+        guard !left.isEmpty, !right.isEmpty else { return 0 }
+        var remaining = Dictionary(right.map { ($0, 1) }, uniquingKeysWith: +)
+        let shared = left.filter { word in
+            guard let count = remaining[word], count > 0 else { return false }
+            remaining[word] = count - 1
+            return true
+        }.count
+        return 2 * Double(shared) / Double(left.count + right.count)
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
     static func chunks(_ lines: [String], maxCharacters: Int) -> [String] {
         var chunks: [String] = []
         var current = ""
@@ -205,7 +256,7 @@ enum ProcessingLogic {
 
         _\(audioName) \u{00B7} \(language.displayName) \u{00B7} on-device \(engine)_
 
-        \(segments.map(\.line).joined(separator: "\n\n"))
+        \(segments.map { $0.line(language) }.joined(separator: "\n\n"))
 
         """
     }

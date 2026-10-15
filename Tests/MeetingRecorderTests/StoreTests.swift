@@ -58,6 +58,26 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
               "a failing migration is rolled back")
     }),
 
+    ("migration 2 adds a speaker to transcript segments and keeps old rows without one", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(1)))
+        try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (1, 0, 3, 'Gammal.')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == 2, "migrated to v2")
+        check(try store.content(of: "Meeting-2026-10-14-0900.m4a")?.segments == [TranscriptSegment(start: 3, text: "Gammal.")],
+              "old row has no speaker")
+        let labelled = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you),
+                        TranscriptSegment(start: 2, text: "Hallå.", speaker: .others)]
+        try store.saveTranscript("Meeting-2026-10-15-1430.m4a", segments: labelled, language: .swedish, engine: "x")
+        let content = try store.content(of: "Meeting-2026-10-15-1430.m4a")
+        check(content?.segments == labelled, "speakers read back")
+        check(ProcessingLogic.exportMarkdown(content!).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Övriga: Hallå."), "export")
+    }),
+
     ("transcript, summary, notes, title and checks are stored and read back", {
         try withStore { store, _ in
             let name = "Meeting-2026-10-15-1430.m4a"

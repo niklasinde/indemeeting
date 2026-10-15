@@ -5,6 +5,11 @@ Core Audio process tap) into one mono AAC file at `~/Movies/MeetingRecordings/Me
 (`-2`, `-3`, … when a minute already has one). All sources are converted to 48 kHz mono float, summed, and encoded.
 Works independently of Notion or any other meeting tool.
 
+Next to the mix, each source is also written on its own with the same AAC settings: `Meeting-…-HHmm.stem-mic.m4a`
+(you) and `Meeting-…-HHmm.stem-system.m4a` (the others), padded with silence so both line up with the mix. They are
+used to tell the speakers apart in the transcript, are not listed in the app, and are moved to the Trash with their
+meeting.
+
 While recording, the file is named `Meeting-…-HHmm.recording.m4a`; Stop Recording finalizes it and renames it. Quitting
 the app (menu, Cmd-Q, logout, `kill`/SIGTERM, SIGINT, SIGHUP) stops and finalizes the recording first. Only a hard crash
 or `kill -9` leaves a `.recording.m4a` behind. It has no index, so players cannot open it, but the audio written so far
@@ -38,7 +43,8 @@ Security, grant the permissions once more, and they then persist across rebuilds
     swift test
 
 `test.sh` compiles the mixer, the appender, the database layer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
-names, paused time, part and combined files and their length and bit rate, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
+names, paused time, part and combined files and their length and bit rate, stems and their appends, merging the
+stems' transcripts and dropping echoes, speaker turns, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
 migrations, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
@@ -68,7 +74,9 @@ A selected meeting shows its title (click to rename), the date, time, length and
 - Summary: the action items as checkboxes ("Åtgärdspunkter" for Swedish meetings), then one heading with bullets per
   topic. Without a summary it says why (for example that Apple Intelligence is off) and offers Summarise.
 - Notes: your own notes, saved automatically shortly after you stop typing.
-- Transcript: the transcript in paragraphs; clicking a paragraph's time plays the recording from there.
+- Transcript: the transcript in paragraphs; clicking a paragraph's time plays the recording from there. Meetings
+  recorded with stems name the speaker ("You" / "Others", "Du" / "Övriga" in Swedish) before each run of paragraphs
+  by the same speaker.
 
 A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has New Meeting (Pause/Resume and
 Stop with the elapsed time while recording, like the menu; a recording stopped here is selected instead of revealed in
@@ -89,7 +97,9 @@ Two ways to record from the window:
   transcribed and summarised again as a whole. The append decodes the meeting plus the part and encodes them with the
   same AAC settings as a recording (48 kHz mono, 96 kbit/s) to `Meeting-…-HHmm.combined.m4a`, checks that its length is the old length plus the part's (within half a
   second, or 0.1% for long meetings) and only then replaces the meeting. If anything fails the meeting is left as it
-  was, the part file is kept next to it and the error names it. Part and combined files are not listed.
+  was, the part file is kept next to it and the error names it. Part and combined files are not listed. The part's
+  stems are appended to the meeting's stems the same way; when the meeting has no stems (recorded before they
+  existed) or a stem append fails, the stems are removed and the meeting is transcribed from its mix as before.
 
 Edits never touch the recording. Renames, notes and checked action items are saved in the database. Transcribing again
 keeps them; a checked item stays checked as long as the new summary has the same owner and task.
@@ -103,7 +113,8 @@ The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else
 - `meetings`: one row per audio file name, with the date, length, language, renamed title, summary title, notes,
   processing status (`none`, `summarised`, `unavailable`, `failed`) with its message (for example why there is no
   summary) and the transcription engine.
-- `transcript_segments` (start time and sentence), `action_items` (owner, task, checked), `summary_topics` and
+- `transcript_segments` (start time, sentence and speaker: `you`, `others` or NULL for transcripts of the mix),
+  `action_items` (owner, task, checked), `summary_topics` and
   `summary_points`, all deleted with their meeting.
 - `meetings_fts`: an FTS5 index over the title, transcript, summary and notes, used by the sidebar search.
 - `schema_version`: the migrations applied; new ones are appended to `MeetingStore.migrations` and run once, in order,
@@ -131,7 +142,15 @@ summary and a missing summary, each in light and dark appearance.
 
 Everything runs on the Mac; no audio or text leaves it. After Stop Recording the app transcribes the file and then
 summarises it into the database: the transcript as timed sentences, and a short title, the action items (with an owner
-only when someone is named) and two to five topics with bullets, in the meeting language. Summaries imported from
+only when someone is named) and two to five topics with bullets, in the meeting language.
+
+When the meeting has both stems, each stem is transcribed on its own and the sentences are merged by start time, each
+with its speaker. The other participants also reach the microphone through the speakers; a microphone sentence that
+starts within 3 seconds of a system sentence with mostly the same words (Dice coefficient of the words at least 0.7)
+is that echo and is dropped in favour of the system one. The summariser gets the lines with their speaker, told that
+"You" is the person who recorded the meeting, so action items you take on are attributed to you. Recordings without
+stems (all made before this) are transcribed from the mix without speakers. The Markdown export writes the speaker
+after each timestamp. Summaries imported from
 earlier versions (summary, key points, decisions) still show in the app.
 
 The menu shows "Transcribing…", "Summarising…" and then "Open summary", which opens the meeting in the app window; so

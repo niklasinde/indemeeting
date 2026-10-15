@@ -34,10 +34,14 @@ final class PCMNormalizer {
 enum AudioSource: Int, CaseIterable {
     case microphone
     case system
+
+    var stemName: String { self == .microphone ? "mic" : "system" }
 }
 
 struct LevelMeter {
     static let silenceThreshold = 0.001
+    /// Quieter than speech: what auto-stop counts as silence.
+    static let soundThreshold = 0.003
 
     private(set) var count = 0
     private var sumOfSquares = 0.0
@@ -54,6 +58,7 @@ struct LevelMeter {
 /// Sums the sources sample-by-sample and writes the result as AAC. A source
 /// that stopped delivering (e.g. no system audio) no longer holds back the other.
 /// The file is written under a `.recording.m4a` name and moved to `url` once finalized.
+/// With `stems`, each source is also written on its own, padded with silence so it lines up with the mix.
 final class AudioMixer {
     /// AAC as every recording is written; appended meetings are re-encoded with the same settings.
     static let encoderSettings: [String: Any] = [
@@ -67,25 +72,22 @@ final class AudioMixer {
     private static let flushInterval: DispatchTimeInterval = .milliseconds(100)
 
     let url: URL
-    private let partialURL: URL
-    private var file: AVAudioFile?
+    private let mix: AudioTrackWriter
+    private let stems: [AudioTrackWriter]
     private let queue = DispatchQueue(label: "mixer")
     private var timer: DispatchSourceTimer?
+    private var finished = false
     private var written = 0
     private var paused = false
+    private var heard = Date()
     private var pending = AudioSource.allCases.map { _ in [Float]() }
     private var lastSeen = AudioSource.allCases.map { _ in Date.distantPast }
     private var meters = AudioSource.allCases.map { _ in LevelMeter() }
 
-    init(url: URL) throws {
+    init(url: URL, stems: Bool = false) throws {
         self.url = url
-        partialURL = RecordingLogic.partialURL(for: url)
-        file = try AVAudioFile(
-            forWriting: partialURL,
-            settings: Self.encoderSettings,
-            commonFormat: .pcmFormatFloat32,
-            interleaved: false
-        )
+        mix = try AudioTrackWriter(url: url)
+        self.stems = stems ? try AudioSource.allCases.map { try AudioTrackWriter(url: RecordingLogic.stemURL(for: url, source: $0)) } : []
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + Self.flushInterval, repeating: Self.flushInterval)
         timer.setEventHandler { [weak self] in self?.flush(final: false) }
@@ -96,10 +98,13 @@ final class AudioMixer {
     func append(_ samples: [Float], from source: AudioSource) {
         guard !samples.isEmpty else { return }
         queue.async {
-            guard self.file != nil, !self.paused else { return }
+            guard !self.finished, !self.paused else { return }
             self.pending[source.rawValue].append(contentsOf: samples)
             self.lastSeen[source.rawValue] = Date()
             self.meters[source.rawValue].add(samples)
+            var chunk = LevelMeter()
+            chunk.add(samples)
+            if chunk.rms >= LevelMeter.soundThreshold { self.heard = Date() }
         }
     }
 
@@ -112,14 +117,20 @@ final class AudioMixer {
     }
 
     func resume() {
-        queue.sync { paused = false }
+        queue.sync {
+            paused = false
+            heard = Date()
+        }
     }
 
     var framesWritten: Int { queue.sync { written } }
 
+    /// When either source last had more than silence in it (or recording started or resumed).
+    var lastSound: Date { queue.sync { heard } }
+
     func level(of source: AudioSource) -> LevelMeter { queue.sync { meters[source.rawValue] } }
 
-    /// Writes what is pending, closes the file and moves it to `url`.
+    /// Writes what is pending, closes the files and moves them to their final names.
     /// Returns where the recording ended up (the partial name if the move failed).
     @discardableResult
     func finish() -> URL {
@@ -127,37 +138,66 @@ final class AudioMixer {
             timer?.cancel()
             timer = nil
             flush(final: true)
-            if #available(macOS 15, *) { file?.close() }
-            file = nil
+            finished = true
         }
+        stems.forEach { $0.finish() }
+        return mix.finish()
+    }
+
+    private func flush(final: Bool) {
+        guard !finished else { return }
+        let now = Date()
+        let active = pending.indices.filter { now.timeIntervalSince(lastSeen[$0]) < Self.staleAfter }
+        let waitingOn = active.isEmpty ? Array(pending.indices) : active
+        let count = (final ? Array(pending.indices) : waitingOn).map { pending[$0].count }
+            .reduce(final ? 0 : Int.max, final ? max : min)
+        guard count > 0 else { return }
+
+        var mixed = [Float](repeating: 0, count: count)
+        for index in pending.indices {
+            let take = min(count, pending[index].count)
+            let samples = pending[index].prefix(take)
+            for (frame, sample) in samples.enumerated() { mixed[frame] += sample }
+            if !stems.isEmpty { stems[index].write(Array(samples) + [Float](repeating: 0, count: count - take)) }
+            pending[index].removeFirst(take)
+        }
+        mix.write(mixed.map { max(-1, min(1, $0)) })
+        written += count
+    }
+}
+
+/// One AAC file written under its `.recording.m4a` name and moved to `url` when finished.
+final class AudioTrackWriter {
+    let url: URL
+    private let partialURL: URL
+    private var file: AVAudioFile?
+
+    init(url: URL) throws {
+        self.url = url
+        partialURL = RecordingLogic.partialURL(for: url)
+        file = try AVAudioFile(forWriting: partialURL, settings: AudioMixer.encoderSettings,
+                               commonFormat: .pcmFormatFloat32, interleaved: false)
+    }
+
+    func write(_ samples: [Float]) {
+        guard let file, !samples.isEmpty,
+              let buffer = AVAudioPCMBuffer(pcmFormat: PCMNormalizer.format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let out = buffer.floatChannelData?[0]
+        else { return }
+        samples.withUnsafeBufferPointer { out.update(from: $0.baseAddress!, count: samples.count) }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        try? file.write(from: buffer)
+    }
+
+    @discardableResult
+    func finish() -> URL {
+        if #available(macOS 15, *) { file?.close() }
+        file = nil
         do {
             try FileManager.default.moveItem(at: partialURL, to: url)
             return url
         } catch {
             return partialURL
         }
-    }
-
-    private func flush(final: Bool) {
-        let now = Date()
-        let active = pending.indices.filter { now.timeIntervalSince(lastSeen[$0]) < Self.staleAfter }
-        let waitingOn = active.isEmpty ? Array(pending.indices) : active
-        let count = (final ? Array(pending.indices) : waitingOn).map { pending[$0].count }
-            .reduce(final ? 0 : Int.max, final ? max : min)
-        guard count > 0, let file,
-              let buffer = AVAudioPCMBuffer(pcmFormat: PCMNormalizer.format, frameCapacity: AVAudioFrameCount(count)),
-              let out = buffer.floatChannelData?[0]
-        else { return }
-
-        for frame in 0..<count { out[frame] = 0 }
-        for index in pending.indices {
-            let take = min(count, pending[index].count)
-            for frame in 0..<take { out[frame] += pending[index][frame] }
-            pending[index].removeFirst(take)
-        }
-        for frame in 0..<count { out[frame] = max(-1, min(1, out[frame])) }
-        buffer.frameLength = AVAudioFrameCount(count)
-        try? file.write(from: buffer)
-        written += count
     }
 }

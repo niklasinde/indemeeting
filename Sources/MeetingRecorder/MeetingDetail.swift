@@ -148,7 +148,7 @@ struct RecordingDetail: View {
                     }
                 }
         case .transcript:
-            scrolling { TranscriptView(entry: entry, processor: processor, library: library, playback: playback) }
+            scrolling { TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback) }
         }
     }
 
@@ -263,27 +263,35 @@ struct SummaryView: View {
 
 struct TranscriptView: View {
     let entry: RecordingEntry
+    let language: MeetingLanguage
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
     let playback: AudioPlayback
 
     var body: some View {
-        let paragraphs = LibraryLogic.paragraphs(library.content(of: entry)?.segments ?? [])
-        if paragraphs.isEmpty {
+        let turns = LibraryLogic.speakerTurns(library.content(of: entry)?.segments ?? [])
+        if turns.isEmpty {
             EmptyState(entry: entry, processor: processor, title: "No transcript yet",
                        message: "Transcribe this recording on this Mac. Nothing leaves your computer.")
         } else {
             LazyVStack(alignment: .leading, spacing: 18) {
-                ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Button(LibraryLogic.durationText(paragraph.start)) { playback.play(from: paragraph.start) }
-                            .buttonStyle(.plain)
+                ForEach(Array(turns.enumerated()), id: \.offset) { _, turn in
+                    ForEach(Array(turn.paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                if index == 0, let speaker = turn.speaker {
+                                    Text(speaker.name(in: language)).foregroundStyle(.secondary)
+                                }
+                                Button(LibraryLogic.durationText(paragraph.start)) { playback.play(from: paragraph.start) }
+                                    .buttonStyle(.plain)
+                                    .foregroundStyle(Color.accentColor)
+                                    .help("Play from here")
+                            }
                             .font(.caption.monospacedDigit())
-                            .foregroundStyle(Color.accentColor)
-                            .help("Play from here")
-                        Text(paragraph.text)
-                            .lineSpacing(3)
-                            .textSelection(.enabled)
+                            Text(paragraph.text)
+                                .lineSpacing(3)
+                                .textSelection(.enabled)
+                        }
                     }
                 }
             }

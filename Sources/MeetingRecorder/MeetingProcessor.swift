@@ -13,7 +13,7 @@ enum MeetingPipeline {
         let name = audio.lastPathComponent
         do {
             await progress(.transcribing)
-            let transcript = try await Transcriber.transcribe(audio, language: language)
+            let transcript = try await Transcriber.transcribeMeeting(audio, language: language)
             try store.saveTranscript(name, segments: transcript.segments, language: language, engine: transcript.engine)
             do {
                 let summary = try await Summarizer.summarise(transcript.segments, language: language, progress: progress)

@@ -39,6 +39,25 @@ enum AudioAppender {
         }
     }
 
+    /// Appends the part's stems to the meeting's. Stems that would not line up with the meeting (it has none, or an
+    /// append failed) are removed, so the meeting falls back to transcribing its mix.
+    static func appendStems(of part: URL, to meeting: URL) async {
+        let pairs = AudioSource.allCases.map {
+            (part: RecordingLogic.stemURL(for: part, source: $0), meeting: RecordingLogic.stemURL(for: meeting, source: $0))
+        }
+        do {
+            guard RecordingLogic.stems(of: part) != nil, RecordingLogic.stems(of: meeting) != nil else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            for pair in pairs { try await append(pair.part, to: pair.meeting) }
+        } catch {
+            for pair in pairs {
+                try? FileManager.default.removeItem(at: pair.part)
+                try? FileManager.default.removeItem(at: pair.meeting)
+            }
+        }
+    }
+
     private static func export(_ sources: [URL], to output: URL) async throws {
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)

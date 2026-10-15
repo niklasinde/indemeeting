@@ -77,6 +77,11 @@ struct ChecklistItem: Equatable, Identifiable {
     var id: String { key }
 }
 
+struct SpeakerTurn: Equatable {
+    let speaker: Speaker?
+    var paragraphs: [TranscriptSegment]
+}
+
 struct SummarySection: Equatable {
     let heading: String
     var lines: [MarkdownBlock]
@@ -260,13 +265,25 @@ enum LibraryLogic {
         }
     }
 
-    /// Joins sentences into paragraphs that each start a new `span` of seconds.
+    /// Joins sentences of the same speaker into paragraphs that each start a new `span` of seconds.
     static func paragraphs(_ segments: [TranscriptSegment], span: TimeInterval = 30) -> [TranscriptSegment] {
         segments.reduce(into: []) { result, segment in
-            if let last = result.last, segment.start - last.start < span {
-                result[result.count - 1] = TranscriptSegment(start: last.start, text: last.text + " " + segment.text)
+            if let last = result.last, last.speaker == segment.speaker, segment.start - last.start < span {
+                result[result.count - 1] = TranscriptSegment(start: last.start, text: last.text + " " + segment.text,
+                                                             speaker: last.speaker)
             } else {
                 result.append(segment)
+            }
+        }
+    }
+
+    /// The paragraphs grouped into runs of one speaker.
+    static func speakerTurns(_ segments: [TranscriptSegment], span: TimeInterval = 30) -> [SpeakerTurn] {
+        paragraphs(segments, span: span).reduce(into: []) { turns, paragraph in
+            if let last = turns.last, last.speaker == paragraph.speaker {
+                turns[turns.count - 1].paragraphs.append(paragraph)
+            } else {
+                turns.append(SpeakerTurn(speaker: paragraph.speaker, paragraphs: [paragraph]))
             }
         }
     }

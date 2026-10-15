@@ -175,7 +175,7 @@ final class RecordingLibrary: ObservableObject {
     func trash(_ entry: RecordingEntry) {
         Task {
             do {
-                _ = try await NSWorkspace.shared.recycle([entry.audio])
+                _ = try await NSWorkspace.shared.recycle([entry.audio] + (RecordingLogic.stems(of: entry.audio) ?? []))
                 try store.delete(entry.fileName)
             } catch {
                 NSAlert(error: error).runModal()

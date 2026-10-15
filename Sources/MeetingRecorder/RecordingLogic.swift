@@ -11,6 +11,7 @@ enum RecordingLogic {
     static let partialSuffix = ".recording"
     static let partMarker = ".part-"
     static let combinedSuffix = ".combined"
+    static let stemMarker = ".stem-"
 
     static func elapsedText(_ elapsed: TimeInterval) -> String {
         let total = Int(elapsed)
@@ -64,14 +65,26 @@ enum RecordingLogic {
         sibling(of: meeting, suffix: combinedSuffix)
     }
 
+    /// One source on its own next to the mix, for telling the speakers apart: `<base>.stem-mic.m4a`.
+    static func stemURL(for url: URL, source: AudioSource) -> URL {
+        sibling(of: url, suffix: stemMarker + source.stemName)
+    }
+
+    /// The meeting's stems when it has one for every source.
+    static func stems(of url: URL, exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> [URL]? {
+        let stems = AudioSource.allCases.map { stemURL(for: url, source: $0) }
+        return stems.allSatisfy(exists) ? stems : nil
+    }
+
     private static func sibling(of url: URL, suffix: String) -> URL {
         url.deletingLastPathComponent()
             .appendingPathComponent(url.deletingPathExtension().lastPathComponent + suffix + "." + url.pathExtension)
     }
 
-    /// In-progress recordings, parts waiting to be appended and combined files waiting to replace a meeting.
+    /// In-progress recordings, parts waiting to be appended, combined files waiting to replace a meeting and stems.
     static func isWorkFile(baseName: String) -> Bool {
         baseName.hasSuffix(partialSuffix) || baseName.hasSuffix(combinedSuffix) || baseName.contains(partMarker)
+            || baseName.contains(stemMarker)
     }
 
     static func combinedDurationTolerance(_ expected: TimeInterval) -> TimeInterval {

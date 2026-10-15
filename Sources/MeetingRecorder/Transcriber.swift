@@ -25,6 +25,27 @@ enum Transcriber {
         guard #available(macOS 26.0, *) else { throw TranscriptionError.requiresMacOS26 }
         return try await SpeechAnalyzerTranscriber.transcribe(audio, language: language)
     }
+
+    /// A meeting with stems is transcribed per stem, so every segment has a speaker; others from the mix.
+    static func transcribeMeeting(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
+        guard let stems = RecordingLogic.stems(of: audio) else { return try await transcribe(audio, language: language) }
+        var transcripts: [Transcript?] = []
+        for stem in stems { transcripts.append(try await transcribeSpeech(stem, language: language)) }
+        let segments = ProcessingLogic.mergeSpeakers(you: transcripts[AudioSource.microphone.rawValue]?.segments ?? [],
+                                                     others: transcripts[AudioSource.system.rawValue]?.segments ?? [])
+        guard let engine = transcripts.lazy.compactMap({ $0?.engine }).first, !segments.isEmpty else {
+            throw TranscriptionError.noSpeech(audio.lastPathComponent)
+        }
+        return Transcript(segments: segments, engine: engine)
+    }
+
+    private static func transcribeSpeech(_ audio: URL, language: MeetingLanguage) async throws -> Transcript? {
+        do {
+            return try await transcribe(audio, language: language)
+        } catch TranscriptionError.noSpeech {
+            return nil
+        }
+    }
 }
 
 @available(macOS 26.0, *)

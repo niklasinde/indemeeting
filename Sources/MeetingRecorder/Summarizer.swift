@@ -9,7 +9,7 @@ enum Summarizer {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             return try await OnDeviceSummarizer(language: language)
-                .summarise(segments.map(\.line), progress: progress)
+                .summarise(segments.map { $0.line(language) }, progress: progress)
         }
         #endif
         throw SummaryUnavailable.requiresMacOS26
@@ -64,13 +64,17 @@ private struct OnDeviceSummarizer {
     }
 
     private var instructions: String {
-        """
+        let you = Speaker.you.name(in: language), others = Speaker.others.name(in: language)
+        return """
         You write meeting notes from transcripts. Write every field in \(language.englishName). \
         Use only information from the input; do not invent facts, names or owners. \
+        Transcript lines may name their speaker: "\(you)" is the user who recorded the meeting, \
+        "\(others)" are the other participants. \
         title: a short title of at most eight words naming the kind of meeting and its main subjects, \
         e.g. "Daily standup \u{2013} bug fixes, validation and release". \
         actionItems: concrete follow-ups, each task starting with a verb and keeping any deadline; \
-        owner: the first name of the person who will do it, only when the input names them. \
+        owner: the first name of the person who will do it, only when the input names them, \
+        or "\(you)" when the user takes it on. \
         topics: the two to five main subjects in the order discussed; each with a short title and two to five \
         brief points holding the facts, numbers and decisions.
         """

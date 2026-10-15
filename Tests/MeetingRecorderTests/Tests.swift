@@ -76,7 +76,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + storeTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + storeTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
@@ -394,7 +394,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingLogic.timestamp(83.7) == "[00:01:23]", "truncates")
         check(ProcessingLogic.timestamp(3 * 3600 + 5) == "[03:00:05]", "hours")
         check(ProcessingLogic.timestamp(-1) == "[00:00:00]", "negative clamps")
-        check(TranscriptSegment(start: 61, text: "Hej").line == "[00:01:01] Hej", "segment line")
+        check(TranscriptSegment(start: 61, text: "Hej").line(.swedish) == "[00:01:01] Hej", "segment line")
     }),
 
     ("timed words are grouped into timestamped sentences", {
@@ -661,5 +661,123 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(LibraryLogic.language(in: "# T") == nil, "no language")
         check(LibraryLogic.minutesText(25 * 60 + 10) == "25 min" && LibraryLogic.minutesText(20) == "<1 min"
               && LibraryLogic.minutesText(65 * 60) == "1 h 5 min", "minutes")
+    }),
+]
+
+private func segment(_ start: TimeInterval, _ text: String, _ speaker: Speaker? = nil) -> TranscriptSegment {
+    TranscriptSegment(start: start, text: text, speaker: speaker)
+}
+
+private let speakerTests: [(name: String, run: () throws -> Void)] = [
+    ("stems are named next to the meeting and not listed", {
+        let meeting = URL(fileURLWithPath: "/tmp/rec/Meeting-2026-10-15-1430.m4a")
+        let mic = RecordingLogic.stemURL(for: meeting, source: .microphone)
+        let system = RecordingLogic.stemURL(for: meeting, source: .system)
+        check(mic.lastPathComponent == "Meeting-2026-10-15-1430.stem-mic.m4a", "mic \(mic.lastPathComponent)")
+        check(system.lastPathComponent == "Meeting-2026-10-15-1430.stem-system.m4a", "system \(system.lastPathComponent)")
+        let part = RecordingLogic.partURL(for: meeting, at: Date(timeIntervalSince1970: 5))
+        for url in [mic, system, RecordingLogic.partialURL(for: mic), RecordingLogic.stemURL(for: part, source: .system)] {
+            check(!LibraryLogic.isListed(url.lastPathComponent), "\(url.lastPathComponent) hidden")
+        }
+        check(RecordingLogic.stems(of: meeting) { _ in true } == [mic, system], "both stems")
+        check(RecordingLogic.stems(of: meeting) { $0 == mic } == nil, "only with every stem")
+    }),
+
+    ("the mixer writes stems that line up with the mix", {
+        let url = tempURL()
+        let stems = AudioSource.allCases.map { RecordingLogic.stemURL(for: url, source: $0) }
+        defer { ([url] + stems).forEach { try? FileManager.default.removeItem(at: $0) } }
+        let mixer = try AudioMixer(url: url, stems: true)
+        feed(mixer, .microphone, sine(440, seconds: 0.6))
+        mixer.pause()
+        feed(mixer, .system, sine(660, seconds: 0.5))
+        mixer.resume()
+        feed(mixer, .system, sine(660, seconds: 0.4))
+        mixer.finish()
+        let mix = try seconds(of: url)
+        for stem in stems {
+            check(!FileManager.default.fileExists(atPath: RecordingLogic.partialURL(for: stem).path), "partial moved")
+            let duration = try seconds(of: stem)
+            check(abs(duration - mix) < 0.05, "\(stem.lastPathComponent) \(duration)s vs mix \(mix)s")
+        }
+        check(abs(mix - 1.0) < 0.15, "paused audio left out of the mix, \(mix)")
+        let mic = try decode(stems[0]), system = try decode(stems[1])
+        check(rms(Array(mic.prefix(24_000))) > 0.1 && rms(Array(system.prefix(24_000))) < 0.01, "first half is mine")
+        check(rms(Array(mic.suffix(14_400))) < 0.01 && rms(Array(system.suffix(14_400))) > 0.1, "the rest is theirs")
+    }),
+
+    ("a part's stems are appended to the meeting's, or dropped when they would not line up", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("stems-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let meeting = folder.appendingPathComponent("Meeting-2026-10-15-1430.m4a")
+        let part = RecordingLogic.partURL(for: meeting, at: Date())
+        func record(_ url: URL, _ length: Double) throws {
+            let mixer = try AudioMixer(url: url, stems: true)
+            feed(mixer, .microphone, sine(440, seconds: length))
+            mixer.finish()
+        }
+        try record(meeting, 1.2)
+        try record(part, 0.8)
+        try blocking {
+            try await AudioAppender.append(part, to: meeting)
+            await AudioAppender.appendStems(of: part, to: meeting)
+        }
+        let stems = RecordingLogic.stems(of: meeting) ?? []
+        check(stems.count == 2, "stems kept")
+        for stem in stems { check(abs(((try? seconds(of: stem)) ?? 0) - 2.0) < 0.1, "\(stem.lastPathComponent) appended") }
+        check(RecordingLogic.stems(of: part) == nil, "part stems consumed")
+
+        let next = RecordingLogic.partURL(for: meeting, at: Date().addingTimeInterval(60))
+        try record(next, 0.5)
+        try FileManager.default.removeItem(at: stems[1])
+        try blocking { await AudioAppender.appendStems(of: next, to: meeting) }
+        let left = try FileManager.default.contentsOfDirectory(atPath: folder.path).filter { $0.contains(RecordingLogic.stemMarker) }
+        check(left.isEmpty, "a meeting without every stem falls back to its mix, left \(left)")
+    }),
+
+    ("stems merge by start time with a speaker each", {
+        let merged = ProcessingLogic.mergeSpeakers(
+            you: [segment(1, "Hi everyone."), segment(20, "I will send the report.")],
+            others: [segment(5, "Hello, let us start."), segment(20, "Great."), segment(30, "Thanks.")])
+        check(merged == [segment(1, "Hi everyone.", .you), segment(5, "Hello, let us start.", .others),
+                         segment(20, "Great.", .others), segment(20, "I will send the report.", .you),
+                         segment(30, "Thanks.", .others)], "merged \(merged)")
+        check(ProcessingLogic.mergeSpeakers(you: [], others: []).isEmpty, "empty")
+    }),
+
+    ("speaker bleed into the microphone is dropped in favour of the system audio", {
+        let others = [segment(10, "The release is on Tuesday, right?"), segment(40, "Yes.")]
+        let you = [segment(10.6, "the release is on tuesday right"), segment(12, "Right, Tuesday it is."),
+                   segment(20, "The release is on Tuesday, right?"), segment(41, "Yes, I think so, I agree.")]
+        let merged = ProcessingLogic.mergeSpeakers(you: you, others: others)
+        check(merged.map(\.start) == [10, 12, 20, 40, 41], "echo at 10.6 dropped, \(merged.map(\.start))")
+        check(merged.filter { $0.speaker == .others }.count == 2, "system segments kept")
+        check(ProcessingLogic.similarity("Är du där?", "ar DU dar") == 1, "case, accents and punctuation ignored")
+        check(ProcessingLogic.similarity("Yes.", "Yes, I think so, I agree.") < ProcessingLogic.echoSimilarity, "different")
+        check(ProcessingLogic.similarity("", "Yes") == 0, "nothing to compare")
+    }),
+
+    ("transcript paragraphs are grouped by speaker", {
+        let segments = [segment(0, "Hej.", .you), segment(4, "Hur går det?", .you), segment(8, "Bra.", .others),
+                        segment(12, "Vi börjar.", .others), segment(60, "Punkt två.", .others), segment(65, "Okej.", .you)]
+        let turns = LibraryLogic.speakerTurns(segments)
+        check(turns.map(\.speaker) == [.you, .others, .you], "turns \(turns.map(\.speaker))")
+        check(turns[0].paragraphs == [segment(0, "Hej. Hur går det?", .you)], "same speaker joined")
+        check(turns[1].paragraphs == [segment(8, "Bra. Vi börjar.", .others), segment(60, "Punkt två.", .others)],
+              "a turn keeps its paragraphs")
+        check(LibraryLogic.paragraphs([segment(0, "A.", .you), segment(2, "B.", .others)]).count == 2, "speaker breaks a paragraph")
+        let plain = LibraryLogic.speakerTurns([segment(0, "A."), segment(5, "B.")])
+        check(plain == [SpeakerTurn(speaker: nil, paragraphs: [segment(0, "A. B.")])], "without speakers as before")
+    }),
+
+    ("lines name the speaker in the meeting language", {
+        check(segment(4, "Hej.", .you).line(.swedish) == "[00:00:04] Du: Hej.", "Du")
+        check(segment(4, "Hej.", .others).line(.swedish) == "[00:00:04] Övriga: Hej.", "Övriga")
+        check(segment(4, "Hi.", .others).line(.english) == "[00:00:04] Others: Hi.", "Others")
+        check(segment(4, "Hi.").line(.english) == "[00:00:04] Hi.", "no speaker")
+        let markdown = ProcessingLogic.transcriptMarkdown(audioName: "Meeting-x.m4a", language: .english, engine: "x",
+                                                          segments: [segment(1, "Hi.", .you), segment(3, "Hello.", .others)])
+        check(markdown.contains("[00:00:01] You: Hi.\n\n[00:00:03] Others: Hello."), "markdown \(markdown)")
     }),
 ]

@@ -54,7 +54,7 @@ final class Recorder: ObservableObject {
         do {
             try await Permissions.ensureMicrophone()
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let mixer = try AudioMixer(url: url)
+            let mixer = try AudioMixer(url: url, stems: true)
             self.mixer = mixer
             try microphone.start(into: mixer)
             startSystemAudio(into: mixer)
@@ -98,6 +98,7 @@ final class Recorder: ObservableObject {
         if continuing, let meeting {
             do {
                 try await AudioAppender.append(url, to: meeting)
+                await AudioAppender.appendStems(of: url, to: meeting)
                 url = meeting
             } catch {
                 errorMessage = error.localizedDescription

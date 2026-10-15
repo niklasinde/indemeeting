@@ -107,6 +107,7 @@ final class MeetingStore: @unchecked Sendable {
             DELETE FROM meetings_fts WHERE rowid = old.id;
         END;
         """,
+        "ALTER TABLE transcript_segments ADD COLUMN speaker TEXT",
     ]
 
     private static let meetingColumns = """
@@ -160,8 +161,10 @@ final class MeetingStore: @unchecked Sendable {
     func content(of audioFile: String) throws -> MeetingContent? {
         try read {
             guard let meeting = try meeting(audioFile) else { return nil }
-            let segments = try db.query("SELECT start, text FROM transcript_segments WHERE meeting_id = ? ORDER BY position",
-                                        [meeting.id]) { TranscriptSegment(start: $0.double(0), text: $0.string(1)) }
+            let segments = try db.query("SELECT start, text, speaker FROM transcript_segments WHERE meeting_id = ? ORDER BY position",
+                                        [meeting.id]) {
+                TranscriptSegment(start: $0.double(0), text: $0.string(1), speaker: $0.optionalString(2).flatMap(Speaker.init))
+            }
             return MeetingContent(meeting: meeting, segments: segments, summary: try summary(of: meeting))
         }
     }
@@ -322,8 +325,8 @@ final class MeetingStore: @unchecked Sendable {
     private func replaceSegments(_ id: Int64, _ segments: [TranscriptSegment]) throws {
         try db.run("DELETE FROM transcript_segments WHERE meeting_id = ?", [id])
         for (position, segment) in segments.enumerated() {
-            try db.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (?, ?, ?, ?)",
-                       [id, position, segment.start, segment.text])
+            try db.run("INSERT INTO transcript_segments (meeting_id, position, start, text, speaker) VALUES (?, ?, ?, ?, ?)",
+                       [id, position, segment.start, segment.text, segment.speaker?.rawValue])
         }
     }
 
