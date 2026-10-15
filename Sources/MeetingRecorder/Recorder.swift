@@ -46,12 +46,21 @@ final class Recorder: ObservableObject {
         }
     }
 
-    func stop() async {
-        guard isRecording else { return }
+    @discardableResult
+    func stop(reveal: Bool = true) async -> URL? {
+        guard isRecording else { return nil }
         isRecording = false
         let url = outputURL
         await teardown()
-        if let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        if reveal, let url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        return url
+    }
+
+    func recordTest(seconds: Double = 5) async -> URL? {
+        await start()
+        guard isRecording else { return nil }
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        return await stop(reveal: false)
     }
 
     func openFolder() {

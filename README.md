@@ -18,6 +18,12 @@ Swift toolchain. If `swift build` fails (e.g. a broken Command Line Tools SwiftP
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
 
+## First-run setup
+
+On first launch a Setup window opens (it does not depend on the menu-bar icon being visible). It walks through
+Microphone, Screen Recording (with a Relaunch button), a 5-second test recording and a tip on finding the menu-bar
+icon. Reopen it any time from the menu bar via "Setup & Help…".
+
 ## Permissions
 
 On first start macOS asks for:

@@ -15,9 +15,10 @@ else
 fi
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MeetingRecorder"
 cp Info.plist "$APP/Contents/Info.plist"
+cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 codesign --force --deep --sign - --entitlements MeetingRecorder.entitlements "$APP"
 echo "Built $(pwd)/$APP"

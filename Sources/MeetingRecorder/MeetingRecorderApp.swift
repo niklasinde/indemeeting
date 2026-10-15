@@ -2,14 +2,32 @@ import SwiftUI
 
 @main
 struct MeetingRecorderApp: App {
-    @StateObject private var recorder = Recorder()
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: recorder)
+            MenuContent(recorder: delegate.recorder)
         } label: {
-            Image(nsImage: MenuIcon.image(recording: recorder.isRecording))
+            MenuLabel(recorder: delegate.recorder)
         }
+    }
+}
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    let recorder = Recorder()
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        OnboardingWindow.shared.recorder = recorder
+        OnboardingWindow.shared.showIfFirstLaunch()
+    }
+}
+
+struct MenuLabel: View {
+    @ObservedObject var recorder: Recorder
+
+    var body: some View {
+        Image(nsImage: MenuIcon.image(recording: recorder.isRecording))
     }
 }
 
@@ -32,6 +50,7 @@ struct MenuContent: View {
         }
         Divider()
         Button("Open Recordings Folder") { recorder.openFolder() }
+        Button("Setup & Help…") { OnboardingWindow.shared.show() }
         Button("Quit") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
     }
