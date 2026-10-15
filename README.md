@@ -10,6 +10,8 @@ summed, and encoded. Works independently of Notion or any other meeting tool.
 
 Produces `MeetingRecorder.app`, ad-hoc signed with `MeetingRecorder.entitlements`. Requires macOS 13+ and the
 Swift toolchain. If `swift build` fails (e.g. a broken Command Line Tools SwiftPM), the script falls back to `swiftc`.
+Both scripts compile against the `MacOSX.sdk` symlink next to the default SDK (`scripts/sdk.sh`), which matches the
+installed compiler even when a newer, incompatible SDK is left behind; set `SDKROOT` to override.
 
 ## Test
 
@@ -29,8 +31,16 @@ shows elapsed time. Stop Recording reveals the file in Finder.
 ## First-run setup
 
 On first launch a Setup window opens (it does not depend on the menu-bar icon being visible). It walks through
-Microphone, optional Screen Recording (with a Relaunch button), a 5-second test recording and a tip on finding the menu-bar
+Microphone, optional Screen Recording (with a Relaunch button), optional Notifications, a 5-second test recording and a tip on finding the menu-bar
 icon. Reopen it any time from the menu bar via "Setup & Help…".
+
+## Meeting notifications
+
+When another app keeps the default input device busy for more than 3 seconds (CoreAudio
+`kAudioDevicePropertyDeviceIsRunningSomewhere`, no extra permission) and the app is not recording, a notification
+"Meeting started — record it?" appears, naming Zoom, Teams, FaceTime, Slack, Notion or the frontmost browser when one is found.
+Its Record button, or clicking it, starts recording. It is shown once per meeting and reset when the microphone is released,
+so stopping your own recording mid-meeting does not bring it back. Turn it off with "Notify when a meeting starts" in the menu.
 
 ## Permissions
 

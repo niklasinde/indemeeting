@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+source scripts/sdk.sh
 
 APP=MeetingRecorder.app
 BIN=.build/release/MeetingRecorder

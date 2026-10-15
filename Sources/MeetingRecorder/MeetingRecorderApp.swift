@@ -16,6 +16,11 @@ struct MeetingRecorderApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let recorder = Recorder()
+    private lazy var meetingWatcher = MeetingWatcher(recorder: recorder)
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        meetingWatcher.start()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         OnboardingWindow.shared.recorder = recorder
@@ -38,6 +43,7 @@ struct MenuLabel: View {
 
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
+    @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
 
     var body: some View {
         if recorder.isRecording {
@@ -58,6 +64,7 @@ struct MenuContent: View {
             }
         }
         Divider()
+        Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)
         Button("Open Recordings Folder") { recorder.openFolder() }
         Button("Setup & Help…") { OnboardingWindow.shared.show() }
         Button("Quit") { NSApplication.shared.terminate(nil) }

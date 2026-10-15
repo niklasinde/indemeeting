@@ -135,6 +135,55 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(abs(total - 3) < 0.2, "total duration \(total) should be about 3s")
     }),
 
+    ("meeting notification waits for the mic to stay busy", {
+        var detector = MeetingDetector()
+        let start = Date()
+        check(detector.update(micBusy: false, recording: false, now: start) == .idle, "idle mic")
+        check(detector.update(micBusy: true, recording: false, now: start) == .wait(MeetingDetector.threshold), "starts waiting")
+        check(detector.update(micBusy: true, recording: false, now: start + 1) == .wait(MeetingDetector.threshold - 1), "still waiting")
+        check(detector.update(micBusy: true, recording: false, now: start + 3) == .notify, "notifies after threshold")
+    }),
+
+    ("a short mic blip does not notify", {
+        var detector = MeetingDetector()
+        let start = Date()
+        _ = detector.update(micBusy: true, recording: false, now: start)
+        check(detector.update(micBusy: false, recording: false, now: start + 2) == .idle, "released early")
+        check(detector.update(micBusy: true, recording: false, now: start + 4) == .wait(MeetingDetector.threshold), "timer restarts")
+    }),
+
+    ("notifies once per meeting and again after it ends", {
+        var detector = MeetingDetector()
+        let start = Date()
+        _ = detector.update(micBusy: true, recording: false, now: start)
+        check(detector.update(micBusy: true, recording: false, now: start + 3) == .notify, "first notify")
+        check(detector.update(micBusy: true, recording: false, now: start + 60) == .idle, "no nagging")
+        check(detector.update(micBusy: false, recording: false, now: start + 61) == .idle, "meeting ended")
+        _ = detector.update(micBusy: true, recording: false, now: start + 100)
+        check(detector.update(micBusy: true, recording: false, now: start + 103) == .notify, "next meeting notifies")
+    }),
+
+    ("own recording never triggers or re-triggers a notification", {
+        var detector = MeetingDetector()
+        let start = Date()
+        _ = detector.update(micBusy: true, recording: false, now: start)
+        check(detector.update(micBusy: true, recording: true, now: start + 1) == .idle, "recording started before threshold")
+        check(detector.update(micBusy: true, recording: false, now: start + 30) == .idle, "stopping mid-meeting does not re-notify")
+        _ = detector.update(micBusy: false, recording: false, now: start + 31)
+        check(detector.update(micBusy: true, recording: true, now: start + 40) == .idle, "manual recording with idle mic")
+        check(detector.update(micBusy: true, recording: false, now: start + 50) == .idle, "after manual stop")
+    }),
+
+    ("meeting app name prefers the frontmost known app", {
+        let running = ["com.apple.finder", "com.tinyspeck.slackmacgap", "us.zoom.xos", "com.google.Chrome"]
+        check(MeetingApps.name(frontmost: "com.google.Chrome", running: running) == "Google Chrome", "frontmost browser")
+        check(MeetingApps.name(frontmost: "com.tinyspeck.slackmacgap", running: running) == "Slack", "frontmost dedicated")
+        check(MeetingApps.name(frontmost: "com.apple.finder", running: running) == "Zoom", "running dedicated by priority")
+        check(MeetingApps.name(frontmost: nil, running: ["com.google.Chrome"]) == nil, "background browser ignored")
+        check(MeetingApps.notificationBody(appName: nil) == "Microphone in use", "no app")
+        check(MeetingApps.notificationBody(appName: "Zoom") == "Zoom \u{00B7} microphone in use", "with app")
+    }),
+
     ("a source that never delivers does not block the other", {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }

@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import CoreGraphics
+import UserNotifications
 
 enum PermissionError: LocalizedError {
     case microphone
@@ -26,12 +27,25 @@ enum Permissions {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
+    static var notificationStatus: UNAuthorizationStatus {
+        get async { await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
+    }
+
+    static func requestNotifications() async -> Bool {
+        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+    }
+
     static func openPrivacySettings(pane: String = "Privacy") {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") {
+        openSettings("com.apple.preference.security?\(pane)")
+    }
+
+    private static func openSettings(_ path: String) {
+        if let url = URL(string: "x-apple.systempreferences:\(path)") {
             NSWorkspace.shared.open(url)
         }
     }
 
+    static func openNotificationSettings() { openSettings("com.apple.preference.notifications") }
     static func openMicrophoneSettings() { openPrivacySettings(pane: "Privacy_Microphone") }
     static func openScreenRecordingSettings() { openPrivacySettings(pane: "Privacy_ScreenCapture") }
 

@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Combine
 import SwiftUI
+import UserNotifications
 
 @MainActor
 final class OnboardingWindow: NSObject, NSWindowDelegate {
@@ -44,18 +45,25 @@ final class OnboardingWindow: NSObject, NSWindowDelegate {
 final class OnboardingModel: ObservableObject {
     @Published var microphone = Permissions.microphoneStatus
     @Published var screenRecording = Permissions.screenRecordingGranted
+    @Published var notifications = UNAuthorizationStatus.notDetermined
     @Published var testing = false
     @Published var testFile: URL?
     @Published var testFailed = false
 
+    init() { refresh() }
+
     func refresh() {
         microphone = Permissions.microphoneStatus
         screenRecording = Permissions.screenRecordingGranted
+        Task { notifications = await Permissions.notificationStatus }
     }
 
-    func requestMicrophone() {
+    func requestMicrophone() { request { _ = await Permissions.requestMicrophone() } }
+    func requestNotifications() { request { _ = await Permissions.requestNotifications() } }
+
+    private func request(_ ask: @escaping () async -> Void) {
         Task {
-            _ = await Permissions.requestMicrophone()
+            await ask()
             refresh()
         }
     }
@@ -111,7 +119,15 @@ struct OnboardingView: View {
                 }
             }
 
-            step("3. Record a 5-second test", done: testFile != nil, detail: testDetail) {
+            step("3. Notifications (Optional)", done: notificationsAllowed, detail: notificationDetail) {
+                if model.notifications == .denied {
+                    Button("Open Notification Settings") { Permissions.openNotificationSettings() }
+                } else if !notificationsAllowed {
+                    Button("Allow Notifications") { model.requestNotifications() }
+                }
+            }
+
+            step("4. Record a 5-second test", done: testFile != nil, detail: testDetail) {
                 Button(model.testing ? "Recording…" : "Record Test") { model.runTest(with: recorder) }
                     .disabled(model.testing || microphone != .authorized)
                 if let testFile {
@@ -142,6 +158,13 @@ struct OnboardingView: View {
         .padding(24)
         .frame(width: 520)
         .onReceive(poll) { _ in model.refresh() }
+    }
+
+    private var notificationsAllowed: Bool { [.authorized, .provisional].contains(model.notifications) }
+
+    private var notificationDetail: String {
+        if model.notifications == .denied { return "Turned off. Enable them in Notification settings." }
+        return "Offers to record when another app starts using the microphone, e.g. a Zoom or Teams call."
     }
 
     private var testDetail: String {
