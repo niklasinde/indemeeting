@@ -8,18 +8,19 @@ summed, and encoded. Works independently of Notion or any other meeting tool.
 
     ./build.sh
 
-Produces `MeetingRecorder.app`, ad-hoc signed with `MeetingRecorder.entitlements`. Requires macOS 13+ and the
-Swift toolchain. If `swift build` fails (e.g. a broken Command Line Tools SwiftPM), the script falls back to `swiftc`.
-Both scripts compile against the `MacOSX.sdk` symlink next to the default SDK (`scripts/sdk.sh`), which matches the
-installed compiler even when a newer, incompatible SDK is left behind; set `SDKROOT` to override.
+Produces `MeetingRecorder.app`, ad-hoc signed with `MeetingRecorder.entitlements`. Recording needs macOS 13+;
+transcription and summaries need macOS 26+. Builds with `swift build` (Command Line Tools 27 / Swift 6.4 or Xcode); if
+SwiftPM fails, the script falls back to plain `swiftc`.
 
 ## Test
 
     ./test.sh
+    swift test
 
-Compiles the mixer and pure recording helpers with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs
-them (exit code is non-zero on failure), so it needs neither SwiftPM nor Xcode. On a machine with a working toolchain
-`swift test` runs the same tests through XCTest. Tests that need real permissions or hardware are not covered.
+`test.sh` compiles the mixer and the pure recording and processing helpers (chunking, timestamps, markdown, file
+names) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
+failure). `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
+need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
 ## Run
 
@@ -27,6 +28,37 @@ them (exit code is non-zero on failure), so it needs neither SwiftPM nor Xcode. 
 
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
+
+## Transcripts and summaries
+
+Everything runs on the Mac; no audio or text leaves it. After Stop Recording the app transcribes the file and then
+summarises it, writing next to the recording:
+
+- `Meeting-YYYY-MM-DD-HHmm.transcript.md`: one `[hh:mm:ss] sentence` line per sentence.
+- `Meeting-YYYY-MM-DD-HHmm.summary.md`: title, short summary, key points, decisions and action items (with owners when
+  they are named).
+
+The menu shows "Transcribing…", "Summarising…" and then "Open summary"; a notification opens the summary when it is
+ready. "Transcribe & summarise a recording…" processes any existing audio file. Errors are shown in the menu and as a
+notification. The audio file is only read, never changed or deleted.
+
+"Meeting language" (Svenska / English, default Svenska) picks the transcription language and the language of the
+summary.
+
+- Transcription uses `SpeechAnalyzer` (macOS 26). English uses `SpeechTranscriber`. Swedish is not supported by
+  `SpeechTranscriber` (checked on macOS 26.6), so it uses `DictationTranscriber`, the on-device dictation model in the same
+  API. Missing language models are downloaded through `AssetInventory` on first use. No permission prompt is needed.
+- Summaries use Apple's on-device Foundation Models (`SystemLanguageModel`), which require Apple Intelligence. Its
+  context is about 4,096 tokens, so long transcripts are summarised in parts and the part summaries are combined. If the
+  model is unavailable (Apple Intelligence off, Mac not eligible, model still downloading, language unsupported) the
+  transcript is still written, the summary file and the menu say why, and how to enable it in System Settings >
+  Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards.
+
+For a headless check, run the binary with a file:
+
+    .build/debug/MeetingRecorder --process /path/to/Meeting.m4a --language sv-SE   # or en-US
+
+It prints the progress and output paths and exits non-zero on failure, without starting the menu-bar app.
 
 ## First-run setup
 

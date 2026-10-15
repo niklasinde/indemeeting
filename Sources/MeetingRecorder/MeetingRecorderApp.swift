@@ -1,12 +1,21 @@
 import SwiftUI
 
 @main
+enum Main {
+    static func main() {
+        if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
+            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current)
+        }
+        MeetingRecorderApp.main()
+    }
+}
+
 struct MeetingRecorderApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: delegate.recorder)
+            MenuContent(recorder: delegate.recorder, processor: delegate.processor)
         } label: {
             MenuLabel(recorder: delegate.recorder)
         }
@@ -16,7 +25,9 @@ struct MeetingRecorderApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let recorder = Recorder()
-    private lazy var meetingWatcher = MeetingWatcher(recorder: recorder)
+    private lazy var notifier = Notifier { [recorder] in await recorder.start() }
+    lazy var processor = MeetingProcessor(notifier: notifier)
+    private lazy var meetingWatcher = MeetingWatcher(recorder: recorder, notifier: notifier)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         meetingWatcher.start()
@@ -43,12 +54,16 @@ struct MenuLabel: View {
 
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
+    @ObservedObject var processor: MeetingProcessor
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
+    @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
 
     var body: some View {
         if recorder.isRecording {
             Text("Recording  \(recorder.elapsedText)")
-            Button("Stop Recording") { Task { await recorder.stop() } }
+            Button("Stop Recording") {
+                Task { if let url = await recorder.stop() { processor.process(url) } }
+            }
         } else {
             Button("Start Recording") { Task { await recorder.start() } }
         }
@@ -62,6 +77,16 @@ struct MenuContent: View {
             if recorder.permissionDenied {
                 Button("Open Privacy Settings") { Permissions.openPrivacySettings() }
             }
+        }
+        Divider()
+        if let status = processor.status { Text(status) }
+        if let message = processor.errorMessage { Text(message) }
+        if let summary = processor.latestSummary {
+            Button("Open summary") { NSWorkspace.shared.open(summary) }
+        }
+        Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
+        Picker("Meeting language", selection: $language) {
+            ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
         }
         Divider()
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)

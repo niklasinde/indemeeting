@@ -1,22 +1,21 @@
 import AppKit
 import Combine
 import CoreAudio
-import UserNotifications
 
 @MainActor
 final class MeetingWatcher {
     static let enabledKey = "notifyOnMeetingStart"
 
     private let recorder: Recorder
-    private let notifier: MeetingNotifier
+    private let notifier: Notifier
     private var detector = MeetingDetector()
     private var monitor: MicrophoneActivityMonitor?
     private var recheck: Task<Void, Never>?
     private var subscription: AnyCancellable?
 
-    init(recorder: Recorder) {
+    init(recorder: Recorder, notifier: Notifier) {
         self.recorder = recorder
-        notifier = MeetingNotifier { await recorder.start() }
+        self.notifier = notifier
         UserDefaults.standard.register(defaults: [Self.enabledKey: true])
     }
 
@@ -30,7 +29,7 @@ final class MeetingWatcher {
 
     private func evaluate(recording: Bool? = nil) {
         let busy = monitor?.isInUse ?? false
-        if !busy { notifier.withdraw() }
+        if !busy { notifier.withdrawMeetingStarted() }
         recheck?.cancel()
         switch detector.update(micBusy: busy, recording: recording ?? recorder.isRecording, now: Date()) {
         case .idle:
@@ -41,7 +40,7 @@ final class MeetingWatcher {
                 if !Task.isCancelled { self?.evaluate() }
             }
         case .notify:
-            if enabled { notifier.post(appName: Self.meetingAppName) }
+            if enabled { notifier.postMeetingStarted(appName: Self.meetingAppName) }
         }
     }
 
@@ -49,47 +48,6 @@ final class MeetingWatcher {
         let workspace = NSWorkspace.shared
         return MeetingApps.name(frontmost: workspace.frontmostApplication?.bundleIdentifier,
                                 running: workspace.runningApplications.compactMap(\.bundleIdentifier))
-    }
-}
-
-final class MeetingNotifier: NSObject, UNUserNotificationCenterDelegate {
-    private static let category = "meeting-started"
-    private static let recordAction = "record"
-    private static let identifier = "meeting-started"
-
-    private let onRecord: @MainActor @Sendable () async -> Void
-    private let center = UNUserNotificationCenter.current()
-
-    init(onRecord: @escaping @MainActor @Sendable () async -> Void) {
-        self.onRecord = onRecord
-        super.init()
-        center.delegate = self
-        let record = UNNotificationAction(identifier: Self.recordAction, title: "Record", options: [])
-        center.setNotificationCategories([UNNotificationCategory(identifier: Self.category, actions: [record],
-                                                                 intentIdentifiers: [], options: [])])
-    }
-
-    func post(appName: String?) {
-        let content = UNMutableNotificationContent()
-        content.title = "Meeting started \u{2014} record it?"
-        content.body = MeetingApps.notificationBody(appName: appName)
-        content.categoryIdentifier = Self.category
-        content.sound = .default
-        center.add(UNNotificationRequest(identifier: Self.identifier, content: content, trigger: nil))
-    }
-
-    func withdraw() {
-        center.removeDeliveredNotifications(withIdentifiers: [Self.identifier])
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter,
-                                willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
-    }
-
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard [Self.recordAction, UNNotificationDefaultActionIdentifier].contains(response.actionIdentifier) else { return }
-        await onRecord()
     }
 }
 

@@ -194,4 +194,110 @@ let allTests: [(name: String, run: () throws -> Void)] = [
             check(seconds > 1.0, "mic audio should flow without a system source, got \(seconds)s")
         }
     }),
+
+    ("timestamps are bracketed hh:mm:ss", {
+        check(ProcessingLogic.timestamp(0) == "[00:00:00]", "zero")
+        check(ProcessingLogic.timestamp(83.7) == "[00:01:23]", "truncates")
+        check(ProcessingLogic.timestamp(3 * 3600 + 5) == "[03:00:05]", "hours")
+        check(ProcessingLogic.timestamp(-1) == "[00:00:00]", "negative clamps")
+        check(TranscriptSegment(start: 61, text: "Hej").line == "[00:01:01] Hej", "segment line")
+    }),
+
+    ("timed words are grouped into timestamped sentences", {
+        let pieces: [(text: String, start: TimeInterval?)] = [
+            ("Hej", 1.0), (" alla.", 1.4), (" ", nil), ("Nästa", 4.2), (" punkt", 4.6), ("?", nil), (" Sista", nil), (" ord", 9),
+        ]
+        let segments = ProcessingLogic.sentences(pieces, from: 0.5)
+        check(segments == [TranscriptSegment(start: 1, text: "Hej alla."), TranscriptSegment(start: 4.2, text: "Nästa punkt?"),
+                           TranscriptSegment(start: 4.6, text: "Sista ord")], "got \(segments)")
+        check(ProcessingLogic.sentences([("Untimed text", nil)], from: 7) == [TranscriptSegment(start: 7, text: "Untimed text")], "fallback")
+        check(ProcessingLogic.sentences([(" ", nil)], from: 0).isEmpty, "whitespace only")
+    }),
+
+    ("output files sit next to the recording", {
+        let audio = URL(fileURLWithPath: "/tmp/rec/Meeting-2026-10-15-1430.m4a")
+        check(ProcessingLogic.transcriptURL(for: audio).path == "/tmp/rec/Meeting-2026-10-15-1430.transcript.md", "transcript")
+        check(ProcessingLogic.summaryURL(for: audio).path == "/tmp/rec/Meeting-2026-10-15-1430.summary.md", "summary")
+        let dotted = URL(fileURLWithPath: "/tmp/team.sync.m4a")
+        check(ProcessingLogic.summaryURL(for: dotted).lastPathComponent == "team.sync.summary.md", "keeps inner dots")
+        check(ProcessingLogic.transcriptURL(for: audio) != audio && ProcessingLogic.summaryURL(for: audio) != audio, "never the audio")
+    }),
+
+    ("chunks keep lines whole and respect the limit", {
+        let lines = (1...10).map { "[00:00:0\($0 % 10)] " + String(repeating: "a", count: 20) }
+        let chunks = ProcessingLogic.chunks(lines, maxCharacters: 100)
+        check(chunks.allSatisfy { $0.count <= 100 }, "limit, got \(chunks.map(\.count))")
+        check(chunks.count == 4, "31-char lines, three per chunk: got \(chunks.count)")
+        check(chunks.joined(separator: "\n") == lines.joined(separator: "\n"), "nothing lost or reordered")
+        check(ProcessingLogic.chunks([], maxCharacters: 100).isEmpty, "empty")
+        check(ProcessingLogic.chunks(["short"], maxCharacters: 100) == ["short"], "single")
+    }),
+
+    ("an overlong line is split on words, an overlong word hard", {
+        let line = (1...30).map { "word\($0)" }.joined(separator: " ")
+        let chunks = ProcessingLogic.chunks([line], maxCharacters: 40)
+        check(chunks.allSatisfy { $0.count <= 40 }, "limit, got \(chunks.map(\.count))")
+        check(chunks.joined(separator: " ").replacingOccurrences(of: "\n", with: " ") == line, "words preserved")
+        let word = String(repeating: "x", count: 95)
+        check(ProcessingLogic.chunks([word], maxCharacters: 40).map(\.count) == [40, 40, 15], "hard split")
+    }),
+
+    ("transcript markdown lists timestamped segments", {
+        let markdown = ProcessingLogic.transcriptMarkdown(
+            audioName: "Meeting-2026-10-15-1430.m4a", language: .swedish, engine: "DictationTranscriber",
+            segments: [TranscriptSegment(start: 1, text: "Hej alla."), TranscriptSegment(start: 83, text: "Nästa punkt.")])
+        check(markdown.hasPrefix("# Transkription: Meeting-2026-10-15-1430\n"), "title")
+        check(markdown.contains("Svenska \u{00B7} on-device DictationTranscriber"), "language and engine")
+        check(markdown.contains("[00:00:01] Hej alla.\n\n[00:01:23] Nästa punkt."), "segments")
+    }),
+
+    ("summary markdown renders every section in the meeting language", {
+        let summary = MeetingSummary(title: "Budget Q4", summary: "We reviewed the budget.",
+                                     keyPoints: ["Costs are up"], decisions: [],
+                                     actionItems: [.init(task: "Send report", owner: "Anna"), .init(task: "Book room", owner: nil)])
+        let english = ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .english)
+        check(english.hasPrefix("# Budget Q4\n"), "title")
+        check(english.contains("## Summary\n\nWe reviewed the budget."), "summary")
+        check(english.contains("## Key points\n\n- Costs are up"), "key points")
+        check(english.contains("## Decisions\n\nNone noted."), "empty decisions")
+        check(english.contains("- [ ] Send report \u{2014} **Anna**\n- [ ] Book room\n"), "action items with owner")
+        let swedish = ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .swedish)
+        check(swedish.contains("## Sammanfattning") && swedish.contains("## Åtgärder") && swedish.contains("Inga noterade."), "swedish headings")
+    }),
+
+    ("summary decodes from model JSON and renders notes", {
+        let json = #"{"title":"T","summary":"S","keyPoints":["k"],"decisions":["d"],"actionItems":[{"task":"x","owner":"Bo"},{"task":"y"}]}"#
+        let summary = try MeetingSummary.decode(json: json)
+        check(summary.actionItems == [.init(task: "x", owner: "Bo"), .init(task: "y", owner: nil)], "optional owner")
+        check(summary.notes == "T\nS\n- k\n- Decision: d\n- Action: x (owner: Bo)\n- Action: y", "notes, got \(summary.notes)")
+    }),
+
+    ("unavailable summary explains how to enable Apple Intelligence", {
+        let markdown = ProcessingLogic.unavailableMarkdown(.appleIntelligenceOff, audioName: "Meeting-x.m4a", language: .english)
+        check(markdown.hasPrefix("# No summary: Meeting-x\n"), "title")
+        check(markdown.contains("System Settings \u{2192} Apple Intelligence & Siri"), "settings path")
+        check(markdown.contains("`Meeting-x.transcript.md`"), "points to transcript")
+        check(SummaryUnavailable.unsupportedLanguage(.swedish).menuText.contains("Swedish"), "language named")
+    }),
+
+    ("meeting language defaults to Swedish and round-trips", {
+        let defaults = UserDefaults.standard
+        let saved = defaults.string(forKey: MeetingLanguage.storageKey)
+        defer { defaults.set(saved, forKey: MeetingLanguage.storageKey) }
+        defaults.removeObject(forKey: MeetingLanguage.storageKey)
+        check(MeetingLanguage.current == .swedish, "default")
+        defaults.set(MeetingLanguage.english.rawValue, forKey: MeetingLanguage.storageKey)
+        check(MeetingLanguage.current == .english, "stored")
+        check(MeetingLanguage.allCases.map(\.displayName) == ["Svenska", "English"], "picker names")
+    }),
+
+    ("stage text and command-line flag", {
+        check(ProcessingStage.transcribing.text(for: "a.m4a") == "Transcribing a.m4a\u{2026}", "transcribing")
+        check(ProcessingStage.summarising(part: 2, of: 3).text(for: "a.m4a") == "Summarising a.m4a\u{2026} (2/3)", "parts")
+        check(ProcessingStage.summarising(part: 1, of: 1).text(for: "a.m4a") == "Summarising a.m4a\u{2026}", "single")
+        check(ProcessingLogic.processArguments(["app"]) == nil, "no flag")
+        let job = ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a", "--language", "en-US"])
+        check(job?.audio.path == "/x/a.m4a" && job?.language == .english, "flag with language")
+        check(ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a"])?.language == nil, "language optional")
+    }),
 ]

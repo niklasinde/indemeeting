@@ -1,18 +1,16 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-source scripts/sdk.sh
 
 APP=MeetingRecorder.app
-BIN=.build/release/MeetingRecorder
 
-mkdir -p .build/release
-if ! swift build -c release; then
-    echo "swift build failed (broken SwiftPM toolchain?), falling back to swiftc"
-    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" -parse-as-library \
-        Sources/MeetingRecorder/*.swift -o "$BIN"
-else
+if swift build -c release; then
     BIN="$(swift build -c release --show-bin-path)/MeetingRecorder"
+else
+    echo "swift build failed, falling back to swiftc"
+    BIN=.build/swiftc/MeetingRecorder
+    mkdir -p "$(dirname "$BIN")"
+    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos13.0" -parse-as-library Sources/MeetingRecorder/*.swift -o "$BIN"
 fi
 
 rm -rf "$APP"

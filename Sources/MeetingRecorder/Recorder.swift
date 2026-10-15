@@ -19,7 +19,7 @@ final class Recorder: ObservableObject {
         RecordingLogic.elapsedText(elapsed)
     }
 
-    private static var folder: URL {
+    static var folder: URL {
         FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MeetingRecordings", isDirectory: true)
     }
