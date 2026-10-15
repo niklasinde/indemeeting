@@ -3,6 +3,11 @@ import SwiftUI
 @main
 enum Main {
     static func main() {
+        #if DEBUG
+        if let output = PreviewRenderer.outputFolder(CommandLine.arguments), #available(macOS 14, *) {
+            MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
+        }
+        #endif
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current)
         }

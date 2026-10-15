@@ -50,8 +50,9 @@ private struct OnDeviceSummarizer {
         }
         while summaries.count > 1 {
             await progress(.combining)
-            var groups = ProcessingLogic.chunks(summaries.map(\.notes), maxCharacters: maxCharacters)
-            if groups.count >= summaries.count { groups = [summaries.map(\.notes).joined(separator: "\n\n")] }
+            let notes = summaries.map { ProcessingLogic.summaryMarkdown($0, audioName: nil, language: language) }
+            var groups = ProcessingLogic.chunks(notes, maxCharacters: maxCharacters)
+            if groups.count >= summaries.count { groups = [notes.joined(separator: "\n\n")] }
             var combined: [MeetingSummary] = []
             for group in groups {
                 combined.append(try await respond("Summaries of consecutive parts of one meeting. Combine them into one summary of the whole meeting:\n\n\(group)"))
@@ -64,11 +65,14 @@ private struct OnDeviceSummarizer {
 
     private var instructions: String {
         """
-        You summarise meeting transcripts. Write every field in \(language.englishName). \
+        You write meeting notes from transcripts. Write every field in \(language.englishName). \
         Use only information from the input; do not invent facts, names or owners. \
-        title: a short descriptive meeting title. summary: two to four sentences. \
-        keyPoints: the main topics and facts. decisions: decisions that were made, empty if none. \
-        actionItems: concrete follow-ups; owner only when the input names who will do it.
+        title: a short title of at most eight words naming the kind of meeting and its main subjects, \
+        e.g. "Daily standup \u{2013} bug fixes, validation and release". \
+        actionItems: concrete follow-ups, each task starting with a verb and keeping any deadline; \
+        owner: the first name of the person who will do it, only when the input names them. \
+        topics: the two to five main subjects in the order discussed; each with a short title and two to five \
+        brief points holding the facts, numbers and decisions.
         """
     }
 
@@ -86,12 +90,14 @@ private struct OnDeviceSummarizer {
             .init(name: "task", schema: text),
             .init(name: "owner", description: "Person responsible, only if named", schema: text, isOptional: true),
         ])
+        let topic = DynamicGenerationSchema(name: "Topic", properties: [
+            .init(name: "title", schema: text),
+            .init(name: "points", schema: list),
+        ])
         let root = DynamicGenerationSchema(name: "MeetingSummary", properties: [
             .init(name: "title", schema: text),
-            .init(name: "summary", schema: text),
-            .init(name: "keyPoints", schema: list),
-            .init(name: "decisions", schema: list),
             .init(name: "actionItems", schema: DynamicGenerationSchema(arrayOf: actionItem)),
+            .init(name: "topics", schema: DynamicGenerationSchema(arrayOf: topic)),
         ])
         return try! GenerationSchema(root: root, dependencies: [])
     }()

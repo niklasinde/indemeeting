@@ -17,19 +17,13 @@ enum MeetingLanguage: String, CaseIterable, Identifiable {
 
     var headings: Headings {
         switch self {
-        case .swedish:
-            return Headings(transcript: "Transkription", summary: "Sammanfattning", keyPoints: "Viktiga punkter",
-                            decisions: "Beslut", actionItems: "Åtgärder", none: "Inga noterade.",
-                            unavailable: "Ingen sammanfattning")
-        case .english:
-            return Headings(transcript: "Transcript", summary: "Summary", keyPoints: "Key points",
-                            decisions: "Decisions", actionItems: "Action items", none: "None noted.",
-                            unavailable: "No summary")
+        case .swedish: return Headings(transcript: "Transkription", actionItems: "Åtgärdspunkter", unavailable: "Ingen sammanfattning")
+        case .english: return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary")
         }
     }
 
     struct Headings {
-        let transcript, summary, keyPoints, decisions, actionItems, none, unavailable: String
+        let transcript, actionItems, unavailable: String
     }
 }
 
@@ -46,22 +40,17 @@ struct MeetingSummary: Codable, Equatable {
         let owner: String?
     }
 
+    struct Topic: Codable, Equatable {
+        let title: String
+        let points: [String]
+    }
+
     let title: String
-    let summary: String
-    let keyPoints: [String]
-    let decisions: [String]
     let actionItems: [ActionItem]
+    let topics: [Topic]
 
     static func decode(json: String) throws -> MeetingSummary {
         try JSONDecoder().decode(MeetingSummary.self, from: Data(json.utf8))
-    }
-
-    var notes: String {
-        var lines = [title, summary]
-        lines += keyPoints.map { "- \($0)" }
-        lines += decisions.map { "- Decision: \($0)" }
-        lines += actionItems.map { "- Action: \($0.task)" + ($0.owner.map { " (owner: \($0))" } ?? "") }
-        return lines.joined(separator: "\n")
     }
 }
 
@@ -123,6 +112,12 @@ enum ProcessingLogic {
 
     static func transcriptURL(for audio: URL) -> URL { sibling(of: audio, suffix: "transcript.md") }
     static func summaryURL(for audio: URL) -> URL { sibling(of: audio, suffix: "summary.md") }
+    static func notesURL(for audio: URL) -> URL { sibling(of: audio, suffix: "notes.md") }
+    static func metaURL(for audio: URL) -> URL { sibling(of: audio, suffix: "meta.json") }
+
+    static func companionURLs(for audio: URL) -> [URL] {
+        [transcriptURL(for: audio), summaryURL(for: audio), notesURL(for: audio), metaURL(for: audio)]
+    }
 
     private static func sibling(of audio: URL, suffix: String) -> URL {
         audio.deletingPathExtension().appendingPathExtension(suffix)
@@ -197,33 +192,22 @@ enum ProcessingLogic {
         """
     }
 
-    static func summaryMarkdown(_ summary: MeetingSummary, audioName: String, language: MeetingLanguage) -> String {
-        let headings = language.headings
-        let actionItems = summary.actionItems.map { item in
-            "- [ ] \(item.task)" + (item.owner.map { " \u{2014} **\($0)**" } ?? "")
+    /// `# Title`, `## Action items` as `- [ ] Owner: task` lines, then one `## Topic` with bullets per topic.
+    static func summaryMarkdown(_ summary: MeetingSummary, audioName: String?, language: MeetingLanguage) -> String {
+        var parts = ["# \(summary.title)"]
+        if let audioName { parts.append("_\(audioName) \u{00B7} \(language.displayName) \u{00B7} on-device Apple Intelligence_") }
+        if !summary.actionItems.isEmpty {
+            parts.append("## \(language.headings.actionItems)")
+            parts.append(summary.actionItems.map { item in
+                let owner = item.owner?.trimmingCharacters(in: .whitespaces) ?? ""
+                return "- [ ] " + (owner.isEmpty ? "" : "\(owner): ") + item.task
+            }.joined(separator: "\n"))
         }
-        return """
-        # \(summary.title)
-
-        _\(audioName) \u{00B7} \(language.displayName) \u{00B7} on-device Apple Intelligence_
-
-        ## \(headings.summary)
-
-        \(summary.summary)
-
-        ## \(headings.keyPoints)
-
-        \(list(summary.keyPoints.map { "- \($0)" }, none: headings.none))
-
-        ## \(headings.decisions)
-
-        \(list(summary.decisions.map { "- \($0)" }, none: headings.none))
-
-        ## \(headings.actionItems)
-
-        \(list(actionItems, none: headings.none))
-
-        """
+        for topic in summary.topics where !topic.points.isEmpty {
+            parts.append("## \(topic.title)")
+            parts.append(topic.points.map { "- \($0)" }.joined(separator: "\n"))
+        }
+        return parts.joined(separator: "\n\n") + "\n"
     }
 
     static func unavailableMarkdown(_ reason: SummaryUnavailable, audioName: String, language: MeetingLanguage) -> String {
@@ -239,10 +223,6 @@ enum ProcessingLogic {
 
     private static func baseName(_ audioName: String) -> String {
         URL(fileURLWithPath: audioName).deletingPathExtension().lastPathComponent
-    }
-
-    private static func list(_ items: [String], none: String) -> String {
-        items.isEmpty ? none : items.joined(separator: "\n")
     }
 
     static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?)? {

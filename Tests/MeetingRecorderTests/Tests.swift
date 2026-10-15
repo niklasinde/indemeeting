@@ -314,25 +314,25 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(markdown.contains("[00:00:01] Hej alla.\n\n[00:01:23] Nästa punkt."), "segments")
     }),
 
-    ("summary markdown renders every section in the meeting language", {
-        let summary = MeetingSummary(title: "Budget Q4", summary: "We reviewed the budget.",
-                                     keyPoints: ["Costs are up"], decisions: [],
-                                     actionItems: [.init(task: "Send report", owner: "Anna"), .init(task: "Book room", owner: nil)])
+    ("summary markdown has a title, owner-first action items and topic sections", {
+        let summary = MeetingSummary(title: "Budget Q4",
+                                     actionItems: [.init(task: "Send report", owner: "Anna"), .init(task: "Book room", owner: " ")],
+                                     topics: [.init(title: "Costs", points: ["Up 8 %"]), .init(title: "Empty", points: [])])
         let english = ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .english)
-        check(english.hasPrefix("# Budget Q4\n"), "title")
-        check(english.contains("## Summary\n\nWe reviewed the budget."), "summary")
-        check(english.contains("## Key points\n\n- Costs are up"), "key points")
-        check(english.contains("## Decisions\n\nNone noted."), "empty decisions")
-        check(english.contains("- [ ] Send report \u{2014} **Anna**\n- [ ] Book room\n"), "action items with owner")
-        let swedish = ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .swedish)
-        check(swedish.contains("## Sammanfattning") && swedish.contains("## Åtgärder") && swedish.contains("Inga noterade."), "swedish headings")
+        check(english.hasPrefix("# Budget Q4\n\n_a.m4a \u{00B7} English"), "title and source")
+        check(english.contains("## Action items\n\n- [ ] Anna: Send report\n- [ ] Book room\n"), "action items, got \(english)")
+        check(english.contains("## Costs\n\n- Up 8 %\n") && !english.contains("## Empty"), "topics")
+        let swedish = ProcessingLogic.summaryMarkdown(summary, audioName: nil, language: .swedish)
+        check(swedish.contains("## Åtgärdspunkter") && !swedish.contains("_"), "swedish heading, no source line")
+        let none = ProcessingLogic.summaryMarkdown(MeetingSummary(title: "T", actionItems: [], topics: []), audioName: nil, language: .english)
+        check(none == "# T\n", "no empty sections, got \(none)")
     }),
 
-    ("summary decodes from model JSON and renders notes", {
-        let json = #"{"title":"T","summary":"S","keyPoints":["k"],"decisions":["d"],"actionItems":[{"task":"x","owner":"Bo"},{"task":"y"}]}"#
+    ("summary decodes from model JSON", {
+        let json = #"{"title":"T","actionItems":[{"task":"x","owner":"Bo"},{"task":"y"}],"topics":[{"title":"A","points":["p"]}]}"#
         let summary = try MeetingSummary.decode(json: json)
         check(summary.actionItems == [.init(task: "x", owner: "Bo"), .init(task: "y", owner: nil)], "optional owner")
-        check(summary.notes == "T\nS\n- k\n- Decision: d\n- Action: x (owner: Bo)\n- Action: y", "notes, got \(summary.notes)")
+        check(summary.topics == [.init(title: "A", points: ["p"])], "topics")
     }),
 
     ("unavailable summary explains how to enable Apple Intelligence", {
@@ -381,6 +381,7 @@ let allTests: [(name: String, run: () throws -> Void)] = [
             "Meeting-2026-10-15-1430.m4a", "Meeting-2026-10-15-1430.transcript.md", "Meeting-2026-10-15-1430.summary.md",
             "Meeting-2026-10-15-1430-2.m4a", "Meeting-2026-10-15-1430-10.m4a", "Meeting-2026-10-14-0900.m4a",
             "Meeting-2026-10-14-0900.transcript.md", "Meeting-2026-10-16-0800.recording.m4a", "notes.txt", "Interview.MP3",
+            "Meeting-2026-10-15-1430.notes.md", "Meeting-2026-10-15-1430.meta.json",
         ]
         let entries = LibraryLogic.recordings(in: folder, files: names.map { FolderItem(name: $0, created: created) },
                                               durations: ["Meeting-2026-10-14-0900.m4a": 61], timeZone: zone)
@@ -390,7 +391,8 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         ], "order \(entries.map(\.audio.lastPathComponent))")
         let first = entries[3]
         check(first.hasTranscript && first.hasSummary, "both companions")
-        check(first.files.map(\.lastPathComponent) == names.prefix(3).map { $0 }, "files to trash")
+        check(first.files.map(\.lastPathComponent) == Array(names.prefix(3)) + ["Meeting-2026-10-15-1430.notes.md",
+                                                                                  "Meeting-2026-10-15-1430.meta.json"], "files to trash")
         check(first.duration == nil, "duration unknown")
         let older = entries[4]
         check(older.hasTranscript && !older.hasSummary && older.duration == 61, "transcript only, duration")
@@ -413,16 +415,130 @@ let allTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("markdown is split into headings, lists and paragraphs", {
-        let markdown = ProcessingLogic.summaryMarkdown(
-            MeetingSummary(title: "Plan", summary: "We met.", keyPoints: ["Budget"], decisions: [],
-                           actionItems: [.init(task: "Send it", owner: "Ann")]),
-            audioName: "Meeting-x.m4a", language: .english)
-        let blocks = LibraryLogic.markdownBlocks(markdown)
-        check(blocks.first == .heading(level: 1, text: "Plan"), "title")
-        check(blocks.contains(.heading(level: 2, text: "Key points")), "section")
-        check(blocks.contains(.bullet("Budget")), "bullet")
-        check(blocks.contains(.task("Send it \u{2014} **Ann**")), "action item")
-        check(blocks.contains(.paragraph("None noted.")), "paragraph")
+        let blocks = LibraryLogic.markdownBlocks("# Plan\n\n## Topic\n- Budget\n- [ ] Ann: Send it\n- [x] Done\nWe met.")
+        check(blocks == [.heading(level: 1, text: "Plan"), .heading(level: 2, text: "Topic"), .bullet("Budget"),
+                         .task("Ann: Send it", done: false), .task("Done", done: true), .paragraph("We met.")], "got \(blocks)")
         check(LibraryLogic.markdownBlocks("#hashtag\n\n* star") == [.paragraph("#hashtag"), .bullet("star")], "edge cases")
+    }),
+
+    ("summary parses into action items and topic sections", {
+        let summary = MeetingSummary(title: "Standup", actionItems: [.init(task: "Validera 6 tickets innan kl. 16:00", owner: "Katja"),
+                                                                     .init(task: "Boka rum", owner: nil)],
+                                     topics: [.init(title: "Bugg \u{2013} Article rows", points: ["Fel avrundning", "Fix i dag"])])
+        let parsed = LibraryLogic.parseSummary(ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .swedish))
+        check(parsed.title == "Standup" && parsed.unavailable == nil, "title")
+        check(parsed.actionItems == [
+            ChecklistItem(key: "Katja: Validera 6 tickets innan kl. 16:00", task: "Validera 6 tickets innan kl. 16:00", owner: "Katja", done: false),
+            ChecklistItem(key: "Boka rum", task: "Boka rum", owner: nil, done: false),
+        ], "items \(parsed.actionItems)")
+        check(parsed.sections == [SummarySection(heading: "Bugg \u{2013} Article rows", lines: [.bullet("Fel avrundning"), .bullet("Fix i dag")])],
+              "sections \(parsed.sections)")
+    }),
+
+    ("checked state from the sidecar overrides the file", {
+        let markdown = "# T\n\n## Action items\n\n- [ ] Anna: Send report\n- [x] Book room\n- [ ] Call Bo\n"
+        let meta = MeetingMeta(checked: ["Anna: Send report": true, "Book room": false])
+        let items = LibraryLogic.parseSummary(markdown, meta: meta).actionItems
+        check(items.map(\.done) == [true, false, false], "merged \(items.map(\.done))")
+        check(LibraryLogic.parseSummary(markdown).actionItems.map(\.done) == [false, true, false], "file state without sidecar")
+    }),
+
+    ("older summary files still render", {
+        let legacy = """
+        # Budget Q4
+
+        _a.m4a \u{00B7} Svenska \u{00B7} on-device Apple Intelligence_
+
+        ## Sammanfattning
+
+        Vi gick igenom budgeten.
+
+        ## Viktiga punkter
+
+        - Kostnaderna ökar
+
+        ## Åtgärder
+
+        - [ ] Skicka rapporten \u{2014} **Anna**
+        """
+        let parsed = LibraryLogic.parseSummary(legacy)
+        check(parsed.title == "Budget Q4", "title")
+        check(parsed.actionItems.map(\.owner) == ["Anna"] && parsed.actionItems.first?.task == "Skicka rapporten", "legacy owner")
+        check(parsed.sections.map(\.heading) == ["Sammanfattning", "Viktiga punkter"], "sections \(parsed.sections)")
+        check(parsed.sections.first?.lines == [.paragraph("Vi gick igenom budgeten.")], "paragraph kept")
+        check(LibraryLogic.checklistItem("Ring kunden innan kl. 16: viktigt", done: false).owner == nil, "a sentence before the colon is no owner")
+    }),
+
+    ("the no-summary note is recognised with its reason", {
+        let markdown = ProcessingLogic.unavailableMarkdown(.appleIntelligenceOff, audioName: "Meeting-x.m4a", language: .swedish)
+        let parsed = LibraryLogic.parseSummary(markdown)
+        check(parsed.title == nil && parsed.isEmpty, "no title or content")
+        check(parsed.unavailable == SummaryUnavailable.appleIntelligenceOff.message, "reason \(parsed.unavailable ?? "nil")")
+    }),
+
+    ("title prefers the rename, then the summary title, then Meeting", {
+        check(LibraryLogic.title(override: "Mitt namn", aiTitle: "AI") == "Mitt namn", "override")
+        check(LibraryLogic.title(override: "  ", aiTitle: "AI") == "AI", "blank override")
+        check(LibraryLogic.title(override: nil, aiTitle: nil) == "Meeting", "fallback")
+        check(LibraryLogic.titleOverride(" AI ", aiTitle: "AI") == nil, "same as shown is not stored")
+        check(LibraryLogic.titleOverride("", aiTitle: "AI") == nil, "empty resets")
+        check(LibraryLogic.titleOverride("Meeting", aiTitle: nil) == nil, "fallback is not stored")
+        check(LibraryLogic.titleOverride(" Retro ", aiTitle: "AI") == "Retro", "trimmed rename")
+    }),
+
+    ("sidecar round-trips and tolerates missing or bad data", {
+        let meta = MeetingMeta(title: "Retro", checked: ["Anna: Send": true])
+        check(MeetingMeta.decode(meta.encoded()) == meta, "round trip")
+        check(String(decoding: meta.encoded(), as: UTF8.self).contains("\"title\" : \"Retro\""), "readable json")
+        check(MeetingMeta.decode(Data(#"{"title":"T"}"#.utf8)) == MeetingMeta(title: "T"), "missing checked")
+        check(MeetingMeta.decode(Data("nope".utf8)) == MeetingMeta(), "bad json")
+        check(MeetingMeta.decode(nil) == MeetingMeta(), "no file")
+        let audio = URL(fileURLWithPath: "/tmp/rec/Meeting-2026-10-15-1430.m4a")
+        check(ProcessingLogic.metaURL(for: audio).lastPathComponent == "Meeting-2026-10-15-1430.meta.json", "meta name")
+        check(ProcessingLogic.notesURL(for: audio).lastPathComponent == "Meeting-2026-10-15-1430.notes.md", "notes name")
+    }),
+
+    ("meetings are grouped by Today, Yesterday, This week and Earlier", {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Europe/Stockholm")!
+        calendar.firstWeekday = 2
+        func date(_ day: Int, _ hour: Int = 10) -> Date { calendar.date(from: DateComponents(year: 2026, month: 10, day: day, hour: hour))! }
+        let now = date(15, 12)
+        check(LibraryLogic.dateGroup(date(15, 8), now: now, calendar: calendar) == .today, "today")
+        check(LibraryLogic.dateGroup(date(15, 20), now: now, calendar: calendar) == .today, "later today")
+        check(LibraryLogic.dateGroup(date(14), now: now, calendar: calendar) == .yesterday, "yesterday")
+        check(LibraryLogic.dateGroup(date(12), now: now, calendar: calendar) == .thisWeek, "monday")
+        check(LibraryLogic.dateGroup(date(11), now: now, calendar: calendar) == .earlier, "last sunday")
+        let monday = date(12, 9)
+        check(LibraryLogic.dateGroup(date(11), now: monday, calendar: calendar) == .yesterday, "yesterday wins over last week")
+        let entries = [15, 14, 13, 1].map { RecordingEntry(audio: URL(fileURLWithPath: "/tmp/\($0).m4a"), date: date($0), duration: nil, companions: []) }
+        let groups = LibraryLogic.grouped(entries, now: now, calendar: calendar)
+        check(groups.map(\.group) == [.today, .yesterday, .thisWeek, .earlier], "order \(groups.map(\.group))")
+        check(groups.map(\.entries.count) == [1, 1, 1, 1], "one each")
+        check(LibraryLogic.grouped([], now: now, calendar: calendar).isEmpty, "empty groups left out")
+    }),
+
+    ("search matches every word in the title or transcript", {
+        let texts = ["Daglig standup", "[00:00:04] Vi har sex öppna tickets."]
+        check(LibraryLogic.matches("", in: texts), "empty query")
+        check(LibraryLogic.matches("STANDUP", in: texts), "case")
+        check(LibraryLogic.matches("oppna", in: texts), "diacritics")
+        check(LibraryLogic.matches("standup tickets", in: texts), "words across texts")
+        check(!LibraryLogic.matches("standup budget", in: texts), "all words needed")
+    }),
+
+    ("transcripts parse back into timed paragraphs", {
+        let markdown = ProcessingLogic.transcriptMarkdown(
+            audioName: "Meeting-x.m4a", language: .swedish, engine: "DictationTranscriber",
+            segments: [TranscriptSegment(start: 1, text: "Hej."), TranscriptSegment(start: 20, text: "Vi börjar."),
+                       TranscriptSegment(start: 3725, text: "Slut.")])
+        let segments = LibraryLogic.transcriptSegments(markdown)
+        check(segments.map(\.start) == [1, 20, 3725] && segments.last?.text == "Slut.", "segments \(segments)")
+        check(LibraryLogic.paragraphs(segments) == [TranscriptSegment(start: 1, text: "Hej. Vi börjar."),
+                                                     TranscriptSegment(start: 3725, text: "Slut.")], "paragraphs")
+        check(LibraryLogic.language(in: markdown) == .swedish, "language")
+        check(LibraryLogic.language(in: "# T") == nil, "no language")
+        check(LibraryLogic.minutesText(25 * 60 + 10) == "25 min" && LibraryLogic.minutesText(20) == "<1 min"
+              && LibraryLogic.minutesText(65 * 60) == "1 h 5 min", "minutes")
     }),
 ]

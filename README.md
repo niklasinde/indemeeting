@@ -38,7 +38,7 @@ Security, grant the permissions once more, and they then persist across rebuilds
     swift test
 
 `test.sh` compiles the mixer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
-names, the recordings list) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
+names, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
 failure). `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
@@ -52,15 +52,37 @@ shows elapsed time. Stop Recording reveals the file in Finder.
 ## App window
 
 "Open Meeting Recorder" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
-main window (with a Dock icon while it is open). The sidebar lists the recordings in `~/Movies/MeetingRecordings`,
-newest first, with date, time, duration and icons for an existing transcript and summary. In-progress
-`.recording.m4a` files are left out. The list follows the folder as files appear or are removed.
+main window (with a Dock icon while it is open). The sidebar lists the recordings in `~/Movies/MeetingRecordings`
+grouped by Today, Yesterday, This week and Earlier. Each row shows the meeting title (a rename, else the title of the
+summary, else "Meeting") and the time and length. The search field at the top filters by title and transcript text
+(every word has to match, ignoring case and accents); the arrow keys move through the list. In-progress
+`.recording.m4a` files are left out, and the list follows the folder as files appear or are removed.
 
-Selecting a recording shows a player with a scrubber, its Summary and Transcript (rendered from the `.md` files), and
-buttons to Reveal in Finder, Transcribe & summarise (same processing as the menu, with progress) and Delete, which
-moves the audio, transcript and summary to the Trash after a confirmation. The toolbar has Start/Stop Recording with
-the elapsed time, like the menu; a recording stopped here is selected instead of revealed in Finder. When a permission
-is missing the sidebar offers "Open Setup…".
+A selected meeting shows its title (click to rename), the date, time, length and language, and three tabs:
+
+- Summary: the action items as checkboxes ("Åtgärdspunkter" for Swedish meetings), then one heading with bullets per
+  topic. Without a summary it says why (for example that Apple Intelligence is off) and offers Summarise.
+- Notes: your own notes, saved automatically shortly after you stop typing.
+- Transcript: the transcript in paragraphs; clicking a paragraph's time plays the recording from there.
+
+A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has Record (Stop with the elapsed
+time while recording, like the menu; a recording stopped here is selected instead of revealed in Finder) and a "…"
+menu with Reveal in Finder, Transcribe & summarise (same processing as the menu) and Delete, which moves the audio and
+all its companion files to the Trash after a confirmation. When a permission is missing the sidebar offers
+"Open Setup…".
+
+Edits never touch the recording or the generated files. A rename and the checked action items are kept in
+`Meeting-…-HHmm.meta.json` (`{"title": "…", "checked": {"<action item line>": true}}`), the notes in
+`Meeting-…-HHmm.notes.md`. Transcribing again keeps both; a checked item stays checked as long as the new summary has
+the same line.
+
+To check the window's layout without a screen, a debug build can render it offscreen with a Swedish sample meeting
+(the sample data and the flag are only compiled into debug builds):
+
+    swift build && .build/debug/MeetingRecorder --render-previews /tmp/previews
+
+It writes the sample library to `/tmp/previews/library` and PNGs of the Summary, Notes and Transcript tabs, an older
+summary and a missing summary, each in light and dark appearance.
 
 ## Transcripts and summaries
 
@@ -68,8 +90,9 @@ Everything runs on the Mac; no audio or text leaves it. After Stop Recording the
 summarises it, writing next to the recording:
 
 - `Meeting-YYYY-MM-DD-HHmm.transcript.md`: one `[hh:mm:ss] sentence` line per sentence.
-- `Meeting-YYYY-MM-DD-HHmm.summary.md`: title, short summary, key points, decisions and action items (with owners when
-  they are named).
+- `Meeting-YYYY-MM-DD-HHmm.summary.md`: a short title (`# …`), the action items as `- [ ] Owner: task` lines (the owner
+  only when someone is named) and two to five topics, each a `## Topic` heading with bullets, in the meeting language.
+  Summaries written by earlier versions (summary, key points, decisions) still show in the app.
 
 The menu shows "Transcribing…", "Summarising…" and then "Open summary"; a notification opens the summary when it is
 ready. "Transcribe & summarise a recording…" processes any existing audio file. Errors are shown in the menu and as a

@@ -56,10 +56,10 @@ final class MeetingProcessor: ObservableObject {
     @Published private(set) var latestSummary: URL?
     @Published private(set) var processing: URL?
 
-    private let notifier: Notifier
+    private let notifier: Notifier?
     private var queue: Task<Void, Never>?
 
-    init(notifier: Notifier) {
+    init(notifier: Notifier?) {
         self.notifier = notifier
     }
 
@@ -100,15 +100,15 @@ final class MeetingProcessor: ObservableObject {
             latestSummary = result.summary
             if let reason = result.unavailable {
                 status = reason.menuText
-                notifier.postProcessed(title: "Transcript ready, no summary", body: reason.menuText, file: result.summary)
+                notifier?.postProcessed(title: "Transcript ready, no summary", body: reason.menuText, file: result.summary)
             } else {
                 status = "Summary ready: \(name)"
-                notifier.postProcessed(title: "Meeting summary ready", body: result.title ?? name, file: result.summary)
+                notifier?.postProcessed(title: "Meeting summary ready", body: result.title ?? name, file: result.summary)
             }
         } catch {
             status = nil
             errorMessage = "\(name): \(error.localizedDescription)"
-            notifier.postProcessed(title: "Meeting processing failed", body: errorMessage ?? name, file: nil)
+            notifier?.postProcessed(title: "Meeting processing failed", body: errorMessage ?? name, file: nil)
         }
     }
 }

@@ -4,42 +4,68 @@ import SwiftUI
 
 @MainActor
 final class MainWindow {
-    private let recorder: Recorder
-    private let processor: MeetingProcessor
     private let library = RecordingLibrary()
     private let playback = AudioPlayback()
-
-    private lazy var window: AppWindow = AppWindow(onClose: { [playback] in playback.pause() }) { [unowned self] in
-        let controller = NSHostingController(rootView: MainView(
-            recorder: recorder, processor: processor, library: library, playback: playback))
-        if #available(macOS 14, *) { controller.sceneBridgingOptions = [.toolbars] }
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Meeting Recorder"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 900, height: 600))
-        return window
-    }
+    private let window: AppWindow
 
     init(recorder: Recorder, processor: MeetingProcessor) {
-        self.recorder = recorder
-        self.processor = processor
+        let view = MainView(recorder: recorder, processor: processor, library: library, playback: playback)
+        window = AppWindow(onClose: { [playback] in playback.pause() }) { Self.makeWindow(view) }
     }
 
     func show() {
         library.start()
         window.show()
     }
+
+    static func makeWindow(_ view: MainView) -> NSWindow {
+        let controller = NSHostingController(rootView: view)
+        if #available(macOS 14, *) { controller.sceneBridgingOptions = [.toolbars] }
+        let window = NSWindow(contentViewController: controller)
+        window.title = "Meeting Recorder"
+        window.titleVisibility = .hidden
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.setContentSize(NSSize(width: 980, height: 660))
+        return window
+    }
+}
+
+enum DetailTab: String, CaseIterable {
+    case summary = "Summary"
+    case notes = "Notes"
+    case transcript = "Transcript"
 }
 
 @MainActor
 final class RecordingLibrary: ObservableObject {
+    private struct CachedText {
+        let modified: Date
+        let text: String
+    }
+
+    private static let indexedSuffixes = [".summary.md", ".transcript.md", ".meta.json"]
+
     @Published private(set) var recordings: [RecordingEntry] = []
     @Published var selection: URL?
+    @Published var query = ""
+    @Published var tab = DetailTab.summary
+    @Published var confirmingDelete = false
+    @Published private var texts: [String: CachedText] = [:]
 
-    private let folder = Recorder.folder
+    let folder: URL
     private var files: [FolderItem] = []
     private var durations: [String: TimeInterval] = [:]
     private var watcher: DispatchSourceFileSystemObject?
+
+    init(folder: URL = Recorder.folder) {
+        self.folder = folder
+    }
+
+    var selected: RecordingEntry? { recordings.first { $0.id == selection } }
+
+    var visibleRecordings: [RecordingEntry] {
+        recordings.filter { LibraryLogic.matches(query, in: [title(of: $0), text(of: $0.transcript) ?? ""]) }
+    }
 
     func start() {
         defer { refresh() }
@@ -55,11 +81,17 @@ final class RecordingLibrary: ObservableObject {
     }
 
     func refresh() {
-        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.creationDateKey])) ?? []
-        files = urls.map {
-            FolderItem(name: $0.lastPathComponent,
-                       created: (try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
-        }
+        let keys: Set<URLResourceKey> = [.creationDateKey, .contentModificationDateKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
+        let values = urls.map { (url: $0, values: try? $0.resourceValues(forKeys: keys)) }
+        files = values.map { FolderItem(name: $0.url.lastPathComponent, created: $0.values?.creationDate ?? .distantPast) }
+        texts = Dictionary(uniqueKeysWithValues: values.compactMap { url, values in
+            let name = url.lastPathComponent
+            guard Self.indexedSuffixes.contains(where: name.hasSuffix) else { return nil }
+            let modified = values?.contentModificationDate ?? .distantPast
+            if let cached = texts[name], cached.modified == modified { return (name, cached) }
+            return (name, CachedText(modified: modified, text: (try? String(contentsOf: url, encoding: .utf8)) ?? ""))
+        })
         rebuild()
         let missing = files.map(\.name).filter { LibraryLogic.isListed($0) && durations[$0] == nil }
         guard !missing.isEmpty else { return }
@@ -80,6 +112,53 @@ final class RecordingLibrary: ObservableObject {
     nonisolated private static func duration(of url: URL) -> TimeInterval? {
         guard let file = try? AVAudioFile(forReading: url) else { return nil }
         return Double(file.length) / file.processingFormat.sampleRate
+    }
+
+    func text(of url: URL) -> String? { texts[url.lastPathComponent]?.text }
+
+    func meta(of entry: RecordingEntry) -> MeetingMeta { MeetingMeta.decode(text(of: entry.meta).map { Data($0.utf8) }) }
+
+    func summary(of entry: RecordingEntry) -> ParsedSummary? {
+        text(of: entry.summary).map { LibraryLogic.parseSummary($0, meta: meta(of: entry)) }
+    }
+
+    func title(of entry: RecordingEntry) -> String {
+        LibraryLogic.title(override: meta(of: entry).title, aiTitle: summary(of: entry)?.title)
+    }
+
+    func language(of entry: RecordingEntry) -> MeetingLanguage {
+        [entry.transcript, entry.summary].lazy.compactMap { self.text(of: $0).flatMap(LibraryLogic.language(in:)) }.first
+            ?? .current
+    }
+
+    func updateMeta(of entry: RecordingEntry, _ change: (inout MeetingMeta) -> Void) {
+        var meta = meta(of: entry)
+        change(&meta)
+        let data = meta.encoded()
+        do {
+            try data.write(to: entry.meta, options: .atomic)
+            texts[entry.meta.lastPathComponent] = CachedText(modified: .distantPast, text: String(decoding: data, as: UTF8.self))
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    func moveSelection(by offset: Int) {
+        let visible = LibraryLogic.grouped(visibleRecordings, now: Date()).flatMap(\.entries)
+        guard !visible.isEmpty else { return }
+        let index = visible.firstIndex { $0.id == selection }.map { $0 + offset } ?? 0
+        selection = visible[min(max(index, 0), visible.count - 1)].id
+    }
+
+    func trash(_ entry: RecordingEntry) {
+        Task {
+            do {
+                _ = try await NSWorkspace.shared.recycle(entry.files)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            refresh()
+        }
     }
 }
 
@@ -113,6 +192,11 @@ final class AudioPlayback: NSObject, ObservableObject, AVAudioPlayerDelegate {
         }
     }
 
+    func play(from time: TimeInterval) {
+        seek(to: time)
+        if !isPlaying { toggle() }
+    }
+
     func pause() {
         player?.pause()
         timer?.invalidate()
@@ -139,23 +223,34 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(library.recordings, selection: $library.selection) { RecordingRow(entry: $0) }
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-                .safeAreaInset(edge: .bottom) { statusFooter }
+            Sidebar(recorder: recorder, processor: processor, library: library)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
-            if let entry = library.recordings.first(where: { $0.id == library.selection }) {
-                RecordingDetail(entry: entry, processor: processor, playback: playback, library: library)
+            if let entry = library.selected {
+                RecordingDetail(entry: entry, processor: processor, library: library, playback: playback)
+                    .id(entry.id)
             } else {
-                Text(library.recordings.isEmpty ? "No recordings yet" : "Select a recording")
+                Text(library.recordings.isEmpty ? "No recordings yet" : "Select a meeting")
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .toolbar {
-            ToolbarItem(placement: .primaryAction) { recordButton }
+            ToolbarItemGroup(placement: .automatic) {
+                Spacer()
+                recordButton
+                moreMenu
+            }
         }
-        .frame(minWidth: 720, minHeight: 440)
+        .frame(minWidth: 720, minHeight: 460)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             library.refresh()
+        }
+        .confirmationDialog("Move \(library.selected?.audio.lastPathComponent ?? "") to the Trash?",
+                            isPresented: $library.confirmingDelete) {
+            Button("Move to Trash", role: .destructive) { deleteSelected() }
+        } message: {
+            Text("Its transcript, summary and notes are moved too.")
         }
     }
 
@@ -166,182 +261,152 @@ struct MainView: View {
                     if let url = await processor.finishRecording(recorder, reveal: false) { library.selection = url }
                 }
             } label: {
-                Label("Stop Recording  \(recorder.elapsedText)", systemImage: "stop.circle.fill")
-                    .monospacedDigit()
+                Label {
+                    Text("Stop  \(recorder.elapsedText)").monospacedDigit()
+                } icon: {
+                    Image(systemName: "stop.fill").foregroundStyle(.red)
+                }
+                .labelStyle(.titleAndIcon)
             }
-            .tint(.red)
+            .help("Stop Recording")
         } else {
             Button { Task { await recorder.start() } } label: {
-                Label("Start Recording", systemImage: "record.circle")
+                Label {
+                    Text("Record")
+                } icon: {
+                    Image(systemName: "circle.fill").foregroundStyle(.red)
+                }
+                .labelStyle(.titleAndIcon)
             }
+            .help("Start Recording")
         }
     }
 
-    private var statusFooter: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach([recorder.notice, recorder.errorMessage, processor.errorMessage].compactMap { $0 }, id: \.self) {
-                Text($0).font(.caption).foregroundStyle(.secondary)
+    private var moreMenu: some View {
+        Menu {
+            if let entry = library.selected {
+                Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
+                Button("Transcribe & summarise") { processor.process(entry.audio) }
+                    .disabled(processor.processing == entry.audio)
+                Divider()
+                Button("Delete\u{2026}", role: .destructive) { library.confirmingDelete = true }
             }
-            if !Permissions.allGranted {
-                Label("Some permissions are missing", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                Button("Open Setup\u{2026}") { OnboardingWindow.shared.show() }
-                    .controlSize(.small)
-            }
+        } label: {
+            Image(systemName: "ellipsis")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
+        .menuIndicator(.hidden)
+        .disabled(library.selected == nil)
+        .help("More")
+    }
+
+    private func deleteSelected() {
+        guard let entry = library.selected else { return }
+        if playback.url == entry.audio { playback.load(nil) }
+        library.trash(entry)
     }
 }
 
-struct RecordingRow: View {
-    let entry: RecordingEntry
+struct Sidebar: View {
+    @ObservedObject var recorder: Recorder
+    @ObservedObject var processor: MeetingProcessor
+    @ObservedObject var library: RecordingLibrary
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(entry.date, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year().hour().minute())
-            HStack(spacing: 6) {
-                if let duration = entry.duration { Text(LibraryLogic.durationText(duration)).monospacedDigit() }
-                if entry.hasTranscript { Image(systemName: "text.quote").help("Transcript") }
-                if entry.hasSummary { Image(systemName: "list.bullet.rectangle").help("Summary") }
+        VStack(spacing: 0) {
+            SearchField(text: $library.query)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
+                        Text(group.rawValue)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 10)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
+                        ForEach(entries) { row($0, group: group) }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 12)
+            }
+            .onMoveCommand { direction in
+                if direction == .up { library.moveSelection(by: -1) }
+                if direction == .down { library.moveSelection(by: 1) }
+            }
+            statusFooter
+        }
+    }
+
+    private func row(_ entry: RecordingEntry, group: DateGroup) -> some View {
+        Button { library.selection = entry.id } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(library.title(of: entry))
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                HStack(spacing: 4) {
+                    Text(([dateText(entry.date, group: group)] + [entry.duration.map(LibraryLogic.minutesText)].compactMap { $0 })
+                        .joined(separator: " \u{00B7} "))
+                    if processor.processing == entry.audio { ProgressView().controlSize(.mini) }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6)
+                .fill(library.selection == entry.id ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func dateText(_ date: Date, group: DateGroup) -> String {
+        switch group {
+        case .today, .yesterday: return date.formatted(date: .omitted, time: .shortened)
+        case .thisWeek: return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        case .earlier: return date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
+        }
+    }
+
+    @ViewBuilder private var statusFooter: some View {
+        let messages = [recorder.notice, recorder.errorMessage, processor.errorMessage].compactMap { $0 }
+        if !messages.isEmpty || !Permissions.allGranted {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(messages, id: \.self) { Text($0) }
+                if !Permissions.allGranted {
+                    Text("Some permissions are missing")
+                    Button("Open Setup\u{2026}") { OnboardingWindow.shared.show() }
+                        .buttonStyle(.link)
+                }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .overlay(alignment: .top) { Divider() }
         }
-        .padding(.vertical, 2)
     }
 }
 
-@MainActor
-final class DetailState: ObservableObject {
-    enum Section: String, CaseIterable {
-        case summary = "Summary"
-        case transcript = "Transcript"
-    }
-
-    @Published var section = Section.summary
-    @Published var summary: String?
-    @Published var transcript: String?
-    @Published var confirmingDelete = false
-}
-
-struct RecordingDetail: View {
-
-    private struct ContentKey: Hashable {
-        let entry: RecordingEntry
-        let processing: Bool
-    }
-
-    let entry: RecordingEntry
-    @ObservedObject var processor: MeetingProcessor
-    @ObservedObject var playback: AudioPlayback
-    let library: RecordingLibrary
-
-    @StateObject private var state = DetailState()
-
-    private var isProcessing: Bool { processor.processing == entry.audio }
+struct SearchField: View {
+    @Binding var text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.date, format: .dateTime.weekday(.wide).day().month(.wide).year().hour().minute())
-                    .font(.title2.bold())
-                Text(entry.audio.lastPathComponent).foregroundStyle(.secondary)
-            }
-            player
-            actions
-            Picker("", selection: $state.section) {
-                ForEach(DetailState.Section.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            ScrollView {
-                MarkdownText(markdown: (state.section == .summary ? state.summary : state.transcript) ?? placeholder)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Search", text: $text).textFieldStyle(.plain)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
             }
         }
-        .padding(20)
-        .task(id: entry.audio) { playback.load(entry.audio) }
-        .task(id: ContentKey(entry: entry, processing: isProcessing)) {
-            state.summary = try? String(contentsOf: entry.summary, encoding: .utf8)
-            state.transcript = try? String(contentsOf: entry.transcript, encoding: .utf8)
-        }
-        .confirmationDialog("Move \(entry.audio.lastPathComponent) to the Trash?", isPresented: $state.confirmingDelete) {
-            Button("Move to Trash", role: .destructive) { delete() }
-        } message: {
-            Text(entry.files.count > 1 ? "Its transcript and summary are moved too." : "")
-        }
-    }
-
-    private var placeholder: String {
-        isProcessing ? "" : "No \(state.section.rawValue.lowercased()) yet. Choose Transcribe & summarise."
-    }
-
-    private var player: some View {
-        HStack(spacing: 10) {
-            Button { playback.toggle() } label: {
-                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill").frame(width: 16)
-            }
-            .disabled(playback.duration == 0)
-            Slider(value: Binding(get: { playback.position }, set: { playback.seek(to: $0) }),
-                   in: 0...max(playback.duration, 0.1))
-            Text("\(LibraryLogic.durationText(playback.position)) / \(LibraryLogic.durationText(playback.duration))")
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var actions: some View {
-        HStack {
-            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
-            Button("Transcribe & summarise") { processor.process(entry.audio) }
-                .disabled(isProcessing)
-            if isProcessing {
-                ProgressView().controlSize(.small)
-                Text(processor.status ?? "").foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer()
-            Button("Delete\u{2026}", role: .destructive) { state.confirmingDelete = true }
-        }
-    }
-
-    private func delete() {
-        if playback.url == entry.audio { playback.load(nil) }
-        Task {
-            do {
-                _ = try await NSWorkspace.shared.recycle(entry.files)
-            } catch {
-                NSAlert(error: error).runModal()
-            }
-            library.refresh()
-        }
-    }
-}
-
-struct MarkdownText: View {
-    let markdown: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(LibraryLogic.markdownBlocks(markdown).enumerated()), id: \.offset) { _, block in
-                switch block {
-                case .heading(let level, let text):
-                    inline(text).font(level == 1 ? .title2.bold() : .headline).padding(.top, level == 1 ? 0 : 6)
-                case .bullet(let text):
-                    HStack(alignment: .firstTextBaseline) { Text("\u{2022}"); inline(text) }
-                case .task(let text):
-                    HStack(alignment: .firstTextBaseline) { Image(systemName: "square"); inline(text) }
-                case .paragraph(let text):
-                    inline(text)
-                }
-            }
-        }
-        .textSelection(.enabled)
-    }
-
-    private func inline(_ text: String) -> Text {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return Text((try? AttributedString(markdown: text, options: options)) ?? AttributedString(text))
+        .font(.callout)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
     }
 }
