@@ -29,6 +29,46 @@ struct MeetingDetector {
     }
 }
 
+/// Ends a recording when the meeting does: once another app that held the microphone during the recording releases
+/// it, ask; unanswered, stop after `silenceLimit` of silence on both sources since then.
+struct AutoStop {
+    enum Decision: Equatable {
+        case idle
+        case ask
+        case withdraw
+        case stop
+    }
+
+    static let silenceLimit: TimeInterval = 120
+
+    private var meetingSeen = false
+    private var endedAt: Date?
+    private var kept = false
+
+    mutating func keepRecording() {
+        kept = true
+        endedAt = nil
+    }
+
+    mutating func update(enabled: Bool, othersUsingMic: Bool, paused: Bool, lastSound: Date, now: Date) -> Decision {
+        if othersUsingMic { meetingSeen = true }
+        if !enabled || kept || othersUsingMic {
+            guard endedAt != nil else { return .idle }
+            endedAt = nil
+            return .withdraw
+        }
+        guard meetingSeen else { return .idle }
+        guard let ended = endedAt else {
+            endedAt = now
+            return .ask
+        }
+        guard !paused, now.timeIntervalSince(max(lastSound, ended)) >= Self.silenceLimit else { return .idle }
+        meetingSeen = false
+        endedAt = nil
+        return .stop
+    }
+}
+
 enum MeetingApps {
     static let dedicated: [(id: String, name: String)] = [
         ("us.zoom.xos", "Zoom"),

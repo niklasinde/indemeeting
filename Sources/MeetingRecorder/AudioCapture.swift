@@ -102,6 +102,15 @@ enum AudioObjects {
                                    mElement: kAudioObjectPropertyElementMain)
     }
 
+    static func objects(_ selector: AudioObjectPropertySelector, of object: AudioObjectID) -> [AudioObjectID] {
+        var address = address(selector)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(object, &address, 0, nil, &size) == noErr else { return [] }
+        var objects = [AudioObjectID](repeating: kAudioObjectUnknown, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(object, &address, 0, nil, &size, &objects) == noErr else { return [] }
+        return Array(objects.prefix(Int(size) / MemoryLayout<AudioObjectID>.size))
+    }
+
     static func read<T: BitwiseCopyable>(_ selector: AudioObjectPropertySelector, of object: AudioObjectID, into value: inout T) -> Bool {
         var address = address(selector)
         var size = UInt32(MemoryLayout<T>.size)

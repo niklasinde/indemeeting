@@ -30,6 +30,9 @@ final class Recorder: ObservableObject {
 
     var isBusy: Bool { isRecording || meeting != nil }
 
+    /// When the recording last had more than silence in it.
+    var lastSound: Date? { mixer?.lastSound }
+
     nonisolated static var folder: URL { AppPaths.recordings }
 
     /// Records a new part of an existing meeting; Stop appends it to the meeting's file.

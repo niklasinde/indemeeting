@@ -204,6 +204,16 @@ When another app keeps the default input device busy for more than 3 seconds (Co
 Its Record button, or clicking it, starts recording. It is shown once per meeting and reset when the microphone is released,
 so stopping your own recording mid-meeting does not bring it back. Turn it off with "Notify when a meeting starts" in the menu.
 
+While recording, the app also checks every second which processes take audio input (Core Audio process objects,
+macOS 14.2+, no extra permission). Once another app has held the microphone during the recording (the meeting that was
+detected, or any call you started recording in) and then releases it, a notification "Meeting ended — stop recording?"
+appears with Stop and Keep recording. Stop finishes the recording like the menu (without revealing it in Finder) and
+transcribes it. Keep recording turns auto-stop off for the rest of this recording. If the notification is ignored,
+the recording stops after 2 minutes of continuous silence on both the microphone and system audio (every chunk below
+RMS 0.003), counted from when the meeting ended; a paused recording is never stopped, and resuming counts as sound. If
+the other app takes the microphone again the notification is withdrawn. Turn it off with "Stop automatically when the
+meeting ends" in the menu (on by default).
+
 ## Permissions
 
 - Microphone (required): records you.

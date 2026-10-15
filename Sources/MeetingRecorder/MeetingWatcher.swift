@@ -5,18 +5,23 @@ import CoreAudio
 @MainActor
 final class MeetingWatcher {
     static let enabledKey = "notifyOnMeetingStart"
+    static let autoStopKey = "stopWhenMeetingEnds"
 
     private let recorder: Recorder
     private let notifier: Notifier
+    private let stopRecording: @MainActor () async -> Void
     private var detector = MeetingDetector()
+    private var autoStop = AutoStop()
     private var monitor: MicrophoneActivityMonitor?
     private var recheck: Task<Void, Never>?
+    private var ticker: Timer?
     private var subscription: AnyCancellable?
 
-    init(recorder: Recorder, notifier: Notifier) {
+    init(recorder: Recorder, notifier: Notifier, stopRecording: @escaping @MainActor () async -> Void) {
         self.recorder = recorder
         self.notifier = notifier
-        UserDefaults.standard.register(defaults: [Self.enabledKey: true])
+        self.stopRecording = stopRecording
+        UserDefaults.standard.register(defaults: [Self.enabledKey: true, Self.autoStopKey: true])
     }
 
     private var enabled: Bool { UserDefaults.standard.bool(forKey: Self.enabledKey) }
@@ -24,7 +29,40 @@ final class MeetingWatcher {
     func start() {
         Task { _ = await Permissions.requestNotifications() }
         monitor = MicrophoneActivityMonitor { [weak self] in self?.evaluate() }
-        subscription = recorder.$isRecording.sink { [weak self] in self?.evaluate(recording: $0) }
+        subscription = recorder.$isRecording.sink { [weak self] in
+            self?.evaluate(recording: $0)
+            self?.watchMeetingEnd(recording: $0)
+        }
+    }
+
+    /// "Keep recording": no auto-stop for the rest of this recording.
+    func keepRecording() {
+        autoStop.keepRecording()
+        notifier.withdrawMeetingEnded()
+    }
+
+    private func watchMeetingEnd(recording: Bool) {
+        ticker?.invalidate()
+        ticker = nil
+        notifier.withdrawMeetingEnded()
+        guard recording else { return }
+        autoStop = AutoStop()
+        ticker = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.checkMeetingEnd() }
+        }
+    }
+
+    private func checkMeetingEnd() {
+        guard let lastSound = recorder.lastSound else { return }
+        let decision = autoStop.update(enabled: UserDefaults.standard.bool(forKey: Self.autoStopKey),
+                                       othersUsingMic: monitor?.isInUseByOthers ?? false,
+                                       paused: recorder.isPaused, lastSound: lastSound, now: Date())
+        switch decision {
+        case .idle: break
+        case .ask: notifier.postMeetingEnded()
+        case .withdraw: notifier.withdrawMeetingEnded()
+        case .stop: Task { await stopRecording() }
+        }
     }
 
     private func evaluate(recording: Bool? = nil) {
@@ -69,6 +107,18 @@ final class MicrophoneActivityMonitor {
     var isInUse: Bool {
         var running: UInt32 = 0
         return AudioObjects.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
+    }
+
+    /// Whether a process other than this app is taking audio input; false before macOS 14.2.
+    var isInUseByOthers: Bool {
+        guard #available(macOS 14.2, *) else { return false }
+        let own = getpid()
+        return AudioObjects.objects(kAudioHardwarePropertyProcessObjectList, of: AudioObjects.system).contains { process in
+            var pid: pid_t = 0
+            var running: UInt32 = 0
+            return AudioObjects.read(kAudioProcessPropertyPID, of: process, into: &pid) && pid != own
+                && AudioObjects.read(kAudioProcessPropertyIsRunningInput, of: process, into: &running) && running != 0
+        }
     }
 
     private func notify() {

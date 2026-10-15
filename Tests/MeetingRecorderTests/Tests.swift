@@ -76,7 +76,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + storeTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
@@ -781,3 +781,86 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         check(markdown.contains("[00:00:01] You: Hi.\n\n[00:00:03] Others: Hello."), "markdown \(markdown)")
     }),
 ]
+
+private let autoStopTests: [(name: String, run: () throws -> Void)] = {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+    func step(_ stop: inout AutoStop, _ seconds: TimeInterval, others: Bool, sound: TimeInterval = 0,
+              paused: Bool = false, enabled: Bool = true) -> AutoStop.Decision {
+        stop.update(enabled: enabled, othersUsingMic: others, paused: paused, lastSound: at(sound), now: at(seconds))
+    }
+    return [
+        ("auto-stop asks when the other app releases the mic and stops after two minutes of silence", {
+            var stop = AutoStop()
+            check(step(&stop, 1, others: true) == .idle, "meeting running")
+            check(step(&stop, 600, others: false, sound: 590) == .ask, "meeting ended")
+            check(step(&stop, 601, others: false, sound: 590) == .idle, "asked once")
+            check(step(&stop, 719, others: false, sound: 590) == .idle, "not two minutes since the end yet")
+            check(step(&stop, 720, others: false, sound: 590) == .stop, "two minutes of silence since the end")
+            check(step(&stop, 721, others: false, sound: 590) == .idle, "stops once")
+        }),
+
+        ("sound restarts the silence countdown", {
+            var stop = AutoStop()
+            _ = step(&stop, 1, others: true)
+            check(step(&stop, 10, others: false, sound: 10) == .ask, "ended")
+            check(step(&stop, 100, others: false, sound: 90) == .idle, "someone still talking")
+            check(step(&stop, 209, others: false, sound: 90) == .idle, "119 s of silence")
+            check(step(&stop, 210, others: false, sound: 90) == .stop, "120 s of silence")
+        }),
+
+        ("auto-stop needs another app to have held the mic", {
+            var stop = AutoStop()
+            for second in [1.0, 200, 400] { check(step(&stop, second, others: false) == .idle, "own recording at \(second)") }
+        }),
+
+        ("the meeting picking the mic back up withdraws the question", {
+            var stop = AutoStop()
+            _ = step(&stop, 1, others: true)
+            check(step(&stop, 5, others: false) == .ask, "ended")
+            check(step(&stop, 6, others: true) == .withdraw, "back")
+            check(step(&stop, 7, others: true) == .idle, "withdrawn once")
+            check(step(&stop, 300, others: true) == .idle, "no stop while the meeting runs")
+            check(step(&stop, 301, others: false, sound: 301) == .ask, "asks again")
+        }),
+
+        ("keep recording and the menu switch turn auto-stop off", {
+            var kept = AutoStop()
+            _ = step(&kept, 1, others: true)
+            check(step(&kept, 5, others: false) == .ask, "ended")
+            kept.keepRecording()
+            check(step(&kept, 1000, others: false) == .idle, "kept")
+            _ = step(&kept, 1001, others: true)
+            check(step(&kept, 1002, others: false) == .idle, "kept for the rest of the recording")
+
+            var off = AutoStop()
+            _ = step(&off, 1, others: true, enabled: false)
+            check(step(&off, 5, others: false, enabled: false) == .idle, "switched off")
+            check(step(&off, 6, others: false) == .ask, "switched on while the meeting is over")
+            check(step(&off, 7, others: false, enabled: false) == .withdraw, "switched off again")
+            check(step(&off, 500, others: false, enabled: false) == .idle, "never stops while off")
+        }),
+
+        ("the mixer notes when either source last had sound", {
+            let url = tempURL()
+            defer { try? FileManager.default.removeItem(at: url) }
+            let mixer = try AudioMixer(url: url)
+            let started = mixer.lastSound
+            Thread.sleep(forTimeInterval: 0.05)
+            feed(mixer, .system, sine(440, seconds: 0.2, amplitude: 0.002))
+            check(mixer.lastSound == started, "below the threshold is silence")
+            feed(mixer, .microphone, sine(440, seconds: 0.2))
+            check(mixer.lastSound > started, "speech-level audio is sound")
+            mixer.finish()
+        }),
+
+        ("a paused recording is not stopped", {
+            var stop = AutoStop()
+            _ = step(&stop, 1, others: true)
+            check(step(&stop, 5, others: false) == .ask, "ended")
+            check(step(&stop, 500, others: false, paused: true) == .idle, "paused")
+            check(step(&stop, 501, others: false, sound: 500) == .idle, "resuming counts as sound")
+            check(step(&stop, 620, others: false, sound: 500) == .stop, "then silence")
+        }),
+    ]
+}()
