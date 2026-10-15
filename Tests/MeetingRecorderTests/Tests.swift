@@ -51,6 +51,17 @@ private func write(to url: URL, _ body: (AudioMixer) throws -> Void) throws {
     mixer.finish()
 }
 
+private func blocking(_ body: @escaping @Sendable () async throws -> Void) throws {
+    let done = DispatchSemaphore(value: 0)
+    nonisolated(unsafe) var failure: Error?
+    Task.detached {
+        do { try await body() } catch { failure = error }
+        done.signal()
+    }
+    done.wait()
+    if let failure { throw failure }
+}
+
 private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     let url = tempURL()
     defer { try? FileManager.default.removeItem(at: url) }
@@ -148,6 +159,118 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         let job = RecordingLogic.recordArguments(["app", "--record", "5", "--out", "/tmp/a.m4a"])
         check(job?.seconds == 5 && job?.output?.path == "/tmp/a.m4a", "with output")
         check(RecordingLogic.recordArguments(["app", "--record", "2.5"])?.output == nil, "output optional")
+        check(RecordingLogic.recordArguments(["app", "--record", "2"])?.pause == nil, "no pause by default")
+        let paused = RecordingLogic.recordArguments(["app", "--record", "4", "--pause-after", "2", "--resume-after", "1.5"])
+        check(paused?.pause == RecordJob.Pause(after: 2, duration: 1.5), "pause \(String(describing: paused?.pause))")
+        check(RecordingLogic.recordArguments(["app", "--record", "4", "--pause-after", "2"])?.pause?.duration == 1, "resume defaults to 1s")
+        let continued = RecordingLogic.recordArguments(["app", "--continue", "/tmp/m.m4a", "--record", "3"])
+        check(continued?.continuing?.path == "/tmp/m.m4a" && continued?.seconds == 3, "continue")
+    }),
+
+    ("elapsed clock leaves out paused time", {
+        let start = Date(timeIntervalSince1970: 1000)
+        var clock = ElapsedClock(started: start)
+        check(clock.elapsed(at: start + 10) == 10, "running")
+        clock.pause(at: start + 10)
+        check(clock.isPaused && clock.elapsed(at: start + 25) == 10, "frozen while paused")
+        clock.pause(at: start + 20)
+        clock.resume(at: start + 30)
+        check(!clock.isPaused && clock.elapsed(at: start + 35) == 15, "resumes without the gap, got \(clock.elapsed(at: start + 35))")
+        clock.resume(at: start + 40)
+        check(clock.elapsed(at: start + 40) == 20, "resume when running is ignored")
+        clock.pause(at: start + 40)
+        clock.resume(at: start + 50)
+        check(clock.elapsed(at: start + 60) == 30, "second pause, got \(clock.elapsed(at: start + 60))")
+        check(RecordingLogic.statusText(paused: true, elapsed: 754) == "Paused  00:12:34", "paused text")
+        check(RecordingLogic.statusText(paused: false, elapsed: 12) == "Recording  00:00:12", "recording text")
+    }),
+
+    ("continued parts and combined files are named next to the meeting and not listed", {
+        let meeting = URL(fileURLWithPath: "/tmp/rec/Meeting-2026-10-15-1430.m4a")
+        let part = RecordingLogic.partURL(for: meeting, at: Date(timeIntervalSince1970: 1_760_000_000))
+        check(part.path == "/tmp/rec/Meeting-2026-10-15-1430.part-1760000000.m4a", "part \(part.path)")
+        check(RecordingLogic.partialURL(for: part).lastPathComponent == "Meeting-2026-10-15-1430.part-1760000000.recording.m4a",
+              "part while recording")
+        let combined = RecordingLogic.combinedURL(for: meeting)
+        check(combined.path == "/tmp/rec/Meeting-2026-10-15-1430.combined.m4a", "combined \(combined.path)")
+        for url in [part, combined, RecordingLogic.partialURL(for: part)] {
+            check(!LibraryLogic.isListed(url.lastPathComponent), "\(url.lastPathComponent) not listed")
+        }
+        check(LibraryLogic.isListed(meeting.lastPathComponent), "meeting listed")
+        check(ProcessingLogic.notesURL(for: meeting).lastPathComponent == "Meeting-2026-10-15-1430.notes.md", "same sidecars")
+    }),
+
+    ("combined duration has to match the meeting plus the part", {
+        check(RecordingLogic.isCombinedDurationValid(30.02, meeting: 20, part: 10), "close enough")
+        check(RecordingLogic.isCombinedDurationValid(29.6, meeting: 20, part: 10), "within half a second")
+        check(!RecordingLogic.isCombinedDurationValid(20, meeting: 20, part: 10), "part missing")
+        check(!RecordingLogic.isCombinedDurationValid(10, meeting: 20, part: 10), "meeting missing")
+        check(RecordingLogic.combinedDurationTolerance(7200) == 7.2, "scales for long meetings")
+        check(RecordingLogic.isCombinedDurationValid(7205, meeting: 3600, part: 3600), "long meeting")
+    }),
+
+    ("the meeting being recorded is listed first until its file exists", {
+        let zone = TimeZone(identifier: "Europe/Stockholm")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15, hour: 16, minute: 47))!
+        let old = RecordingEntry(audio: URL(fileURLWithPath: "/tmp/Meeting-2026-10-15-0900.m4a"), date: now - 3600,
+                                 duration: 60, companions: [])
+        check(LibraryLogic.withRecording(nil, in: [old], now: now) == [old], "nothing recording")
+        let new = URL(fileURLWithPath: "/tmp/Meeting-2026-10-15-1646.m4a")
+        let listed = LibraryLogic.withRecording(new, in: [old], now: now, timeZone: zone)
+        check(listed.map(\.audio) == [new, old.audio] && listed[0].inProgress && listed[0].duration == nil, "added on top")
+        check(listed[0].date == calendar.date(from: DateComponents(year: 2026, month: 10, day: 15, hour: 16, minute: 46))!,
+              "dated by its name")
+        check(LibraryLogic.withRecording(old.audio, in: [old], now: now) == [old], "a continued meeting is not added twice")
+    }),
+
+    ("paused audio is left out of the file", {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try write(to: url) { mixer in
+            feed(mixer, .microphone, sine(440, seconds: 0.5))
+            mixer.pause()
+            feed(mixer, .microphone, sine(440, seconds: 0.7))
+            mixer.resume()
+            feed(mixer, .microphone, sine(440, seconds: 0.5))
+        }
+        let duration = try seconds(of: url)
+        check(abs(duration - 1.0) < 0.1, "duration \(duration) should be about 1.0s")
+    }),
+
+    ("a part is appended to the meeting in place", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("append-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let meeting = folder.appendingPathComponent("Meeting-2026-10-15-1430.m4a")
+        let part = RecordingLogic.partURL(for: meeting, at: Date())
+        try write(to: meeting) { feed($0, .microphone, sine(440, seconds: 1.2)) }
+        try write(to: part) { feed($0, .microphone, sine(660, seconds: 0.8)) }
+        try blocking { try await AudioAppender.append(part, to: meeting) }
+        let duration = try seconds(of: meeting)
+        check(abs(duration - 2.0) < 0.1, "combined duration \(duration)")
+        check(!FileManager.default.fileExists(atPath: part.path), "part removed")
+        check(!FileManager.default.fileExists(atPath: RecordingLogic.combinedURL(for: meeting).path), "no combined file left")
+        let level = rms(try decode(meeting))
+        check(level > 0.1, "audio kept, rms \(level)")
+    }),
+
+    ("a failed append keeps the meeting and the part", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("append-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let meeting = folder.appendingPathComponent("Meeting-2026-10-15-1430.m4a")
+        let part = RecordingLogic.partURL(for: meeting, at: Date())
+        let original = Data("not audio".utf8)
+        try original.write(to: meeting)
+        try write(to: part) { feed($0, .microphone, sine(660, seconds: 0.5)) }
+        var failed = false
+        do { try blocking { try await AudioAppender.append(part, to: meeting) } } catch { failed = error is AppendError }
+        check(failed, "throws an AppendError")
+        check((try? Data(contentsOf: meeting)) == original, "meeting untouched")
+        check(FileManager.default.fileExists(atPath: part.path), "part kept")
+        check(!FileManager.default.fileExists(atPath: RecordingLogic.combinedURL(for: meeting).path), "no combined file left")
     }),
 
     ("mic-only output is written with the expected duration", {

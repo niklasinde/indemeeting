@@ -11,6 +11,8 @@ struct RecordingEntry: Identifiable, Hashable {
     let duration: TimeInterval?
     /// The companion files (transcript, summary, notes, meta) that exist next to the audio.
     let companions: [URL]
+    /// Being recorded as a new meeting; its audio file does not exist yet.
+    var inProgress = false
 
     var id: URL { audio }
     var name: String { audio.deletingPathExtension().lastPathComponent }
@@ -94,11 +96,19 @@ enum LibraryLogic {
     static let fallbackTitle = "Meeting"
     private static let actionHeadings = Set(MeetingLanguage.allCases.map(\.headings.actionItems) + ["Åtgärder"])
 
-    /// Finished audio files; in-progress `.recording.m4a` files are left out.
+    /// Finished audio files; in-progress, part and combined files are left out.
     static func isListed(_ name: String) -> Bool {
         let url = URL(fileURLWithPath: name)
         return audioExtensions.contains(url.pathExtension.lowercased())
-            && !url.deletingPathExtension().lastPathComponent.hasSuffix(RecordingLogic.partialSuffix)
+            && !RecordingLogic.isWorkFile(baseName: url.deletingPathExtension().lastPathComponent)
+    }
+
+    /// Puts the meeting being recorded at the top while its file is not listed yet.
+    static func withRecording(_ recording: URL?, in entries: [RecordingEntry], now: Date,
+                              timeZone: TimeZone = .current) -> [RecordingEntry] {
+        guard let recording, !entries.contains(where: { $0.audio == recording }) else { return entries }
+        let date = RecordingLogic.date(fromFileName: recording.lastPathComponent, timeZone: timeZone) ?? now
+        return [RecordingEntry(audio: recording, date: date, duration: nil, companions: [], inProgress: true)] + entries
     }
 
     /// Newest first: by the minute in the file name (creation date otherwise), then `-3` before `-2` before the first.

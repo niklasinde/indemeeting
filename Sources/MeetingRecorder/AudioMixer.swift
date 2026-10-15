@@ -64,6 +64,7 @@ final class AudioMixer {
     private let queue = DispatchQueue(label: "mixer")
     private var timer: DispatchSourceTimer?
     private var written = 0
+    private var paused = false
     private var pending = AudioSource.allCases.map { _ in [Float]() }
     private var lastSeen = AudioSource.allCases.map { _ in Date.distantPast }
     private var meters = AudioSource.allCases.map { _ in LevelMeter() }
@@ -92,11 +93,23 @@ final class AudioMixer {
     func append(_ samples: [Float], from source: AudioSource) {
         guard !samples.isEmpty else { return }
         queue.async {
-            guard self.file != nil else { return }
+            guard self.file != nil, !self.paused else { return }
             self.pending[source.rawValue].append(contentsOf: samples)
             self.lastSeen[source.rawValue] = Date()
             self.meters[source.rawValue].add(samples)
         }
+    }
+
+    /// Writes what is pending and drops everything delivered until `resume()`, so the file has no gap.
+    func pause() {
+        queue.sync {
+            flush(final: true)
+            paused = true
+        }
+    }
+
+    func resume() {
+        queue.sync { paused = false }
     }
 
     var framesWritten: Int { queue.sync { written } }

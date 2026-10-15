@@ -68,6 +68,7 @@ struct RecordingDetail: View {
     static let gutter: CGFloat = 28
 
     let entry: RecordingEntry
+    @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
     @ObservedObject var playback: AudioPlayback
@@ -90,18 +91,25 @@ struct RecordingDetail: View {
         }
         .onDisappear { editor.save() }
         .onChange(of: library.title(of: entry)) { editor.titleDidChangeOnDisk($0) }
+        .onChange(of: entry.duration) { _ in playback.load(entry.audio, force: true) }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 0) {
-            TextField(LibraryLogic.fallbackTitle, text: $editor.title)
-                .textFieldStyle(.plain)
-                .font(.system(size: 20, weight: .medium))
-                .onSubmit { editor.save() }
-            Text(subtitle)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.top, 4)
+            HStack(alignment: .firstTextBaseline) {
+                TextField(LibraryLogic.fallbackTitle, text: $editor.title)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 20, weight: .medium))
+                    .onSubmit { editor.save() }
+                if !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
+            }
+            HStack(spacing: 8) {
+                Text(subtitle)
+                if recorder.meeting == entry.audio { RecordingStatus(recorder: recorder) }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
             HStack(spacing: 2) {
                 ForEach(DetailTab.allCases, id: \.self) { tab in
                     Button(tab.rawValue) { library.tab = tab }
@@ -126,6 +134,12 @@ struct RecordingDetail: View {
 
     @ViewBuilder private var content: some View {
         switch library.tab {
+        case .summary where entry.inProgress, .transcript where entry.inProgress:
+            scrolling {
+                Text("The transcript and summary are written after you stop recording. You can take notes meanwhile.")
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 12)
+            }
         case .summary:
             scrolling { SummaryView(entry: entry, language: language, processor: processor, library: library) }
         case .notes:

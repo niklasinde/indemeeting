@@ -50,11 +50,13 @@ final class RecordingLibrary: ObservableObject {
     @Published var query = ""
     @Published var tab = DetailTab.summary
     @Published var confirmingDelete = false
+    /// The meeting being recorded, listed before its file exists.
+    @Published var recording: URL? { didSet { if oldValue != recording { rebuild() } } }
     @Published private var texts: [String: CachedText] = [:]
 
     let folder: URL
     private var files: [FolderItem] = []
-    private var durations: [String: TimeInterval] = [:]
+    private var durations: [String: (modified: Date, seconds: TimeInterval)] = [:]
     private var watcher: DispatchSourceFileSystemObject?
 
     init(folder: URL = Recorder.folder) {
@@ -84,6 +86,7 @@ final class RecordingLibrary: ObservableObject {
         let keys: Set<URLResourceKey> = [.creationDateKey, .contentModificationDateKey]
         let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
         let values = urls.map { (url: $0, values: try? $0.resourceValues(forKeys: keys)) }
+        let modified = Dictionary(values.map { ($0.url.lastPathComponent, $0.values?.contentModificationDate ?? .distantPast) }) { $1 }
         files = values.map { FolderItem(name: $0.url.lastPathComponent, created: $0.values?.creationDate ?? .distantPast) }
         texts = Dictionary(uniqueKeysWithValues: values.compactMap { url, values in
             let name = url.lastPathComponent
@@ -93,11 +96,13 @@ final class RecordingLibrary: ObservableObject {
             return (name, CachedText(modified: modified, text: (try? String(contentsOf: url, encoding: .utf8)) ?? ""))
         })
         rebuild()
-        let missing = files.map(\.name).filter { LibraryLogic.isListed($0) && durations[$0] == nil }
+        let missing = files.map(\.name).filter { LibraryLogic.isListed($0) && durations[$0]?.modified != modified[$0] }
         guard !missing.isEmpty else { return }
         let folder = folder
         Task.detached(priority: .utility) {
-            let found = missing.compactMap { name in Self.duration(of: folder.appendingPathComponent(name)).map { (name, $0) } }
+            let found = missing.compactMap { name in
+                (try? AudioFiles.duration(of: folder.appendingPathComponent(name))).map { (name, (modified[name] ?? .distantPast, $0)) }
+            }
             await MainActor.run {
                 self.durations.merge(found) { $1 }
                 self.rebuild()
@@ -106,12 +111,8 @@ final class RecordingLibrary: ObservableObject {
     }
 
     private func rebuild() {
-        recordings = LibraryLogic.recordings(in: folder, files: files, durations: durations)
-    }
-
-    nonisolated private static func duration(of url: URL) -> TimeInterval? {
-        guard let file = try? AVAudioFile(forReading: url) else { return nil }
-        return Double(file.length) / file.processingFormat.sampleRate
+        let listed = LibraryLogic.recordings(in: folder, files: files, durations: durations.mapValues(\.seconds))
+        recordings = LibraryLogic.withRecording(recording, in: listed, now: Date())
     }
 
     func text(of url: URL) -> String? { texts[url.lastPathComponent]?.text }
@@ -172,8 +173,8 @@ final class AudioPlayback: NSObject, ObservableObject, AVAudioPlayerDelegate {
     private var player: AVAudioPlayer?
     private var timer: Timer?
 
-    func load(_ url: URL?) {
-        guard url != self.url else { return }
+    func load(_ url: URL?, force: Bool = false) {
+        guard force || url != self.url else { return }
         pause()
         self.url = url
         player = url.flatMap { try? AVAudioPlayer(contentsOf: $0) }
@@ -223,11 +224,11 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            Sidebar(recorder: recorder, processor: processor, library: library)
+            Sidebar(recorder: recorder, processor: processor, library: library) { newMeeting() }
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
             if let entry = library.selected {
-                RecordingDetail(entry: entry, processor: processor, library: library, playback: playback)
+                RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
                     .id(entry.id)
             } else {
                 Text(library.recordings.isEmpty ? "No recordings yet" : "Select a meeting")
@@ -238,6 +239,8 @@ struct MainView: View {
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
                 Spacer()
+                if recorder.isRecording { pauseButton }
+                if let entry = library.selected, !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
                 recordButton
                 moreMenu
             }
@@ -246,6 +249,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             library.refresh()
         }
+        .onReceive(recorder.$meeting) { library.recording = $0 }
         .confirmationDialog("Move \(library.selected?.audio.lastPathComponent ?? "") to the Trash?",
                             isPresented: $library.confirmingDelete) {
             Button("Move to Trash", role: .destructive) { deleteSelected() }
@@ -270,21 +274,47 @@ struct MainView: View {
             }
             .help("Stop Recording")
         } else {
-            Button { Task { await recorder.start() } } label: {
+            Button { newMeeting() } label: {
                 Label {
-                    Text("Record")
+                    Text("New Meeting")
                 } icon: {
                     Image(systemName: "circle.fill").foregroundStyle(.red)
                 }
                 .labelStyle(.titleAndIcon)
             }
-            .help("Start Recording")
+            .disabled(recorder.isBusy)
+            .help("Record a new meeting (\u{2318}N)")
+        }
+    }
+
+    private var pauseButton: some View {
+        Button { recorder.togglePause() } label: {
+            Label(recorder.isPaused ? "Resume" : "Pause", systemImage: recorder.isPaused ? "record.circle" : "pause.fill")
+                .labelStyle(.titleAndIcon)
+        }
+        .help(recorder.isPaused ? "Resume Recording" : "Pause Recording")
+    }
+
+    private func newMeeting() {
+        guard !recorder.isBusy else {
+            library.selection = recorder.meeting
+            return
+        }
+        Task {
+            await recorder.start()
+            if let meeting = recorder.meeting {
+                library.query = ""
+                library.selection = meeting
+            }
         }
     }
 
     private var moreMenu: some View {
         Menu {
-            if let entry = library.selected {
+            if let entry = library.selected, !entry.inProgress {
+                Button("Continue Recording") { Task { await recorder.start(continuing: entry.audio) } }
+                    .disabled(recorder.isBusy)
+                Divider()
                 Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
                 Button("Transcribe & summarise") { processor.process(entry.audio) }
                     .disabled(processor.processing == entry.audio)
@@ -295,7 +325,7 @@ struct MainView: View {
             Image(systemName: "ellipsis")
         }
         .menuIndicator(.hidden)
-        .disabled(library.selected == nil)
+        .disabled(library.selected?.inProgress ?? true)
         .help("More")
     }
 
@@ -310,12 +340,24 @@ struct Sidebar: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
+    let newMeeting: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            SearchField(text: $library.query)
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
+            HStack(spacing: 6) {
+                SearchField(text: $library.query)
+                Button(action: newMeeting) {
+                    Image(systemName: "plus")
+                        .frame(width: 26, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .keyboardShortcut("n")
+                .help(recorder.isBusy ? "A meeting is being recorded; this shows it" : "New meeting (\u{2318}N)")
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 8)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
@@ -346,8 +388,12 @@ struct Sidebar: View {
                     .lineLimit(1)
                     .foregroundStyle(.primary)
                 HStack(spacing: 4) {
-                    Text(([dateText(entry.date, group: group)] + [entry.duration.map(LibraryLogic.minutesText)].compactMap { $0 })
-                        .joined(separator: " \u{00B7} "))
+                    if recorder.meeting == entry.audio {
+                        RecordingStatus(recorder: recorder)
+                    } else {
+                        Text(([dateText(entry.date, group: group)] + [entry.duration.map(LibraryLogic.minutesText)].compactMap { $0 })
+                            .joined(separator: " \u{00B7} "))
+                    }
                     if processor.processing == entry.audio { ProgressView().controlSize(.mini) }
                 }
                 .font(.caption)
@@ -408,5 +454,29 @@ struct SearchField: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+    }
+}
+
+struct RecordingStatus: View {
+    @ObservedObject var recorder: Recorder
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Circle().fill(recorder.isPaused ? Color.secondary : .red).frame(width: 6, height: 6)
+            Text(recorder.isRecording ? recorder.statusText : "Adding to meeting\u{2026}").monospacedDigit()
+        }
+    }
+}
+
+struct ContinueButton: View {
+    @ObservedObject var recorder: Recorder
+    let entry: RecordingEntry
+
+    var body: some View {
+        Button { Task { await recorder.start(continuing: entry.audio) } } label: {
+            Label("Continue Recording", systemImage: "record.circle").labelStyle(.titleAndIcon)
+        }
+        .disabled(recorder.isBusy)
+        .help("Record more of this meeting; it is added to the end of the same recording")
     }
 }

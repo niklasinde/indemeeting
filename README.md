@@ -37,8 +37,8 @@ Security, grant the permissions once more, and they then persist across rebuilds
     ./test.sh
     swift test
 
-`test.sh` compiles the mixer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
-names, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
+`test.sh` compiles the mixer, the appender and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
+names, paused time, part and combined files and their length check, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
 failure). `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
@@ -48,6 +48,10 @@ need real permissions, hardware, speech models or Apple Intelligence are not cov
 
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
+
+Pause Recording (menu or the window's toolbar) stops writing until Resume Recording: the menu, toolbar and sidebar show
+"Paused 00:12:34", the timer stands still and the file simply continues where it left off, without the paused gap.
+Quitting while paused saves the recording like Stop.
 
 ## App window
 
@@ -65,11 +69,24 @@ A selected meeting shows its title (click to rename), the date, time, length and
 - Notes: your own notes, saved automatically shortly after you stop typing.
 - Transcript: the transcript in paragraphs; clicking a paragraph's time plays the recording from there.
 
-A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has Record (Stop with the elapsed
-time while recording, like the menu; a recording stopped here is selected instead of revealed in Finder) and a "…"
-menu with Reveal in Finder, Transcribe & summarise (same processing as the menu) and Delete, which moves the audio and
+A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has New Meeting (Pause/Resume and
+Stop with the elapsed time while recording, like the menu; a recording stopped here is selected instead of revealed in
+Finder) and a "…" menu with Continue Recording, Reveal in Finder, Transcribe & summarise (same processing as the menu) and Delete, which moves the audio and
 all its companion files to the Trash after a confirmation. When a permission is missing the sidebar offers
 "Open Setup…".
+
+Two ways to record from the window:
+
+- New meeting ("+" next to the search field, Cmd-N, or New Meeting in the toolbar) records a new file. Its row appears
+  at the top under Today right away with a live "Recording 00:00:12" and its page opens, so you can write notes while it
+  records; the transcript and summary follow after Stop. While a recording runs the "+" shows that meeting instead.
+- Continue Recording (next to a meeting's title, in the toolbar and in the "…" menu, when nothing is recording) picks a
+  meeting back up. The new part is recorded to `Meeting-…-HHmm.part-<time>.m4a`; on Stop it is appended to the
+  meeting's own file, so the meeting keeps its name, row, notes, title and checked action items, and it is then
+  transcribed and summarised again as a whole. The append exports the meeting plus the part (Apple M4A, so the file is
+  re-encoded) to `Meeting-…-HHmm.combined.m4a`, checks that its length is the old length plus the part's (within half a
+  second, or 0.1% for long meetings) and only then replaces the meeting. If anything fails the meeting is left as it
+  was, the part file is kept next to it and the error names it. Part and combined files are not listed.
 
 Edits never touch the recording or the generated files. A rename and the checked action items are kept in
 `Meeting-…-HHmm.meta.json` (`{"title": "…", "checked": {"<action item line>": true}}`), the notes in
@@ -121,7 +138,12 @@ To record headlessly through the same code path as the menu:
     .build/debug/MeetingRecorder --record 5 --out /tmp/test.m4a   # --out optional, defaults to the recordings folder
 
 It prints the RMS level of each source (`(silent)` below 0.001) and the saved path. Ctrl-C stops early and still
-finalizes the file. Privacy prompts are attributed to the process that launched the binary (e.g. Terminal), so run
+finalizes the file. `--pause-after A --resume-after B` pauses after A seconds for B seconds (default 1) and then
+records the rest, so the file is still `--record` seconds long. `--continue /path/to/Meeting.m4a` records a part and
+appends it to that meeting instead of writing a new file (`--out` is ignored):
+
+    .build/debug/MeetingRecorder --record 4 --pause-after 2 --resume-after 1 --out /tmp/paused.m4a
+    .build/debug/MeetingRecorder --continue /tmp/copy-of-Meeting.m4a --record 3 Privacy prompts are attributed to the process that launched the binary (e.g. Terminal), so run
 the app itself to test with its own grants.
 
 ## First-run setup

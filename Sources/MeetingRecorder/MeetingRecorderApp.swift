@@ -12,21 +12,21 @@ enum Main {
             MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current)
         }
         if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
-            recordFromCommandLine(seconds: job.seconds, to: job.output)
+            recordFromCommandLine(job)
         }
         MeetingRecorderApp.main()
     }
 
-    private static func recordFromCommandLine(seconds: Double, to output: URL?) -> Never {
-        if let output, FileManager.default.fileExists(atPath: output.path) {
+    private static func recordFromCommandLine(_ job: RecordJob) -> Never {
+        if job.continuing == nil, let output = job.output, FileManager.default.fileExists(atPath: output.path) {
             FileHandle.standardError.write(Data("Failed: \(output.path) already exists\n".utf8))
             exit(1)
         }
         Task { @MainActor in
             let recorder = Recorder()
-            let recording = Task { await recorder.record(seconds: seconds, to: output) }
+            let recording = Task { await recorder.record(job) }
             TerminationSignals.observe { recording.cancel() }
-            print("Recording \(seconds)s\u{2026}")
+            print("Recording \(job.seconds)s\u{2026}")
             guard let url = await recording.value else {
                 FileHandle.standardError.write(Data("Failed: \(recorder.errorMessage ?? "not recording")\n".utf8))
                 exit(1)
@@ -89,9 +89,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard recorder.isRecording else { return .terminateNow }
+        guard recorder.isBusy else { return .terminateNow }
         Task {
             await recorder.stop(reveal: false)
+            while recorder.isBusy { try? await Task.sleep(nanoseconds: 100_000_000) }
             sender.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
@@ -123,10 +124,13 @@ struct MenuContent: View {
             .keyboardShortcut("o")
         Divider()
         if recorder.isRecording {
-            Text("Recording  \(recorder.elapsedText)")
+            Text(recorder.statusText)
+            Button(recorder.isPaused ? "Resume Recording" : "Pause Recording") { recorder.togglePause() }
             Button("Stop Recording") {
                 Task { await processor.finishRecording(recorder) }
             }
+        } else if recorder.meeting != nil {
+            Text("Adding to meeting\u{2026}")
         } else {
             Button("Start Recording") { Task { await recorder.start() } }
         }
