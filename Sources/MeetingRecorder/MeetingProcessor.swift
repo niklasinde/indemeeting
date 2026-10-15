@@ -54,6 +54,7 @@ final class MeetingProcessor: ObservableObject {
     @Published private(set) var status: String?
     @Published private(set) var errorMessage: String?
     @Published private(set) var latestSummary: URL?
+    @Published private(set) var processing: URL?
 
     private let notifier: Notifier
     private var queue: Task<Void, Never>?
@@ -70,6 +71,13 @@ final class MeetingProcessor: ObservableObject {
         }
     }
 
+    @discardableResult
+    func finishRecording(_ recorder: Recorder, reveal: Bool = true) async -> URL? {
+        guard let url = await recorder.stop(reveal: reveal) else { return nil }
+        process(url)
+        return url
+    }
+
     func chooseRecording() {
         let panel = NSOpenPanel()
         panel.title = "Transcribe & summarise a recording"
@@ -83,6 +91,8 @@ final class MeetingProcessor: ObservableObject {
     private func run(_ audio: URL) async {
         let name = audio.lastPathComponent
         errorMessage = nil
+        processing = audio
+        defer { processing = nil }
         do {
             let result = try await MeetingPipeline.run(audio, language: .current) { [weak self] in
                 self?.status = $0.text(for: name)

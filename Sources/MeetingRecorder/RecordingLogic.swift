@@ -16,11 +16,20 @@ enum RecordingLogic {
     }
 
     static func fileName(for date: Date, timeZone: TimeZone = .current) -> String {
+        nameFormatter(timeZone).string(from: date) + ".m4a"
+    }
+
+    /// The minute a `Meeting-YYYY-MM-DD-HHmm…` file name was started in.
+    static func date(fromFileName name: String, timeZone: TimeZone = .current) -> Date? {
+        nameFormatter(timeZone).date(from: String(name.prefix("Meeting-YYYY-MM-DD-HHmm".count)))
+    }
+
+    private static func nameFormatter(_ timeZone: TimeZone) -> DateFormatter {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = timeZone
-        formatter.dateFormat = "'Meeting-'yyyy-MM-dd-HHmm'.m4a'"
-        return formatter.string(from: date)
+        formatter.dateFormat = "'Meeting-'yyyy-MM-dd-HHmm"
+        return formatter
     }
 
     /// The first `Meeting-…-HHmm.m4a`, `Meeting-…-HHmm-2.m4a`, … in `folder` that is free, counting in-progress files.

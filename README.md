@@ -37,8 +37,8 @@ Security, grant the permissions once more, and they then persist across rebuilds
     ./test.sh
     swift test
 
-`test.sh` compiles the mixer and the pure recording and processing helpers (chunking, timestamps, markdown, file
-names) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
+`test.sh` compiles the mixer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
+names, the recordings list) with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs them (exit code is non-zero on
 failure). `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
@@ -48,6 +48,19 @@ need real permissions, hardware, speech models or Apple Intelligence are not cov
 
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
+
+## App window
+
+"Open Meeting Recorder" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
+main window (with a Dock icon while it is open). The sidebar lists the recordings in `~/Movies/MeetingRecordings`,
+newest first, with date, time, duration and icons for an existing transcript and summary. In-progress
+`.recording.m4a` files are left out. The list follows the folder as files appear or are removed.
+
+Selecting a recording shows a player with a scrubber, its Summary and Transcript (rendered from the `.md` files), and
+buttons to Reveal in Finder, Transcribe & summarise (same processing as the menu, with progress) and Delete, which
+moves the audio, transcript and summary to the Trash after a confirmation. The toolbar has Start/Stop Recording with
+the elapsed time, like the menu; a recording stopped here is selected instead of revealed in Finder. When a permission
+is missing the sidebar offers "Open Setup…".
 
 ## Transcripts and summaries
 
@@ -92,7 +105,8 @@ the app itself to test with its own grants.
 
 On first launch a Setup window opens (it does not depend on the menu-bar icon being visible). It walks through
 Microphone, System audio (the other participants), optional Notifications, a 5-second test recording and a tip on
-finding the menu-bar icon. The system audio step shows the live status with Allow and Open Settings buttons. Reopen it any time from the menu bar via "Setup & Help…".
+finding the menu-bar icon. The system audio step shows the live status with Allow and Open Settings buttons. Reopen it any time from the menu bar via "Setup & Help…", or
+from the app window while a permission is missing.
 
 ## Meeting notifications
 

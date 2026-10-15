@@ -5,39 +5,28 @@ import SwiftUI
 import UserNotifications
 
 @MainActor
-final class OnboardingWindow: NSObject, NSWindowDelegate {
+final class OnboardingWindow {
     static let shared = OnboardingWindow()
     private static let seenKey = "onboardingShown"
 
     var recorder: Recorder?
-    private var window: NSWindow?
+    private lazy var window: AppWindow = AppWindow { [unowned self] in
+        let window = NSWindow(contentViewController: NSHostingController(
+            rootView: OnboardingView(recorder: recorder!) { [weak self] in self?.window.close() }))
+        window.title = "Meeting Recorder Setup"
+        window.styleMask = [.titled, .closable]
+        return window
+    }
 
     func showIfSetupNeeded() {
         let seen = UserDefaults.standard.bool(forKey: Self.seenKey)
-        let ready = Permissions.microphoneStatus == .authorized
         UserDefaults.standard.set(true, forKey: Self.seenKey)
-        if !seen || !ready { show() }
+        if !seen || !Permissions.microphoneReady { show() }
     }
 
     func show() {
-        guard let recorder else { return }
-        NSApp.setActivationPolicy(.regular)
-        if window == nil {
-            let window = NSWindow(contentViewController: NSHostingController(
-                rootView: OnboardingView(recorder: recorder) { [weak self] in self?.window?.close() }))
-            window.title = "Meeting Recorder Setup"
-            window.styleMask = [.titled, .closable]
-            window.isReleasedWhenClosed = false
-            window.delegate = self
-            window.center()
-            self.window = window
-        }
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        guard recorder != nil else { return }
+        window.show()
     }
 }
 

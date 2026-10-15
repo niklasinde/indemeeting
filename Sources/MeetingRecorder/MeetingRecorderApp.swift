@@ -58,7 +58,7 @@ struct MeetingRecorderApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: delegate.recorder, processor: delegate.processor)
+            MenuContent(recorder: delegate.recorder, processor: delegate.processor) { delegate.mainWindow.show() }
         } label: {
             MenuLabel(recorder: delegate.recorder)
         }
@@ -71,6 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var notifier = Notifier { [recorder] in await recorder.start() }
     lazy var processor = MeetingProcessor(notifier: notifier)
     private lazy var meetingWatcher = MeetingWatcher(recorder: recorder, notifier: notifier)
+    lazy var mainWindow = MainWindow(recorder: recorder, processor: processor)
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         meetingWatcher.start()
@@ -92,7 +93,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        OnboardingWindow.shared.show()
+        mainWindow.show()
         return true
     }
 }
@@ -108,14 +109,18 @@ struct MenuLabel: View {
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
+    let openApp: () -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
 
     var body: some View {
+        Button("Open Meeting Recorder") { openApp() }
+            .keyboardShortcut("o")
+        Divider()
         if recorder.isRecording {
             Text("Recording  \(recorder.elapsedText)")
             Button("Stop Recording") {
-                Task { if let url = await recorder.stop() { processor.process(url) } }
+                Task { await processor.finishRecording(recorder) }
             }
         } else {
             Button("Start Recording") { Task { await recorder.start() } }

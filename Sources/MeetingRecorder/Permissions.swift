@@ -14,6 +14,8 @@ enum Permissions {
     }
 
     static var microphoneStatus: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .audio) }
+    static var microphoneReady: Bool { microphoneStatus == .authorized }
+    static var allGranted: Bool { microphoneReady && systemAudio == .granted }
 
     /// "System Audio Recording Only" (kTCCServiceAudioCapture) has no public status API; the TCC calls are looked up at
     /// runtime and report `.unknown` when missing. The first process tap start also triggers the prompt.

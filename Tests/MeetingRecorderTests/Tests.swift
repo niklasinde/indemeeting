@@ -363,4 +363,66 @@ let allTests: [(name: String, run: () throws -> Void)] = [
         check(job?.audio.path == "/x/a.m4a" && job?.language == .english, "flag with language")
         check(ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a"])?.language == nil, "language optional")
     }),
+    ("recording names parse back to their minute", {
+        let zone = TimeZone(identifier: "Europe/Stockholm")!
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let date = calendar.date(from: DateComponents(year: 2026, month: 10, day: 15, hour: 14, minute: 30))!
+        check(RecordingLogic.date(fromFileName: "Meeting-2026-10-15-1430.m4a", timeZone: zone) == date, "plain")
+        check(RecordingLogic.date(fromFileName: "Meeting-2026-10-15-1430-2.m4a", timeZone: zone) == date, "numbered")
+        check(RecordingLogic.date(fromFileName: "Interview.m4a", timeZone: zone) == nil, "other names")
+    }),
+
+    ("library lists finished audio newest first with its companion files", {
+        let zone = TimeZone(identifier: "Europe/Stockholm")!
+        let folder = URL(fileURLWithPath: "/tmp/rec")
+        let created = Date(timeIntervalSince1970: 2_000_000_000)
+        let names = [
+            "Meeting-2026-10-15-1430.m4a", "Meeting-2026-10-15-1430.transcript.md", "Meeting-2026-10-15-1430.summary.md",
+            "Meeting-2026-10-15-1430-2.m4a", "Meeting-2026-10-15-1430-10.m4a", "Meeting-2026-10-14-0900.m4a",
+            "Meeting-2026-10-14-0900.transcript.md", "Meeting-2026-10-16-0800.recording.m4a", "notes.txt", "Interview.MP3",
+        ]
+        let entries = LibraryLogic.recordings(in: folder, files: names.map { FolderItem(name: $0, created: created) },
+                                              durations: ["Meeting-2026-10-14-0900.m4a": 61], timeZone: zone)
+        check(entries.map(\.audio.lastPathComponent) == [
+            "Interview.MP3", "Meeting-2026-10-15-1430-10.m4a", "Meeting-2026-10-15-1430-2.m4a",
+            "Meeting-2026-10-15-1430.m4a", "Meeting-2026-10-14-0900.m4a",
+        ], "order \(entries.map(\.audio.lastPathComponent))")
+        let first = entries[3]
+        check(first.hasTranscript && first.hasSummary, "both companions")
+        check(first.files.map(\.lastPathComponent) == names.prefix(3).map { $0 }, "files to trash")
+        check(first.duration == nil, "duration unknown")
+        let older = entries[4]
+        check(older.hasTranscript && !older.hasSummary && older.duration == 61, "transcript only, duration")
+        check(older.files.count == 2, "audio and transcript")
+        check(entries[0].date == created, "creation date when the name has no date")
+    }),
+
+    ("library hides in-progress recordings", {
+        check(LibraryLogic.isListed("Meeting-2026-10-15-1430.m4a"), "finished")
+        check(!LibraryLogic.isListed("Meeting-2026-10-15-1430.recording.m4a"), "in progress")
+        check(!LibraryLogic.isListed("Meeting-2026-10-15-1430.summary.md"), "markdown")
+        check(LibraryLogic.isListed("call.WAV"), "other audio")
+    }),
+
+    ("durations show m:ss below an hour and h:mm:ss above", {
+        check(LibraryLogic.durationText(0) == "0:00", "zero")
+        check(LibraryLogic.durationText(59.6) == "1:00", "rounds")
+        check(LibraryLogic.durationText(42 * 60 + 5) == "42:05", "minutes")
+        check(LibraryLogic.durationText(3600 + 2 * 60 + 3) == "1:02:03", "hours")
+    }),
+
+    ("markdown is split into headings, lists and paragraphs", {
+        let markdown = ProcessingLogic.summaryMarkdown(
+            MeetingSummary(title: "Plan", summary: "We met.", keyPoints: ["Budget"], decisions: [],
+                           actionItems: [.init(task: "Send it", owner: "Ann")]),
+            audioName: "Meeting-x.m4a", language: .english)
+        let blocks = LibraryLogic.markdownBlocks(markdown)
+        check(blocks.first == .heading(level: 1, text: "Plan"), "title")
+        check(blocks.contains(.heading(level: 2, text: "Key points")), "section")
+        check(blocks.contains(.bullet("Budget")), "bullet")
+        check(blocks.contains(.task("Send it \u{2014} **Ann**")), "action item")
+        check(blocks.contains(.paragraph("None noted.")), "paragraph")
+        check(LibraryLogic.markdownBlocks("#hashtag\n\n* star") == [.paragraph("#hashtag"), .bullet("star")], "edge cases")
+    }),
 ]
