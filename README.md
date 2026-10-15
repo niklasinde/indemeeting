@@ -11,6 +11,14 @@ summed, and encoded. Works independently of Notion or any other meeting tool.
 Produces `MeetingRecorder.app`, ad-hoc signed with `MeetingRecorder.entitlements`. Requires macOS 13+ and the
 Swift toolchain. If `swift build` fails (e.g. a broken Command Line Tools SwiftPM), the script falls back to `swiftc`.
 
+## Test
+
+    ./test.sh
+
+Compiles the mixer and pure recording helpers with `swiftc` together with `Tests/MeetingRecorderTests/Tests.swift` and runs
+them (exit code is non-zero on failure), so it needs neither SwiftPM nor Xcode. On a machine with a working toolchain
+`swift test` runs the same tests through XCTest. Tests that need real permissions or hardware are not covered.
+
 ## Run
 
     open MeetingRecorder.app

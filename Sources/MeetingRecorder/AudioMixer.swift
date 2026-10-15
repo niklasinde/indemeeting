@@ -44,6 +44,7 @@ final class AudioMixer {
     private let file: AVAudioFile
     private let queue = DispatchQueue(label: "mixer")
     private var timer: DispatchSourceTimer?
+    private var written = 0
     private var pending = AudioSource.allCases.map { _ in [Float]() }
     private var lastSeen = AudioSource.allCases.map { _ in Date.distantPast }
 
@@ -74,6 +75,8 @@ final class AudioMixer {
         }
     }
 
+    var framesWritten: Int { queue.sync { written } }
+
     func finish() {
         queue.sync {
             timer?.cancel()
@@ -102,5 +105,6 @@ final class AudioMixer {
         for frame in 0..<count { out[frame] = max(-1, min(1, out[frame])) }
         buffer.frameLength = AVAudioFrameCount(count)
         try? file.write(from: buffer)
+        written += count
     }
 }

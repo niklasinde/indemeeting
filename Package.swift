@@ -5,6 +5,7 @@ let package = Package(
     name: "MeetingRecorder",
     platforms: [.macOS(.v13)],
     targets: [
-        .executableTarget(name: "MeetingRecorder", path: "Sources/MeetingRecorder")
+        .executableTarget(name: "MeetingRecorder", path: "Sources/MeetingRecorder"),
+        .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests")
     ]
 )

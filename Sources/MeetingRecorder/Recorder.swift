@@ -16,11 +16,8 @@ final class Recorder: ObservableObject {
     private var timer: Timer?
 
     var elapsedText: String {
-        let total = Int(elapsed)
-        return String(format: "%02d:%02d:%02d", total / 3600, total / 60 % 60, total % 60)
+        RecordingLogic.elapsedText(elapsed)
     }
-
-    static let microphoneOnlyNotice = "Microphone only \u{2014} system audio off"
 
     private static var folder: URL {
         FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
@@ -35,7 +32,7 @@ final class Recorder: ObservableObject {
         do {
             try await Permissions.ensureMicrophone()
             try FileManager.default.createDirectory(at: Self.folder, withIntermediateDirectories: true)
-            let url = Self.folder.appendingPathComponent(Self.fileName(for: Date()))
+            let url = Self.folder.appendingPathComponent(RecordingLogic.fileName(for: Date()))
             let mixer = try AudioMixer(url: url)
             self.mixer = mixer
             outputURL = url
@@ -51,15 +48,11 @@ final class Recorder: ObservableObject {
     }
 
     private func startSystemAudio(into mixer: AudioMixer) async {
-        guard Permissions.screenRecordingGranted else {
-            notice = Self.microphoneOnlyNotice
-            return
+        var active = false
+        if RecordingLogic.attemptsSystemAudio(screenRecordingGranted: Permissions.screenRecordingGranted) {
+            active = (try? await system.start(into: mixer)) != nil
         }
-        do {
-            try await system.start(into: mixer)
-        } catch {
-            notice = Self.microphoneOnlyNotice
-        }
+        notice = RecordingLogic.notice(systemAudioActive: active)
     }
 
     @discardableResult
@@ -99,12 +92,5 @@ final class Recorder: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.elapsed = Date().timeIntervalSince(started) }
         }
-    }
-
-    private static func fileName(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "'Meeting-'yyyy-MM-dd-HHmm'.m4a'"
-        return formatter.string(from: date)
     }
 }
