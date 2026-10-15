@@ -92,6 +92,7 @@ struct RecordingDetail: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 20, weight: .medium))
                     .onSubmit { editor.save() }
+                    .disabled(!library.canEdit)
                 if !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
             }
             HStack(spacing: 8) {
@@ -142,6 +143,7 @@ struct RecordingDetail: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Self.gutter - 5)
                 .padding(.bottom, 12)
+                .disabled(!library.canEdit)
                 .overlay(alignment: .topLeading) {
                     if editor.notes.isEmpty {
                         Text("Write notes\u{2026}").foregroundStyle(.tertiary).padding(.horizontal, Self.gutter).allowsHitTesting(false)
@@ -247,6 +249,7 @@ struct SummaryView: View {
                 .foregroundStyle(item.done ? .secondary : .primary)
         }
         .toggleStyle(.checkbox)
+        .disabled(!library.canEdit)
     }
 
     private func checklistText(_ item: ChecklistItem) -> AttributedString {
@@ -274,24 +277,25 @@ struct TranscriptView: View {
             EmptyState(entry: entry, processor: processor, title: "No transcript yet",
                        message: "Transcribe this recording on this Mac. Nothing leaves your computer.")
         } else {
+            let rows = turns.flatMap { turn in
+                turn.paragraphs.enumerated().map { (speaker: $0.offset == 0 ? turn.speaker : nil, paragraph: $0.element) }
+            }
             LazyVStack(alignment: .leading, spacing: 18) {
-                ForEach(Array(turns.enumerated()), id: \.offset) { _, turn in
-                    ForEach(Array(turn.paragraphs.enumerated()), id: \.offset) { index, paragraph in
-                        VStack(alignment: .leading, spacing: 3) {
-                            HStack(spacing: 6) {
-                                if index == 0, let speaker = turn.speaker {
-                                    Text(speaker.name(in: language)).foregroundStyle(.secondary)
-                                }
-                                Button(LibraryLogic.durationText(paragraph.start)) { playback.play(from: paragraph.start) }
-                                    .buttonStyle(.plain)
-                                    .foregroundStyle(Color.accentColor)
-                                    .help("Play from here")
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            if let speaker = row.speaker {
+                                Text(speaker.name(in: language)).foregroundStyle(.secondary)
                             }
-                            .font(.caption.monospacedDigit())
-                            Text(paragraph.text)
-                                .lineSpacing(3)
-                                .textSelection(.enabled)
+                            Button(LibraryLogic.durationText(row.paragraph.start)) { playback.play(from: row.paragraph.start) }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(Color.accentColor)
+                                .help("Play from here")
                         }
+                        .font(.caption.monospacedDigit())
+                        Text(row.paragraph.text)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
                     }
                 }
             }

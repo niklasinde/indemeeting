@@ -31,13 +31,11 @@ enum PreviewRenderer {
             FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
-        let library = RecordingLibrary(store: store, folder: folder)
-        library.start()
-        let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
-                                                    library: library, playback: AudioPlayback()))
-        window.setContentSize(NSSize(width: 1040, height: 760))
-        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
+        let (library, window) = makeWindow(store: store, folder: folder)
+        if let standup = library.recordings.first {
+            try? store.saveTranscript(standup.fileName, segments: SampleLibrary.labelledTranscript, language: .swedish,
+                                      engine: "DictationTranscriber")
+        }
 
         let shots: [(name: String, meeting: Int, tab: DetailTab)] = [
             ("summary", 0, .summary), ("transcript", 0, .transcript), ("notes", 0, .notes),
@@ -55,10 +53,31 @@ enum PreviewRenderer {
                     save(window, to: output.appendingPathComponent("\(shot.name)-\(mode).png"))
                 }
             }
+            window.orderOut(nil)
+            let unavailable = MeetingStore.openDefault(at: URL(fileURLWithPath: "/dev/null/meetings.sqlite"))
+            let (brokenLibrary, brokenWindow) = makeWindow(store: unavailable, folder: folder)
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            brokenLibrary.selection = brokenLibrary.recordings.first?.id
+            brokenLibrary.tab = .notes
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            save(brokenWindow, to: output.appendingPathComponent("database-unavailable-light.png"))
             exit(0)
         }
         app.run()
         exit(0)
+    }
+
+    @MainActor
+    private static func makeWindow(store: MeetingStore, folder: URL) -> (RecordingLibrary, NSWindow) {
+        let library = RecordingLibrary(store: store, folder: folder)
+        library.start()
+        let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
+                                                    library: library, playback: AudioPlayback()))
+        window.appearance = NSAppearance(named: .aqua)
+        window.setContentSize(NSSize(width: 1040, height: 760))
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        return (library, window)
     }
 
     @MainActor
@@ -164,6 +183,11 @@ private enum SampleLibrary {
         (181, "Och jag bokar en genomgång med kundteamet så att de vet vad som kommer."),
         (196, "Toppen, då kör vi. Tack allihop!"),
     ].map { TranscriptSegment(start: $0.0, text: $0.1) }
+
+    static let labelledTranscript = transcript.enumerated().map { index, segment in
+        TranscriptSegment(start: segment.start, text: segment.text,
+                          speaker: [0, 5, 6, 7, 9, 10, 13].contains(index) ? .you : .others)
+    }
 
     private static func legacySummary(_ audioName: String) -> String {
         """

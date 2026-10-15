@@ -71,6 +71,11 @@ final class RecordingLibrary: ObservableObject {
 
     var selected: RecordingEntry? { recordings.first { $0.id == selection } }
 
+    var databaseError: DatabaseUnavailable? { store.openError }
+
+    /// Titles, notes and checks are only editable while there is a database to save them in.
+    var canEdit: Bool { store.isAvailable }
+
     var visibleRecordings: [RecordingEntry] {
         guard let matches else { return recordings }
         return recordings.filter { matches.contains($0.fileName) }
@@ -266,13 +271,16 @@ struct MainView: View {
             Sidebar(recorder: recorder, processor: processor, library: library) { newMeeting() }
                 .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
         } detail: {
-            if let entry = library.selected {
-                RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
-                    .id(entry.id)
-            } else {
-                Text(library.recordings.isEmpty ? "No recordings yet" : "Select a meeting")
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                if let error = library.databaseError { DatabaseErrorBanner(error: error) }
+                if let entry = library.selected {
+                    RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
+                        .id(entry.id)
+                } else {
+                    Text(library.recordings.isEmpty ? "No recordings yet" : "Select a meeting")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
         .toolbar {
@@ -474,6 +482,34 @@ struct Sidebar: View {
             .padding(12)
             .overlay(alignment: .top) { Divider() }
         }
+    }
+}
+
+struct DatabaseErrorBanner: View {
+    let error: DatabaseUnavailable
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Meeting database unavailable").font(.body.weight(.medium))
+                Text("Recordings are still saved to disk. Titles, notes and checked items cannot be edited until the database opens; quit and reopen the app once it is fixed.")
+                    .foregroundStyle(.secondary)
+                Text(error.url.path).textSelection(.enabled)
+                Text(error.reason).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Reveal in Finder") { error.reveal() }
+        }
+        .font(.callout)
+        .padding(12)
+        .background(Color.orange.opacity(0.12))
+    }
+}
+
+extension DatabaseUnavailable {
+    @MainActor func reveal() {
+        NSWorkspace.shared.activateFileViewerSelecting([existingLocation])
     }
 }
 

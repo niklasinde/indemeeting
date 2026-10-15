@@ -46,6 +46,22 @@ struct Meeting: Equatable {
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle) }
 }
 
+/// Why the database could not be opened. The store then refuses every read and write instead of keeping data that
+/// would be lost.
+struct DatabaseUnavailable: LocalizedError {
+    let url: URL
+    let reason: String
+
+    var errorDescription: String? { "The meeting database could not be opened: \(reason)" }
+
+    /// The database file, or the nearest folder above it that exists.
+    var existingLocation: URL {
+        var url = url
+        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" { url.deleteLastPathComponent() }
+        return url
+    }
+}
+
 struct MeetingContent: Equatable {
     let meeting: Meeting
     let segments: [TranscriptSegment]
@@ -114,12 +130,29 @@ final class MeetingStore: @unchecked Sendable {
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine
         """
 
-    private let db: SQLiteDatabase
+    let openError: DatabaseUnavailable?
+    private let connection: SQLiteDatabase?
     private let queue = DispatchQueue(label: "meeting-store")
 
     init(path: String) throws {
-        db = try SQLiteDatabase(path: path)
+        let db = try SQLiteDatabase(path: path)
         try Self.migrate(db, Self.migrations)
+        connection = db
+        openError = nil
+    }
+
+    private init(unavailable: DatabaseUnavailable) {
+        connection = nil
+        openError = unavailable
+    }
+
+    var isAvailable: Bool { openError == nil }
+
+    private var db: SQLiteDatabase {
+        get throws {
+            guard let connection else { throw openError ?? SQLiteError(message: "not open") }
+            return connection
+        }
     }
 
     static func open(at url: URL) throws -> MeetingStore {
@@ -127,13 +160,14 @@ final class MeetingStore: @unchecked Sendable {
         return try MeetingStore(path: url.path)
     }
 
-    /// The app's database; an in-memory one when it cannot be opened, so recording still works.
-    static func openDefault() -> MeetingStore {
+    /// The app's database. When it cannot be opened the store is unavailable: recording still works, but nothing is
+    /// read or saved, so no edits disappear into a database that is not there.
+    static func openDefault(at url: URL = AppPaths.database) -> MeetingStore {
         do {
-            return try open(at: AppPaths.database)
+            return try open(at: url)
         } catch {
-            FileHandle.standardError.write(Data("Could not open \(AppPaths.database.path): \(error.localizedDescription)\n".utf8))
-            return try! MeetingStore(path: ":memory:")
+            FileHandle.standardError.write(Data("Could not open \(url.path): \(error.localizedDescription)\n".utf8))
+            return MeetingStore(unavailable: DatabaseUnavailable(url: url, reason: error.localizedDescription))
         }
     }
 
@@ -345,7 +379,7 @@ final class MeetingStore: @unchecked Sendable {
         }
         for (position, section) in summary.sections.enumerated() {
             try db.run("INSERT INTO summary_topics (meeting_id, position, title) VALUES (?, ?, ?)", [id, position, section.heading])
-            let topic = db.lastInsertID
+            let topic = try db.lastInsertID
             for (index, line) in section.lines.enumerated() {
                 try db.run("INSERT INTO summary_points (topic_id, position, text) VALUES (?, ?, ?)", [topic, index, line.text])
             }

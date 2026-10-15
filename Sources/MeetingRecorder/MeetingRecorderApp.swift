@@ -9,7 +9,12 @@ enum Main {
         }
         #endif
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
-            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, store: .openDefault())
+            let store = MeetingStore.openDefault()
+            if let error = store.openError {
+                FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, store: store)
         }
         if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
             recordFromCommandLine(job)
@@ -63,7 +68,9 @@ struct MeetingRecorderApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: delegate.recorder, processor: delegate.processor) { delegate.mainWindow.show(selecting: $0) }
+            MenuContent(recorder: delegate.recorder, processor: delegate.processor, databaseError: delegate.databaseError) {
+                delegate.mainWindow.show(selecting: $0)
+            }
         } label: {
             MenuLabel(recorder: delegate.recorder)
         }
@@ -86,6 +93,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await self?.stopRecording()
     }
     lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store)
+
+    var databaseError: DatabaseUnavailable? { store.openError }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         meetingWatcher.start()
@@ -128,6 +137,7 @@ struct MenuLabel: View {
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
+    let databaseError: DatabaseUnavailable?
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
@@ -136,6 +146,13 @@ struct MenuContent: View {
     var body: some View {
         Button("Open Meeting Recorder") { openApp(nil) }
             .keyboardShortcut("o")
+        if let error = databaseError {
+            Divider()
+            Text("Meeting database unavailable \u{2014} recordings still save")
+            Text(error.url.path)
+            Text(error.reason)
+            Button("Reveal in Finder") { error.reveal() }
+        }
         Divider()
         if recorder.isRecording {
             Text(recorder.statusText)

@@ -42,6 +42,33 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         }
     }),
 
+    ("a database that cannot be opened makes the store unavailable instead of keeping data in memory", {
+        let folder = try tempFolder()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        for url in [folder.appendingPathComponent("meetings.sqlite"), folder.appendingPathComponent("db/meetings.sqlite")] {
+            let store = MeetingStore.openDefault(at: url)
+            check(!store.isAvailable && store.openError?.url == url, "unavailable for \(url.path)")
+            check(store.openError?.existingLocation == folder, "reveals the folder that exists")
+            check(store.openError?.errorDescription?.contains("could not be opened") == true, "says why")
+            var refused = 0
+            for write in [{ try store.setNotes("Meeting-2026-10-15-1430.m4a", "lost") },
+                          { try store.saveTranscript("Meeting-2026-10-15-1430.m4a", segments: segments, language: .swedish, engine: "x") },
+                          { _ = try store.meetings() }] as [() throws -> Void] {
+                do { try write() } catch is DatabaseUnavailable { refused += 1 } catch {}
+            }
+            check(refused == 3, "reads and writes throw, \(refused)")
+        }
+        check(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty, "nothing created")
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        let store = MeetingStore.openDefault(at: folder.appendingPathComponent("meetings.sqlite"))
+        check(store.isAvailable && store.openError == nil, "opens once the folder is writable")
+    }),
+
     ("migrations run forward once each", {
         let folder = try tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

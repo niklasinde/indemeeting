@@ -44,8 +44,9 @@ Security, grant the permissions once more, and they then persist across rebuilds
 
 `test.sh` compiles the mixer, the appender, the database layer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
 names, paused time, part and combined files and their length and bit rate, stems and their appends, merging the
-stems' transcripts and dropping echoes, speaker turns, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
-migrations, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
+stems' transcripts and dropping echoes, speaker turns, auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
+migrations (including adding the speaker column to an existing database), a database that cannot be opened in an
+unwritable folder, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
 ## Run
@@ -120,6 +121,13 @@ The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else
 - `schema_version`: the migrations applied; new ones are appended to `MeetingStore.migrations` and run once, in order,
   on launch.
 
+If the database cannot be opened (for example the folder is not writable), the app does not fall back to a temporary
+database. The window shows a banner and the menu a "Meeting database unavailable" section, both with the database path,
+the error and Reveal in Finder (the file, or the nearest folder that exists). Titles, notes and action item checkboxes
+are disabled so nothing is typed that cannot be saved; recording keeps working and the audio is saved to disk as
+usual, and transcribing fails with the database error. `--process` exits with the error before transcribing. Quit
+and reopen the app once the database is fixed.
+
 The list is the audio files on disk joined with their rows: a new `.m4a` gets a row, a row whose file is gone is
 hidden (and kept). Earlier versions kept the data next to each recording in `<name>.transcript.md`, `<name>.summary.md`,
 `<name>.meta.json` and `<name>.notes.md`. When a recording gets its row (on the first launch of this version for
@@ -135,8 +143,9 @@ To check the window's layout without a screen, a debug build can render it offsc
     swift build && .build/debug/MeetingRecorder --render-previews /tmp/previews
 
 It writes the sample library to `/tmp/previews/library` as audio and old-style sidecar files, imports it into
-`/tmp/previews/library.sqlite` and saves PNGs of the Summary, Notes and Transcript tabs, an older
-summary and a missing summary, each in light and dark appearance.
+`/tmp/previews/library.sqlite` and saves PNGs of the Summary, Notes and Transcript tabs (the transcript with speakers),
+an older summary and a missing summary, each in light and dark appearance, plus the window with an unavailable
+database.
 
 ## Transcripts and summaries
 
