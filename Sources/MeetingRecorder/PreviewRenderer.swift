@@ -145,7 +145,7 @@ private enum SampleLibrary {
     private static let standupSummary = MeetingSummary(
         title: "Daglig standup \u{2013} buggfynd, validering och release",
         actionItems: [
-            .init(task: "Validera de 6 öppna ticketsen innan kl. 16:00", owner: "Katja"),
+            .init(task: "Validera de 6 öppna ticketsen innan kl. 16:00", owner: "Elin"),
             .init(task: "Rätta avrundningen av belopp på artikelrader", owner: "Johan"),
             .init(task: "Skriv release notes för 4.12", owner: "Sara"),
             .init(task: "Sätt upp testdata för fakturaflödet", owner: "Ahmed"),
@@ -173,7 +173,7 @@ private enum SampleLibrary {
         (17, "Beloppen avrundas fel när man har både rabatt och moms på samma rad."),
         (41, "Det syns bara på fakturor med fler än tjugo rader, så det är därför vi inte hittade det tidigare."),
         (55, "Jag har en fix klar och lägger upp den för granskning efter mötet."),
-        (78, "Bra. Katja, hur ser det ut med valideringen?"),
+        (78, "Bra. Elin, hur ser det ut med valideringen?"),
         (84, "Vi har sex öppna tickets kvar och jag tänkte bli klar med dem innan fyra i dag."),
         (97, "Två av dem kräver testdata som vi inte har än."),
         (112, "Det fixar jag, jag sätter upp testdata för fakturaflödet direkt efter lunch."),

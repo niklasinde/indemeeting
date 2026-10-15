@@ -546,13 +546,13 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("summary parses into action items and topic sections", {
-        let summary = MeetingSummary(title: "Standup", actionItems: [.init(task: "Validera 6 tickets innan kl. 16:00", owner: "Katja"),
+        let summary = MeetingSummary(title: "Standup", actionItems: [.init(task: "Validera 6 tickets innan kl. 16:00", owner: "Elin"),
                                                                      .init(task: "Boka rum", owner: nil)],
                                      topics: [.init(title: "Bugg \u{2013} Article rows", points: ["Fel avrundning", "Fix i dag"])])
         let parsed = LibraryLogic.parseSummary(ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .swedish))
         check(parsed.title == "Standup" && parsed.unavailable == nil, "title")
         check(parsed.actionItems == [
-            ChecklistItem(key: "Katja: Validera 6 tickets innan kl. 16:00", task: "Validera 6 tickets innan kl. 16:00", owner: "Katja", done: false),
+            ChecklistItem(key: "Elin: Validera 6 tickets innan kl. 16:00", task: "Validera 6 tickets innan kl. 16:00", owner: "Elin", done: false),
             ChecklistItem(key: "Boka rum", task: "Boka rum", owner: nil, done: false),
         ], "items \(parsed.actionItems)")
         check(parsed.sections == [SummarySection(heading: "Bugg \u{2013} Article rows", lines: [.bullet("Fel avrundning"), .bullet("Fix i dag")])],
