@@ -86,6 +86,7 @@ final class MeetingProcessor: ObservableObject {
     private let notifier: Notifier?
     private let store: MeetingStore
     private var queue: Task<Void, Never>?
+    private var modelWatch: Task<Void, Never>?
 
     init(notifier: Notifier?, store: MeetingStore) {
         self.notifier = notifier
@@ -99,6 +100,25 @@ final class MeetingProcessor: ObservableObject {
     /// Summarises the meeting's stored transcript, transcribing first only when it has none.
     func summarise(_ audio: URL) {
         enqueue(audio) { [store] in try await MeetingPipeline.resummarise(audio, store: store, progress: $0) }
+    }
+
+    /// While Apple Intelligence is off or downloading, waits for it and then summarises every meeting left without a summary.
+    func summariseWhenModelReady() {
+        guard modelWatch == nil, Summarizer.isWaitingForModel, (try? store.awaitingSummary())?.isEmpty == false else { return }
+        modelWatch = Task { [weak self] in
+            await Summarizer.waitUntilAvailable()
+            self?.modelWatch = nil
+            self?.summariseAwaiting()
+        }
+    }
+
+    private func summariseAwaiting() {
+        let audio = ((try? store.awaitingSummary()) ?? []).map { AppPaths.recordings.appendingPathComponent($0.audioFile) }
+            .filter { $0 != processing }
+        guard let newest = audio.first else { return }
+        notifier?.postProcessed(title: "Apple Intelligence is ready",
+                                body: "Summarising \(audio.count) meeting\(audio.count == 1 ? "" : "s")", meeting: newest)
+        audio.forEach(summarise)
     }
 
     private typealias Job = (@escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult
@@ -139,6 +159,7 @@ final class MeetingProcessor: ObservableObject {
             if let reason = result.unavailable {
                 status = reason.message
                 notifier?.postProcessed(title: "Transcript ready, no summary", body: reason.message, meeting: audio)
+                summariseWhenModelReady()
             } else {
                 status = "Summary ready: \(name)"
                 notifier?.postProcessed(title: "Meeting summary ready", body: result.title ?? name, meeting: audio)

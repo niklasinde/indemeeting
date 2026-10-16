@@ -496,7 +496,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         }
         let downloading = notice(.unavailable, reason: .modelNotReady)
         check(downloading.title == "No summary yet \u{2014} Apple Intelligence is still downloading", downloading.title)
-        check(downloading.canSummarise && !downloading.showsSettings, "summarise only")
+        check(downloading.canSummarise && downloading.showsSettings, "summarise and open settings")
         let off = notice(.unavailable, reason: .appleIntelligenceOff)
         check(off.title == "No summary \u{2014} Apple Intelligence is turned off" && off.showsSettings && off.canSummarise, off.title)
         let ineligible = notice(.unavailable, reason: .deviceNotEligible)

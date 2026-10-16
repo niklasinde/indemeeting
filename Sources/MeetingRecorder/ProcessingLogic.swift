@@ -135,7 +135,8 @@ extension SummaryNotice {
         title = reason.message
         switch reason {
         case .modelNotReady:
-            message = "Your transcript is ready. Click Summarise once the download finishes."
+            message = "Your transcript is ready. It is summarised by itself once the download finishes."
+            showsSettings = true
         case .appleIntelligenceOff:
             message = "Turn it on in System Settings, then click Summarise."
             showsSettings = true

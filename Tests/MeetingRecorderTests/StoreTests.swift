@@ -121,6 +121,19 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         check(flags == ["a.m4a": [true, true], "b.m4a": [true, false], "c.m4a": [false, false]], "backfilled \(flags)")
     }),
 
+    ("meetings awaiting a summary are the transcribed, unsummarised and not failed ones, newest first", {
+        try withStore { store, _ in
+            let names = ["Meeting-2026-10-13-0900.m4a", "Meeting-2026-10-14-0900.m4a", "Meeting-2026-10-15-0900.m4a",
+                         "Meeting-2026-10-16-0900.m4a", "Meeting-2026-10-17-0900.m4a"]
+            for name in names.dropLast() { try store.saveTranscript(name, segments: segments, language: .swedish, engine: "x") }
+            try store.setNotes(names[4], "no transcript")
+            try store.saveSummary(names[1], ParsedSummary(unavailable: "Apple Intelligence is off"))
+            try store.saveSummary(names[2], ParsedSummary(standup))
+            try store.setFailed(names[3], message: "The model refused.")
+            check(try store.awaitingSummary().map(\.audioFile) == [names[1], names[0]], "awaiting \(try store.awaitingSummary().map(\.audioFile))")
+        }
+    }),
+
     ("saving a transcript or summary sets the flags, and an unavailable summary clears summarised", {
         try withStore { store, _ in
             let name = "Meeting-2026-10-15-1430.m4a"

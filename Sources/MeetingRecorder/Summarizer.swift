@@ -21,6 +21,25 @@ enum Summarizer {
         return .requiresMacOS26
         #endif
     }
+
+    /// Whether Apple Intelligence is off or still downloading, so meetings can be summarised once it is ready.
+    static var isWaitingForModel: Bool {
+        [.modelNotReady, .appleIntelligenceOff].contains(unavailableReason(for: .current))
+    }
+
+    /// Returns once Apple Intelligence is available, watching the model and checking every minute in case no change
+    /// is reported.
+    static func waitUntilAvailable() async {
+        #if canImport(FoundationModels)
+        let model = SystemLanguageModel.default
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { for await available in Observations({ model.isAvailable }) where available { return } }
+            group.addTask { while !model.isAvailable, !Task.isCancelled { try? await Task.sleep(for: .seconds(60)) } }
+            await group.next()
+            group.cancelAll()
+        }
+        #endif
+    }
 }
 
 #if canImport(FoundationModels)

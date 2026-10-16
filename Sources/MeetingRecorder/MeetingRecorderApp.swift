@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.showIfSetupNeeded()
+        processor.summariseWhenModelReady()
     }
 
     private func stopRecording() async {

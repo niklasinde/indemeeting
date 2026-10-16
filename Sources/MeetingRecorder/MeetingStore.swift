@@ -201,6 +201,16 @@ final class MeetingStore: @unchecked Sendable {
         try read { try db.query("SELECT \(Self.meetingColumns) FROM meetings", [], Self.meeting) }
     }
 
+    /// Meetings with a transcript whose summary is still to be made, newest first. Failed ones are left out.
+    func awaitingSummary() throws -> [Meeting] {
+        try read {
+            try db.query("""
+                SELECT \(Self.meetingColumns) FROM meetings
+                WHERE transcribed AND NOT summarised AND status IN (?, ?) ORDER BY created DESC
+                """, [ProcessingStatus.none.rawValue, ProcessingStatus.unavailable.rawValue], Self.meeting)
+        }
+    }
+
     func content(of audioFile: String) throws -> MeetingContent? {
         try read {
             guard let meeting = try meeting(audioFile) else { return nil }
