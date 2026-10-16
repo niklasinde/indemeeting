@@ -13,6 +13,14 @@ enum Summarizer {
         throw SummaryUnavailable.requiresMacOS26
         #endif
     }
+
+    static func unavailableReason(for language: MeetingLanguage) -> SummaryUnavailable? {
+        #if canImport(FoundationModels)
+        return OnDeviceSummarizer.unavailableReason(SystemLanguageModel.default, language: language)
+        #else
+        return .requiresMacOS26
+        #endif
+    }
 }
 
 #if canImport(FoundationModels)
@@ -22,13 +30,16 @@ private struct OnDeviceSummarizer {
 
     init(language: MeetingLanguage) throws {
         self.language = language
+        if let reason = Self.unavailableReason(model, language: language) { throw reason }
+    }
+
+    static func unavailableReason(_ model: SystemLanguageModel, language: MeetingLanguage) -> SummaryUnavailable? {
         switch model.availability {
-        case .available: break
-        case .unavailable(.appleIntelligenceNotEnabled): throw SummaryUnavailable.appleIntelligenceOff
-        case .unavailable(.deviceNotEligible): throw SummaryUnavailable.deviceNotEligible
-        case .unavailable: throw SummaryUnavailable.modelNotReady
+        case .available: return model.supportsLocale(language.locale) ? nil : .unsupportedLanguage(language)
+        case .unavailable(.appleIntelligenceNotEnabled): return .appleIntelligenceOff
+        case .unavailable(.deviceNotEligible): return .deviceNotEligible
+        case .unavailable: return .modelNotReady
         }
-        guard model.supportsLocale(language.locale) else { throw SummaryUnavailable.unsupportedLanguage(language) }
     }
 
     private var maxCharacters: Int { ProcessingLogic.chunkCharacters(contextSize: model.contextSize) }

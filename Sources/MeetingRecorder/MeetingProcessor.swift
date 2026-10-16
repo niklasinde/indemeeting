@@ -1,4 +1,5 @@
 import AppKit
+import os
 import UniformTypeIdentifiers
 
 struct ProcessingResult {
@@ -24,7 +25,10 @@ enum MeetingPipeline {
                 return ProcessingResult(title: nil, unavailable: reason)
             }
         } catch {
-            try? store.setFailed(name, message: error.localizedDescription)
+            let details = ProcessingLogic.errorDetails(error)
+            Logger(subsystem: "MeetingRecorder", category: "processing").error("\(name, privacy: .public) failed: \(details, privacy: .public)")
+            FileHandle.standardError.write(Data("\(name) failed: \(details)\n".utf8))
+            try? store.setFailed(name, message: details)
             throw error
         }
     }
@@ -34,7 +38,7 @@ enum MeetingPipeline {
             do {
                 let result = try await run(audio, language: language, store: store) { print($0.text(for: audio.lastPathComponent)) }
                 print("Saved to \(AppPaths.database.path)")
-                print(result.unavailable?.menuText ?? "Summary: \(result.title ?? "")")
+                print(result.unavailable?.message ?? "Summary: \(result.title ?? "")")
                 exit(0)
             } catch {
                 FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
@@ -98,8 +102,8 @@ final class MeetingProcessor: ObservableObject {
             }
             latestMeeting = audio
             if let reason = result.unavailable {
-                status = reason.menuText
-                notifier?.postProcessed(title: "Transcript ready, no summary", body: reason.menuText, meeting: audio)
+                status = reason.message
+                notifier?.postProcessed(title: "Transcript ready, no summary", body: reason.message, meeting: audio)
             } else {
                 status = "Summary ready: \(name)"
                 notifier?.postProcessed(title: "Meeting summary ready", body: result.title ?? name, meeting: audio)

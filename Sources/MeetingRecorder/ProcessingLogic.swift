@@ -97,32 +97,68 @@ enum SummaryUnavailable: Error, Equatable {
     case unsupportedLanguage(MeetingLanguage)
     case requiresMacOS26
 
-    private static let settings = "System Settings \u{2192} Apple Intelligence & Siri"
-    private static let retry = "then choose \u{201C}Transcribe & summarise a recording\u{2026}\u{201D} in the menu to summarise this meeting."
-
-    var menuText: String {
+    private var reason: String {
         switch self {
-        case .appleIntelligenceOff: return "No summary: Apple Intelligence is off (\(Self.settings))"
-        case .deviceNotEligible: return "No summary: this Mac does not support Apple Intelligence"
-        case .modelNotReady: return "No summary: Apple Intelligence model is still downloading"
-        case .unsupportedLanguage(let language): return "No summary: Apple Intelligence does not support \(language.englishName)"
-        case .requiresMacOS26: return "No summary: needs macOS 26 with Apple Intelligence"
+        case .appleIntelligenceOff: return "Apple Intelligence is turned off"
+        case .deviceNotEligible: return "this Mac can\u{2019}t run Apple Intelligence"
+        case .modelNotReady: return "Apple Intelligence is still downloading"
+        case .unsupportedLanguage(let language): return "Apple Intelligence doesn\u{2019}t support \(language.englishName)"
+        case .requiresMacOS26: return "this needs macOS 26 with Apple Intelligence"
         }
     }
 
-    var message: String {
-        switch self {
-        case .appleIntelligenceOff:
-            return "Apple Intelligence is turned off, so the on-device model cannot summarise. Turn it on in \(Self.settings), \(Self.retry)"
-        case .deviceNotEligible:
-            return "This Mac is not eligible for Apple Intelligence, so no on-device summary can be made. The transcript is still available."
-        case .modelNotReady:
-            return "The Apple Intelligence model is not ready yet (it may still be downloading). Check \(Self.settings), wait for the download to finish, \(Self.retry)"
-        case .unsupportedLanguage(let language):
-            return "The on-device Apple Intelligence model does not support \(language.englishName) on this Mac. Check the language in \(Self.settings), \(Self.retry)"
-        case .requiresMacOS26:
-            return "Summaries use Apple's on-device Foundation Models, which need macOS 26 or later with Apple Intelligence turned on in \(Self.settings)."
+    var message: String { (self == .modelNotReady ? "No summary yet" : "No summary") + " \u{2014} " + reason }
+}
+
+struct SummaryNotice: Equatable {
+    let title: String
+    let message: String
+    var details: String?
+    var showsSettings = false
+    var canSummarise = true
+
+    static func make(status: ProcessingStatus?, statusMessage: String?, hasTranscript: Bool,
+                     currentReason: SummaryUnavailable?) -> SummaryNotice {
+        if status == .unavailable, let currentReason { return SummaryNotice(currentReason) }
+        if status == .failed {
+            return SummaryNotice(title: "No summary \u{2014} summarising failed", message: "Click Summarise to try again.",
+                                 details: statusMessage ?? "Unknown error")
         }
+        return SummaryNotice(title: "No summary yet", message: hasTranscript
+            ? "There is a transcript but no summary. Summarise it on this Mac with Apple Intelligence."
+            : "Transcribe and summarise this recording on this Mac. Nothing leaves your computer.")
+    }
+}
+
+extension SummaryNotice {
+    init(_ reason: SummaryUnavailable) {
+        title = reason.message
+        switch reason {
+        case .modelNotReady:
+            message = "Your transcript is ready. Click Summarise once the download finishes."
+        case .appleIntelligenceOff:
+            message = "Turn it on in System Settings, then click Summarise."
+            showsSettings = true
+        case .unsupportedLanguage:
+            message = "Change the Apple Intelligence language in System Settings, then click Summarise."
+            showsSettings = true
+        case .deviceNotEligible, .requiresMacOS26:
+            message = "The transcript and audio are still here."
+            canSummarise = false
+        }
+    }
+}
+
+extension ProcessingLogic {
+    /// The full error: its description, then its type, case and domain/code, so it can be pasted into a bug report.
+    static func errorDetails(_ error: Error) -> String {
+        let description = error.localizedDescription
+        let reflected = String(reflecting: error)
+        let nsError = error as NSError
+        var parts = [description]
+        if reflected != description { parts.append(reflected) }
+        if !reflected.contains("Code=\(nsError.code)") { parts.append("\(nsError.domain) code \(nsError.code)") }
+        return parts.joined(separator: "\n")
     }
 }
 

@@ -471,12 +471,42 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(summary.topics == [.init(title: "A", points: ["p"])], "topics")
     }),
 
-    ("unavailable summary explains how to enable Apple Intelligence", {
+    ("unavailable summary says why there is none", {
         let markdown = ProcessingLogic.unavailableMarkdown(.appleIntelligenceOff, audioName: "Meeting-x.m4a", language: .english)
         check(markdown.hasPrefix("# No summary: Meeting-x\n"), "title")
-        check(markdown.contains("System Settings \u{2192} Apple Intelligence & Siri"), "settings path")
+        check(markdown.contains("No summary \u{2014} Apple Intelligence is turned off"), "reason")
         check(markdown.contains("`Meeting-x.transcript.md`"), "points to transcript")
-        check(SummaryUnavailable.unsupportedLanguage(.swedish).menuText.contains("Swedish"), "language named")
+        check(SummaryUnavailable.unsupportedLanguage(.swedish).message.contains("Swedish"), "language named")
+        check(SummaryUnavailable.modelNotReady.message == "No summary yet \u{2014} Apple Intelligence is still downloading", "downloading")
+    }),
+
+    ("error details keep the description, type and code", {
+        enum Sample: Error { case broke(Int) }
+        let ns = NSError(domain: "Test", code: 7, userInfo: [NSLocalizedDescriptionKey: "Went wrong"])
+        let nsDetails = ProcessingLogic.errorDetails(ns)
+        check(nsDetails.hasPrefix("Went wrong\n") && nsDetails.contains("Domain=Test Code=7"), nsDetails)
+        let swiftDetails = ProcessingLogic.errorDetails(Sample.broke(3))
+        check(swiftDetails.contains("Sample.broke(3)") && swiftDetails.contains("code 0"), swiftDetails)
+    }),
+
+    ("the summary notice follows the current reason, not the saved text", {
+        let legacy = "The Apple Intelligence model is not ready yet (it may still be downloading)."
+        func notice(_ status: ProcessingStatus?, _ message: String? = legacy, reason: SummaryUnavailable? = nil) -> SummaryNotice {
+            .make(status: status, statusMessage: message, hasTranscript: true, currentReason: reason)
+        }
+        let downloading = notice(.unavailable, reason: .modelNotReady)
+        check(downloading.title == "No summary yet \u{2014} Apple Intelligence is still downloading", downloading.title)
+        check(downloading.canSummarise && !downloading.showsSettings, "summarise only")
+        let off = notice(.unavailable, reason: .appleIntelligenceOff)
+        check(off.title == "No summary \u{2014} Apple Intelligence is turned off" && off.showsSettings && off.canSummarise, off.title)
+        let ineligible = notice(.unavailable, reason: .deviceNotEligible)
+        check(ineligible.title == "No summary \u{2014} this Mac can\u{2019}t run Apple Intelligence" && !ineligible.canSummarise
+              && !ineligible.showsSettings, ineligible.title)
+        check(notice(.unavailable).title == "No summary yet" && notice(.unavailable).canSummarise, "available again")
+        let failed = notice(.failed, "The model refused.")
+        check(failed.title == "No summary \u{2014} summarising failed" && failed.details == "The model refused."
+              && failed.canSummarise, failed.title)
+        check(notice(.summarised, reason: .appleIntelligenceOff).title == "No summary yet", "reason only for unavailable")
     }),
 
     ("meeting language defaults to Swedish and round-trips", {

@@ -58,6 +58,8 @@ enum Permissions {
     }
 
     static func openNotificationSettings() { openSettings("com.apple.preference.notifications") }
+
+    static func openAppleIntelligenceSettings() { openSettings("com.apple.Siri-Settings.extension") }
     static func openMicrophoneSettings() { openPrivacySettings(pane: "Privacy_Microphone") }
     static func openSystemAudioSettings() { openPrivacySettings(pane: "Privacy_ScreenCapture") }
 }

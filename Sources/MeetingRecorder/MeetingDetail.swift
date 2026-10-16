@@ -207,23 +207,11 @@ struct SummaryView: View {
             .textSelection(.enabled)
         } else {
             let meeting = content?.meeting
-            EmptyState(entry: entry, processor: processor, title: emptyTitle(meeting?.status),
-                       message: meeting?.statusMessage ?? emptyMessage)
+            EmptyState(entry: entry, processor: processor, notice: .make(
+                status: meeting?.status, statusMessage: meeting?.statusMessage,
+                hasTranscript: content?.segments.isEmpty == false,
+                currentReason: Summarizer.unavailableReason(for: language)))
         }
-    }
-
-    private func emptyTitle(_ status: ProcessingStatus?) -> String {
-        switch status {
-        case .unavailable: return "Summary unavailable"
-        case .failed: return "Processing failed"
-        default: return "No summary yet"
-        }
-    }
-
-    private var emptyMessage: String {
-        content?.segments.isEmpty == false
-            ? "There is a transcript but no summary. Summarise it on this Mac with Apple Intelligence."
-            : "Transcribe and summarise this recording on this Mac. Nothing leaves your computer."
     }
 
     private func heading(_ text: String) -> some View {
@@ -274,8 +262,8 @@ struct TranscriptView: View {
     var body: some View {
         let turns = LibraryLogic.speakerTurns(library.content(of: entry)?.segments ?? [])
         if turns.isEmpty {
-            EmptyState(entry: entry, processor: processor, title: "No transcript yet",
-                       message: "Transcribe this recording on this Mac. Nothing leaves your computer.")
+            EmptyState(entry: entry, processor: processor, notice: SummaryNotice(
+                title: "No transcript yet", message: "Transcribe this recording on this Mac. Nothing leaves your computer."))
         } else {
             let rows = turns.flatMap { turn in
                 turn.paragraphs.enumerated().map { (speaker: $0.offset == 0 ? turn.speaker : nil, paragraph: $0.element) }
@@ -306,25 +294,35 @@ struct TranscriptView: View {
 struct EmptyState: View {
     let entry: RecordingEntry
     @ObservedObject var processor: MeetingProcessor
-    let title: String
-    let message: String
+    let notice: SummaryNotice
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.body.weight(.medium))
-            Text(message)
+            Text(notice.title).font(.body.weight(.medium))
+            Text(notice.message)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 440, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+            if let details = notice.details {
+                Text(details)
+                    .font(.callout.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
+            }
             if processor.processing == entry.audio {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(processor.status ?? "Working\u{2026}").foregroundStyle(.secondary)
                 }
                 .padding(.top, 6)
-            } else {
-                Button("Summarise") { processor.process(entry.audio) }
-                    .padding(.top, 6)
+            } else if notice.showsSettings || notice.canSummarise {
+                HStack(spacing: 8) {
+                    if notice.showsSettings { Button("Open Settings") { Permissions.openAppleIntelligenceSettings() } }
+                    if notice.canSummarise { Button("Summarise") { processor.process(entry.audio) } }
+                }
+                .padding(.top, 6)
             }
         }
         .padding(.top, 12)
