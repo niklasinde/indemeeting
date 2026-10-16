@@ -9,6 +9,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/RecordingLogic.swift \
     Sources/MeetingRecorder/MeetingDetection.swift \
     Sources/MeetingRecorder/ProcessingLogic.swift \
+    Sources/MeetingRecorder/SettingsLogic.swift \
     Sources/MeetingRecorder/LibraryLogic.swift \
     Sources/MeetingRecorder/SQLiteDatabase.swift \
     Sources/MeetingRecorder/MeetingStore.swift \

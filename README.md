@@ -210,7 +210,12 @@ summary.
   context is about 4,096 tokens, so long transcripts are summarised in parts and the part summaries are combined. If the
   model is unavailable (Apple Intelligence off, Mac not eligible, model still downloading, language unsupported) the
   transcript is still saved, the meeting and the menu say why, and how to enable it in System Settings >
-  Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards.
+  Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards. "Still downloading" is also what the
+  API reports when the Mac and Siri languages differ (e.g. English (Sweden) vs English (US)), so the app says both.
+
+Settings… (Cmd-, in the menu bar menu, the app menu and the window's "…" menu) holds the default meeting language, each
+language's speech model (installed, downloading with progress, not downloaded, or unavailable, with Download and Remove;
+Remove releases the app's reservation so macOS may delete the model) and the Apple Intelligence status for summaries.
 
 For a headless check, run the binary with a file:
 

@@ -368,12 +368,13 @@ struct MainView: View {
                 Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
                 Divider()
                 Button("Delete\u{2026}", role: .destructive) { library.confirmingDelete = true }
+                Divider()
             }
+            SettingsButton()
         } label: {
             Image(systemName: "ellipsis")
         }
         .menuIndicator(.hidden)
-        .disabled(library.selected?.inProgress ?? true)
         .help("More")
     }
 

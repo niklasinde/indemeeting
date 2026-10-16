@@ -101,13 +101,15 @@ enum SummaryUnavailable: Error, Equatable {
         switch self {
         case .appleIntelligenceOff: return "Apple Intelligence is turned off"
         case .deviceNotEligible: return "this Mac can\u{2019}t run Apple Intelligence"
-        case .modelNotReady: return "Apple Intelligence is still downloading"
+        case .modelNotReady: return "Apple Intelligence is still downloading, or your Mac and Siri languages don\u{2019}t match"
         case .unsupportedLanguage(let language): return "Apple Intelligence doesn\u{2019}t support \(language.englishName)"
         case .requiresMacOS26: return "this needs macOS 26 with Apple Intelligence"
         }
     }
 
     var message: String { (self == .modelNotReady ? "No summary yet" : "No summary") + " \u{2014} " + reason }
+
+    var sentence: String { reason.prefix(1).uppercased() + reason.dropFirst() }
 }
 
 struct SummaryNotice: Equatable {
@@ -135,7 +137,7 @@ extension SummaryNotice {
         title = reason.message
         switch reason {
         case .modelNotReady:
-            message = "Your transcript is ready. It is summarised by itself once the download finishes."
+            message = "If the languages differ, make them the same in System Settings. Otherwise your transcript is summarised by itself once the download finishes."
             showsSettings = true
         case .appleIntelligenceOff:
             message = "Turn it on in System Settings, then click Summarise."

@@ -76,6 +76,7 @@ struct MeetingRecorderApp: App {
         }
         .commands {
             CommandGroup(after: .saveItem) { ExportCommand(library: delegate.mainWindow.library) }
+            CommandGroup(replacing: .appSettings) { SettingsButton() }
         }
     }
 }
@@ -203,9 +204,17 @@ struct MenuContent: View {
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)
         Toggle("Stop automatically when the meeting ends", isOn: $stopWhenMeetingEnds)
         Button("Open Recordings Folder") { recorder.openFolder() }
+        SettingsButton()
         Button("Setup & Help…") { OnboardingWindow.shared.show() }
         Button("Quit") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+struct SettingsButton: View {
+    var body: some View {
+        Button("Settings\u{2026}") { SettingsWindow.shared.show() }
+            .keyboardShortcut(",")
     }
 }
 

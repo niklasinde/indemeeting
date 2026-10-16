@@ -4,7 +4,7 @@ import AppKit
 import SwiftUI
 
 /// Debug builds only: `MeetingRecorder --render-previews <folder>` writes a sample library to `<folder>/library` and
-/// saves PNGs of the main window in light and dark appearance, so the layout can be checked without a screen.
+/// saves PNGs of the main and settings windows in light and dark appearance, so the layout can be checked without a screen.
 enum PreviewRenderer {
     static func outputFolder(_ arguments: [String]) -> URL? {
         guard let index = arguments.firstIndex(of: "--render-previews"), index + 1 < arguments.count else { return nil }
@@ -54,6 +54,7 @@ enum PreviewRenderer {
                 }
             }
             window.orderOut(nil)
+            await renderSettings(to: output)
             let unavailable = MeetingStore.openDefault(at: URL(fileURLWithPath: "/dev/null/meetings.sqlite"))
             let (brokenLibrary, brokenWindow) = makeWindow(store: unavailable, folder: folder)
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -78,6 +79,30 @@ enum PreviewRenderer {
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
         return (library, window)
+    }
+
+    @MainActor
+    private static func renderSettings(to output: URL) async {
+        let models = SpeechModels()
+        models.refresh()
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            await saveSettings(models, appearance: appearance, to: output.appendingPathComponent(
+                "settings-\(appearance == .aqua ? "light" : "dark").png"))
+        }
+        let downloading = SpeechModels()
+        downloading.statuses = [.swedish: .downloading(0.42), .english: .notDownloaded]
+        await saveSettings(downloading, appearance: .aqua, to: output.appendingPathComponent("settings-downloading-light.png"))
+    }
+
+    @MainActor
+    private static func saveSettings(_ models: SpeechModels, appearance: NSAppearance.Name, to url: URL) async {
+        let window = SettingsWindow.makeWindow(SettingsView(models: models))
+        window.appearance = NSAppearance(named: appearance)
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        save(window, to: url)
+        window.orderOut(nil)
     }
 
     @MainActor

@@ -53,23 +53,42 @@ extension SpeechTranscriber.Result: TextResult {}
 
 extension DictationTranscriber.Result: TextResult {}
 
-private enum SpeechAnalyzerTranscriber {
-    static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
+/// The on-device speech module for a language: SpeechTranscriber where it supports the locale, otherwise dictation.
+enum SpeechModel {
+    case speech(SpeechTranscriber)
+    case dictation(DictationTranscriber)
+
+    static func make(for language: MeetingLanguage) async -> SpeechModel? {
         let locale = language.locale
         if await supports(SpeechTranscriber.supportedLocales, locale) {
-            let module = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
-                                           attributeOptions: [.audioTimeRange])
-            return Transcript(segments: try await run(module, audio), engine: "SpeechTranscriber")
+            return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
+                                             attributeOptions: [.audioTimeRange]))
         }
         if await supports(DictationTranscriber.supportedLocales, locale) {
-            let module = DictationTranscriber(locale: locale, preset: .timeIndexedLongDictation)
-            return Transcript(segments: try await run(module, audio), engine: "DictationTranscriber")
+            return .dictation(DictationTranscriber(locale: locale, preset: .timeIndexedLongDictation))
         }
-        throw TranscriptionError.unsupportedLanguage(language)
+        return nil
+    }
+
+    var module: any SpeechModule {
+        switch self {
+        case .speech(let module): return module
+        case .dictation(let module): return module
+        }
     }
 
     private static func supports(_ locales: [Locale], _ locale: Locale) -> Bool {
         locales.contains { $0.identifier(.bcp47) == locale.identifier(.bcp47) }
+    }
+}
+
+private enum SpeechAnalyzerTranscriber {
+    static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
+        switch await SpeechModel.make(for: language) {
+        case .speech(let module): return Transcript(segments: try await run(module, audio), engine: "SpeechTranscriber")
+        case .dictation(let module): return Transcript(segments: try await run(module, audio), engine: "DictationTranscriber")
+        case nil: throw TranscriptionError.unsupportedLanguage(language)
+        }
     }
 
     private static func run<Module: SpeechModule>(_ module: Module, _ audio: URL) async throws -> [TranscriptSegment]
