@@ -106,8 +106,8 @@ struct SettingsView: View {
             }
             section("Summaries", footer: nil) {
                 row("Apple Intelligence", detail: models.summaryReason?.sentence ?? "Ready \u{2014} meetings are summarised on this Mac") {
-                    if let reason = models.summaryReason, SummaryNotice(reason).showsSettings {
-                        Button("Open Settings") { Permissions.openAppleIntelligenceSettings() }
+                    if let reason = models.summaryReason, let settings = SummaryNotice(reason).settings {
+                        Button(settings.title) { Permissions.open(settings) }
                     } else if models.summaryReason == nil {
                         Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                     }
