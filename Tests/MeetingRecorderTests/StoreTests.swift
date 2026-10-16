@@ -94,7 +94,7 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
         try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (1, 0, 3, 'Gammal.')")
         let store = try MeetingStore.open(at: url)
-        check(try store.schemaVersion() == 2, "migrated to v2")
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
         check(try store.content(of: "Meeting-2026-10-14-0900.m4a")?.segments == [TranscriptSegment(start: 3, text: "Gammal.")],
               "old row has no speaker")
         let labelled = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you),
@@ -103,6 +103,39 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         let content = try store.content(of: "Meeting-2026-10-15-1430.m4a")
         check(content?.segments == labelled, "speakers read back")
         check(ProcessingLogic.exportMarkdown(content!).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Övriga: Hallå."), "export")
+    }),
+
+    ("migration 3 backfills the transcribed and summarised flags", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(2)))
+        try old.run("""
+            INSERT INTO meetings (id, audio_file, created, status) VALUES
+                (1, 'a.m4a', 0, 'summarised'), (2, 'b.m4a', 0, 'unavailable'), (3, 'c.m4a', 0, 'none')
+            """)
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (1, 0, 0, 'A.'), (2, 0, 0, 'B.')")
+        let store = try MeetingStore.open(at: url)
+        let flags = Dictionary(uniqueKeysWithValues: try store.meetings().map { ($0.audioFile, [$0.transcribed, $0.summarised]) })
+        check(flags == ["a.m4a": [true, true], "b.m4a": [true, false], "c.m4a": [false, false]], "backfilled \(flags)")
+    }),
+
+    ("saving a transcript or summary sets the flags, and an unavailable summary clears summarised", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            func flags() throws -> [Bool]? { try store.content(of: name).map { [$0.meeting.transcribed, $0.meeting.summarised] } }
+            try store.setNotes(name, "x")
+            check(try flags() == [false, false], "new meeting")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "x")
+            check(try flags() == [true, false], "transcribed")
+            try store.saveSummary(name, ParsedSummary(standup))
+            check(try flags() == [true, true], "summarised")
+            try store.saveSummary(name, ParsedSummary(unavailable: "Apple Intelligence is off."))
+            check(try flags() == [true, false], "unavailable clears summarised")
+            try store.saveTranscript(name, segments: [], language: .swedish, engine: "x")
+            check(try flags() == [false, false], "empty transcript clears transcribed")
+        }
     }),
 
     ("transcript, summary, notes, title and checks are stored and read back", {

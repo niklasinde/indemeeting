@@ -11,19 +11,45 @@ enum MeetingPipeline {
     /// Transcribes and summarises `audio` into the store. A failure is recorded on the meeting and rethrown.
     static func run(_ audio: URL, language: MeetingLanguage, store: MeetingStore,
                     progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
-        let name = audio.lastPathComponent
-        do {
+        try await recordingFailure(of: audio, in: store) {
             await progress(.transcribing)
             let transcript = try await Transcriber.transcribeMeeting(audio, language: language)
-            try store.saveTranscript(name, segments: transcript.segments, language: language, engine: transcript.engine)
-            do {
-                let summary = try await Summarizer.summarise(transcript.segments, language: language, progress: progress)
-                try store.saveSummary(name, ParsedSummary(summary))
-                return ProcessingResult(title: summary.title, unavailable: nil)
-            } catch let reason as SummaryUnavailable {
-                try store.saveSummary(name, ParsedSummary(unavailable: reason.message))
-                return ProcessingResult(title: nil, unavailable: reason)
-            }
+            try store.saveTranscript(audio.lastPathComponent, segments: transcript.segments, language: language, engine: transcript.engine)
+            return try await summarise(audio, segments: transcript.segments, language: language, store: store, progress: progress)
+        }
+    }
+
+    /// Summarises the stored transcript of `audio` in its saved language, or runs the whole pipeline when there is none.
+    static func resummarise(_ audio: URL, store: MeetingStore,
+                            progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
+        let content = try store.content(of: audio.lastPathComponent)
+        guard let content, content.meeting.transcribed else {
+            return try await run(audio, language: .current, store: store, progress: progress)
+        }
+        return try await recordingFailure(of: audio, in: store) {
+            try await summarise(audio, segments: content.segments, language: content.meeting.language ?? .current,
+                                store: store, progress: progress)
+        }
+    }
+
+    private static func summarise(_ audio: URL, segments: [TranscriptSegment], language: MeetingLanguage, store: MeetingStore,
+                                  progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
+        let name = audio.lastPathComponent
+        do {
+            let summary = try await Summarizer.summarise(segments, language: language, progress: progress)
+            try store.saveSummary(name, ParsedSummary(summary))
+            return ProcessingResult(title: summary.title, unavailable: nil)
+        } catch let reason as SummaryUnavailable {
+            try store.saveSummary(name, ParsedSummary(unavailable: reason.message))
+            return ProcessingResult(title: nil, unavailable: reason)
+        }
+    }
+
+    private static func recordingFailure(of audio: URL, in store: MeetingStore,
+                                         _ body: () async throws -> ProcessingResult) async throws -> ProcessingResult {
+        let name = audio.lastPathComponent
+        do {
+            return try await body()
         } catch {
             let details = ProcessingLogic.errorDetails(error)
             Logger(subsystem: "MeetingRecorder", category: "processing").error("\(name, privacy: .public) failed: \(details, privacy: .public)")
@@ -67,10 +93,21 @@ final class MeetingProcessor: ObservableObject {
     }
 
     func process(_ audio: URL) {
+        enqueue(audio) { [store] in try await MeetingPipeline.run(audio, language: .current, store: store, progress: $0) }
+    }
+
+    /// Summarises the meeting's stored transcript, transcribing first only when it has none.
+    func summarise(_ audio: URL) {
+        enqueue(audio) { [store] in try await MeetingPipeline.resummarise(audio, store: store, progress: $0) }
+    }
+
+    private typealias Job = (@escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult
+
+    private func enqueue(_ audio: URL, _ job: @escaping Job) {
         let previous = queue
         queue = Task {
             await previous?.value
-            await run(audio)
+            await run(audio, job)
         }
     }
 
@@ -91,15 +128,13 @@ final class MeetingProcessor: ObservableObject {
         process(url)
     }
 
-    private func run(_ audio: URL) async {
+    private func run(_ audio: URL, _ job: Job) async {
         let name = audio.lastPathComponent
         errorMessage = nil
         processing = audio
         defer { processing = nil }
         do {
-            let result = try await MeetingPipeline.run(audio, language: .current, store: store) { [weak self] in
-                self?.status = $0.text(for: name)
-            }
+            let result = try await job { [weak self] in self?.status = $0.text(for: name) }
             latestMeeting = audio
             if let reason = result.unavailable {
                 status = reason.message

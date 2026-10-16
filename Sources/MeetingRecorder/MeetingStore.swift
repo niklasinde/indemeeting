@@ -42,6 +42,8 @@ struct Meeting: Equatable {
     var status: ProcessingStatus
     var statusMessage: String?
     var transcriptEngine: String?
+    var transcribed = false
+    var summarised = false
 
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle) }
 }
@@ -124,10 +126,17 @@ final class MeetingStore: @unchecked Sendable {
         END;
         """,
         "ALTER TABLE transcript_segments ADD COLUMN speaker TEXT",
+        """
+        ALTER TABLE meetings ADD COLUMN transcribed INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE meetings ADD COLUMN summarised INTEGER NOT NULL DEFAULT 0;
+        UPDATE meetings SET transcribed = EXISTS (SELECT 1 FROM transcript_segments WHERE meeting_id = meetings.id),
+                            summarised = status = 'summarised';
+        """,
     ]
 
     private static let meetingColumns = """
-        id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine
+        id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
+        transcribed, summarised
         """
 
     let openError: DatabaseUnavailable?
@@ -333,7 +342,7 @@ final class MeetingStore: @unchecked Sendable {
                 duration: row.optionalDouble(3), language: row.optionalString(4).flatMap(MeetingLanguage.init),
                 titleOverride: row.optionalString(5), aiTitle: row.optionalString(6), notes: row.string(7),
                 status: ProcessingStatus(rawValue: row.string(8)) ?? .none, statusMessage: row.optionalString(9),
-                transcriptEngine: row.optionalString(10))
+                transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12))
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {
@@ -358,6 +367,7 @@ final class MeetingStore: @unchecked Sendable {
 
     private func replaceSegments(_ id: Int64, _ segments: [TranscriptSegment]) throws {
         try db.run("DELETE FROM transcript_segments WHERE meeting_id = ?", [id])
+        try db.run("UPDATE meetings SET transcribed = ? WHERE id = ?", [!segments.isEmpty, id])
         for (position, segment) in segments.enumerated() {
             try db.run("INSERT INTO transcript_segments (meeting_id, position, start, text, speaker) VALUES (?, ?, ?, ?, ?)",
                        [id, position, segment.start, segment.text, segment.speaker?.rawValue])
@@ -370,8 +380,8 @@ final class MeetingStore: @unchecked Sendable {
         try db.run("DELETE FROM action_items WHERE meeting_id = ?", [id])
         try db.run("DELETE FROM summary_topics WHERE meeting_id = ?", [id])
         let status: ProcessingStatus = summary.unavailable != nil ? .unavailable : summary.isEmpty ? .none : .summarised
-        try db.run("UPDATE meetings SET ai_title = ?, status = ?, status_message = ? WHERE id = ?",
-                   [summary.unavailable == nil ? summary.title : nil, status.rawValue, summary.unavailable, id])
+        try db.run("UPDATE meetings SET ai_title = ?, status = ?, status_message = ?, summarised = ? WHERE id = ?",
+                   [summary.unavailable == nil ? summary.title : nil, status.rawValue, summary.unavailable, status == .summarised, id])
         guard summary.unavailable == nil else { return }
         for (position, item) in summary.actionItems.enumerated() {
             try db.run("INSERT INTO action_items (meeting_id, position, owner, task, checked) VALUES (?, ?, ?, ?, ?)",
