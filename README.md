@@ -42,7 +42,9 @@ builds a universal (arm64 + x86_64) app at that path and fails instead of signin
 
 The first build also needs `cmake` (`brew install cmake`): `build.sh` runs `scripts/build-whisper.sh` when
 `.deps/whisper.xcframework` is missing, which compiles whisper.cpp for KB-Whisper (see below). Run that script once
-before a plain `swift build`; without it SwiftPM builds the app without KB-Whisper.
+before a plain `swift build`; without it SwiftPM builds the app without KB-Whisper. SwiftPM also fetches the FluidAudio source
+package (speaker recognition, pinned in `Package.resolved`) from GitHub on the first build; the `swiftc` fallback
+builds without it.
 
 ### Release
 
@@ -78,8 +80,8 @@ Security, grant the permissions once more, and they then persist across rebuilds
 
 `test.sh` compiles the mixer, the appender, the database layer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
 names, paused time, part and combined files and their length and bit rate, stems and their appends, merging the
-stems' transcripts and dropping echoes, speaker turns, auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
-migrations (including adding the speaker column to an existing database), a database that cannot be opened in an
+stems' transcripts and dropping echoes, speaker labels, speaker recognition (numbering, overlap assignment, cosine matching and its threshold, voice blending), auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
+migrations (including adding the speaker column and the speakers and known voices tables to an existing database), naming speakers and remembering their voices, a database that cannot be opened in an
 unwritable folder, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
@@ -114,13 +116,13 @@ A selected meeting shows its title (click to rename), the date, time, length and
   topic. Without a summary it says why (for example that Apple Intelligence is off) and offers Summarise.
 - Notes: your own notes, saved automatically shortly after you stop typing.
 - Transcript: the transcript in paragraphs; clicking a paragraph's time plays the recording from there. Meetings
-  recorded with stems name the speaker ("You" / "Others", "Du" / "Övriga" in Swedish) before each run of paragraphs
-  by the same speaker.
+  recorded with stems name the speaker ("You", "Others", or "Speaker 1", "Speaker 2", … with speaker recognition)
+  whenever it changes. Click a speaker to name them for this meeting (see Speaker recognition).
 
 A player bar at the bottom has play/pause, the position and a scrubber. The toolbar has New Meeting (Pause/Resume and
 Stop with the elapsed time while recording, like the menu; a recording stopped here is selected instead of revealed in
 Finder) and a "…" menu with Continue Recording, Reveal in Finder, Transcribe & summarise (same processing as the menu),
-Export as Markdown… and Delete, which moves the audio to the Trash and deletes the meeting's data after a confirmation.
+Recognise speakers, Export as Markdown… and Delete, which moves the audio to the Trash and deletes the meeting's data after a confirmation.
 Export as Markdown… (also File > Export as Markdown…, Shift-Cmd-E) writes the summary, the action items with their
 checked state, the notes and the transcript into one `.md` file you choose. When a permission is missing the sidebar offers
 "Open Setup…".
@@ -152,9 +154,12 @@ The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else
 - `meetings`: one row per audio file name, with the date, length, language, renamed title, summary title, notes,
   processing status (`none`, `summarised`, `unavailable`, `failed`) with its message (for example why there is no
   summary) and the transcription engine.
-- `transcript_segments` (start time, sentence and speaker: `you`, `others` or NULL for transcripts of the mix),
+- `transcript_segments` (start time, sentence and speaker: `you`, `others`, `speaker-<n>` once speakers are
+  recognised, or NULL for transcripts of the mix),
   `action_items` (owner, task, checked), `summary_topics` and
   `summary_points`, all deleted with their meeting.
+- `speakers` (meeting, label, the name you gave it, voice embedding as little-endian float32 BLOB), deleted with their
+  meeting, and `known_voices` (name, embedding, updated) for recognising voices across meetings.
 - `meetings_fts`: an FTS5 index over the title, transcript, summary and notes, used by the sidebar search.
 - `schema_version`: the migrations applied; new ones are appended to `MeetingStore.migrations` and run once, in order,
   on launch.
@@ -196,7 +201,7 @@ with its speaker. The other participants also reach the microphone through the s
 starts within 3 seconds of a system sentence with mostly the same words (Dice coefficient of the words at least 0.7)
 is that echo and is dropped in favour of the system one. The summariser gets the lines with their speaker, told that
 "You" is the person who recorded the meeting, so action items you take on are attributed to you. Recordings without
-stems (all made before this) are transcribed from the mix without speakers. The Markdown export writes the speaker
+stems (all made before this) are transcribed from the mix without speakers, unless speaker recognition is on. The Markdown export writes the speaker
 after each timestamp. Summaries imported from
 earlier versions (summary, key points, decisions) still show in the app.
 
@@ -216,6 +221,35 @@ summary.
   transcript is still saved, the meeting and the menu say why, and how to enable it in System Settings >
   Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards. "Still downloading" is also what the
   API reports when the Mac and Siri languages differ (e.g. English (Sweden) vs English (US)), so the app says both.
+
+### Speaker recognition
+
+With Settings > Speaker recognition > Download, the other participants are told apart on this Mac as Speaker 1,
+Speaker 2, … . It uses [FluidAudio](https://github.com/FluidInference/FluidAudio) 0.17.5 (Apache-2.0), a SwiftPM
+source package pinned exactly in `Package.swift` and built into the executable like the rest of the app (its
+`NemoTextProcessing` trait, a prebuilt binary for text-to-speech, is turned off), so there is still no
+`Contents/Frameworks` and library validation stays on; it adds about 10 MB per architecture. Its offline pipeline (pyannote segmentation, WeSpeaker
+embeddings, PLDA/VBx clustering, on Core ML) needs about 21 MB of models, downloaded only when you
+click Download from Hugging Face (`FluidInference/speaker-diarization-coreml` at the revision FluidAudio pins) into
+`Models/speaker-diarization/` next to the Whisper models. Remove deletes them. Until they are downloaded, nothing
+changes: the transcript says You and Others.
+
+After transcribing, the system stem is diarized (meetings without stems: the mix, so you cannot be separated from the
+others there) and each segment not from the microphone gets the diarized speaker it overlaps most in time (a segment
+lasts until the next one starts, at most 15 seconds; with no overlap the nearest speaker). Speakers are numbered in
+order of first appearance; each one's voice is the mean of its segment embeddings. A failure there is logged and keeps
+You / Others. "Recognise speakers" in the "…" menu (and `--recognise-speakers <audio>` headlessly) runs it again on
+the stored transcript without transcribing.
+
+Click a speaker label in the transcript to name them ("Speaker 2" → "Anna") for that meeting; an empty name gives the
+label back. The names are used in the transcript, the Markdown export and the next summary (the summariser is told
+which labels are you, numbered other participants or people's names). Naming a speaker also stores their voice in
+`known_voices` (a name already there is blended with it: the mean of both unit vectors). In later meetings each
+diarized speaker is matched against the known voices by cosine similarity, best first and each voice at most once;
+at a cosine distance of at most 0.5 (FluidAudio's "same speaker, high confidence" range) the speaker is named
+automatically, and you can still rename them. Settings > Known voices lists the names with Forget.
+
+To download the models headlessly: `MeetingRecorder --download-speaker-model [--data-dir <folder>]`.
 
 ### KB-Whisper (Swedish)
 

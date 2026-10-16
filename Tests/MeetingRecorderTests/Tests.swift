@@ -613,6 +613,10 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         let job = ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a", "--language", "en-US"])
         check(job?.audio.path == "/x/a.m4a" && job?.language == .english, "flag with language")
         check(ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a"])?.language == nil, "language optional")
+        check(job?.recogniseOnly == false, "process runs everything")
+        check(ProcessingLogic.processArguments(["app", "--recognise-speakers", "/x/a.m4a"])?.recogniseOnly == true, "recognise only")
+        check(ProcessingStage.recognisingSpeakers(progress: 0.5).text(for: "a.m4a") == "Recognising speakers in a.m4a\u{2026} 50%",
+              "recognising")
     }),
     ("recording names parse back to their minute", {
         let zone = TimeZone(identifier: "Europe/Stockholm")!
@@ -878,17 +882,76 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingLogic.similarity("", "Yes") == 0, "nothing to compare")
     }),
 
-    ("transcript paragraphs are grouped by speaker", {
-        let segments = [segment(0, "Hej.", .you), segment(4, "Hur går det?", .you), segment(8, "Bra.", .others),
-                        segment(12, "Vi börjar.", .others), segment(60, "Punkt två.", .others), segment(65, "Okej.", .you)]
-        let turns = LibraryLogic.speakerTurns(segments)
-        check(turns.map(\.speaker) == [.you, .others, .you], "turns \(turns.map(\.speaker))")
-        check(turns[0].paragraphs == [segment(0, "Hej. Hur går det?", .you)], "same speaker joined")
-        check(turns[1].paragraphs == [segment(8, "Bra. Vi börjar.", .others), segment(60, "Punkt två.", .others)],
-              "a turn keeps its paragraphs")
+    ("transcript paragraphs are labelled whenever the speaker changes", {
+        let segments = [segment(0, "Hej.", .you), segment(4, "Hur går det?", .you), segment(8, "Bra.", .numbered(1)),
+                        segment(12, "Vi börjar.", .numbered(1)), segment(60, "Punkt två.", .numbered(1)),
+                        segment(62, "Ja.", .numbered(2)), segment(65, "Okej.", .you)]
+        let rows = SpeakerLogic.rows(segments)
+        check(rows.map(\.paragraph) == [segment(0, "Hej. Hur går det?", .you), segment(8, "Bra. Vi börjar.", .numbered(1)),
+                                        segment(60, "Punkt två.", .numbered(1)), segment(62, "Ja.", .numbered(2)),
+                                        segment(65, "Okej.", .you)], "paragraphs \(rows.map(\.paragraph))")
+        check(rows.map(\.showsSpeaker) == [true, true, false, true, true], "labels \(rows.map(\.showsSpeaker))")
         check(LibraryLogic.paragraphs([segment(0, "A.", .you), segment(2, "B.", .others)]).count == 2, "speaker breaks a paragraph")
-        let plain = LibraryLogic.speakerTurns([segment(0, "A."), segment(5, "B.")])
-        check(plain == [SpeakerTurn(speaker: nil, paragraphs: [segment(0, "A. B.")])], "without speakers as before")
+        let plain = SpeakerLogic.rows([segment(0, "A."), segment(5, "B.")])
+        check(plain == [TranscriptRow(paragraph: segment(0, "A. B."), showsSpeaker: false)], "without speakers as before")
+    }),
+
+    ("speakers are stored by label and named in the meeting language", {
+        for speaker in [Speaker.you, .others, .numbered(1), .numbered(12)] {
+            check(Speaker(rawValue: speaker.rawValue) == speaker, "round trip \(speaker.rawValue)")
+        }
+        check(Speaker.numbered(3).rawValue == "speaker-3", "label")
+        check(["speaker-0", "speaker-x", "nobody", "speaker-"].allSatisfy { Speaker(rawValue: $0) == nil }, "invalid labels")
+        check(segment(4, "Hej.", .numbered(2)).line(.swedish) == "[00:00:04] Talare 2: Hej.", "Talare")
+        check(segment(4, "Hi.", .numbered(2)).line(.english) == "[00:00:04] Speaker 2: Hi.", "Speaker")
+        check(segment(4, "Hi.", .numbered(2)).line(.english, names: [.numbered(2): "Anna"]) == "[00:00:04] Anna: Hi.", "named")
+    }),
+
+    ("diarized speakers are numbered by first appearance with the mean of their embeddings", {
+        let diarized = SpeakerLogic.numbered([
+            VoiceSegment(id: "S3", start: 10, end: 14, embedding: [0, 2]), VoiceSegment(id: "S1", start: 0, end: 9, embedding: [1, 0]),
+            VoiceSegment(id: "S3", start: 20, end: 25, embedding: [0, 4]), VoiceSegment(id: "S1", start: 30, end: 31, embedding: [3, 0]),
+        ])
+        check(diarized.spans.map(\.speaker) == [.numbered(1), .numbered(2), .numbered(2), .numbered(1)], "numbered")
+        check(diarized.spans.map(\.start) == [0, 10, 20, 30], "by time")
+        check(diarized.voices == [.numbered(1): [2, 0], .numbered(2): [0, 3]], "means \(diarized.voices)")
+        check(SpeakerLogic.mean([]) == nil && SpeakerLogic.mean([[1], [1, 2]]) == nil, "no mean of nothing or mixed sizes")
+    }),
+
+    ("each of the others' segments gets the speaker it overlaps most, and yours stay yours", {
+        let spans = [SpeakerSpan(speaker: .numbered(1), start: 0, end: 10), SpeakerSpan(speaker: .numbered(2), start: 10, end: 30),
+                     SpeakerSpan(speaker: .numbered(1), start: 60, end: 70)]
+        let segments = [segment(1, "A.", .others), segment(8, "B.", .others), segment(9, "Mine.", .you),
+                        segment(25, "C.", .others), segment(45, "D."), segment(64, "E.", .others)]
+        let assigned = SpeakerLogic.assign(segments, to: spans)
+        check(assigned.map(\.speaker) == [.numbered(1), .numbered(2), .you, .numbered(2), .numbered(1), .numbered(1)],
+              "assigned \(assigned.map(\.speaker))")
+        check(assigned.map(\.text) == segments.map(\.text), "text kept")
+        check(SpeakerLogic.assign(segments, to: []) == segments, "nothing diarized keeps the transcript")
+    }),
+
+    ("known voices name the speakers they match above the threshold, each voice once", {
+        let anna = KnownVoice(id: 1, name: "Anna", embedding: [1, 0, 0], updated: Date())
+        let erik = KnownVoice(id: 2, name: "Erik", embedding: [0, 1, 0], updated: Date())
+        check(abs(SpeakerLogic.cosine([1, 0], [2, 0]) - 1) < 1e-9 && SpeakerLogic.cosine([1, 0], [0, 3]) == 0, "cosine")
+        check(SpeakerLogic.cosine([1], [1, 2]) == 0 && SpeakerLogic.cosine([0, 0], [1, 0]) == 0, "no similarity")
+        let voices: [Speaker: [Float]] = [.numbered(1): [0.9, 0.1, 0.2], .numbered(2): [0.8, 0.3, 0], .numbered(3): [0, 0, 1],
+                                          .numbered(4): [0.5, 0.7, 0.5]]
+        let names = SpeakerLogic.recognise(voices, known: [anna, erik])
+        check(names == [.numbered(1): "Anna", .numbered(4): "Erik"], "matched \(names)")
+        check(SpeakerLogic.recognise([.numbered(1): [1, 2, 0]], known: [anna]).isEmpty, "below the threshold stays unnamed")
+        check(SpeakerLogic.recognise(voices, known: [anna, erik], threshold: 0.01).isEmpty, "a strict threshold names nobody")
+        let profiles = SpeakerLogic.profiles(voices: [.numbered(2): [1, 0, 0], .numbered(1): [0, 0, 1]], known: [anna])
+        check(profiles == [SpeakerProfile(speaker: .numbered(1), name: nil, embedding: [0, 0, 1]),
+                           SpeakerProfile(speaker: .numbered(2), name: "Anna", embedding: [1, 0, 0])], "profiles \(profiles)")
+    }),
+
+    ("voices round-trip as bytes and blend with a new recording", {
+        let voice: [Float] = [0.25, -1.5, 3, 0]
+        check(SpeakerLogic.decode(SpeakerLogic.encode(voice)) == voice, "round trip")
+        check(SpeakerLogic.decode(Data()) == [], "empty")
+        check(SpeakerLogic.blend([2, 0], [0, 5]) == [0.5, 0.5], "unit vectors averaged")
+        check(SpeakerLogic.blend([1, 0], [0, 1, 0]) == [0, 1, 0], "a different size replaces")
     }),
 
     ("lines name the speaker in the meeting language", {

@@ -12,7 +12,7 @@ protocol SQLValue {
 }
 
 extension String: SQLValue {
-    private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+    fileprivate static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
     func bind(to statement: OpaquePointer, at index: Int32) -> Int32 {
         sqlite3_bind_text(statement, index, self, -1, Self.transient)
@@ -31,6 +31,12 @@ extension Double: SQLValue {
     func bind(to statement: OpaquePointer, at index: Int32) -> Int32 { sqlite3_bind_double(statement, index, self) }
 }
 
+extension Data: SQLValue {
+    func bind(to statement: OpaquePointer, at index: Int32) -> Int32 {
+        withUnsafeBytes { sqlite3_bind_blob(statement, index, $0.baseAddress, Int32($0.count), String.transient) }
+    }
+}
+
 extension Bool: SQLValue {
     func bind(to statement: OpaquePointer, at index: Int32) -> Int32 { sqlite3_bind_int(statement, index, self ? 1 : 0) }
 }
@@ -45,6 +51,11 @@ struct SQLRow {
     func string(_ column: Int32) -> String { sqlite3_column_text(statement, column).map { String(cString: $0) } ?? "" }
     func optionalString(_ column: Int32) -> String? { isNull(column) ? nil : string(column) }
     func optionalDouble(_ column: Int32) -> Double? { isNull(column) ? nil : double(column) }
+    func optionalData(_ column: Int32) -> Data? {
+        guard !isNull(column) else { return nil }
+        return sqlite3_column_blob(statement, column).map { Data(bytes: $0, count: Int(sqlite3_column_bytes(statement, column))) }
+            ?? Data()
+    }
 }
 
 /// One SQLite connection with cached prepared statements. Not thread-safe: use it from one serial queue.

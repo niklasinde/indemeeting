@@ -19,26 +19,60 @@ enum MeetingLanguage: String, CaseIterable, Identifiable {
         switch self {
         case .swedish:
             return Headings(transcript: "Transkription", actionItems: "Åtgärdspunkter", unavailable: "Ingen sammanfattning",
-                            notes: "Anteckningar", you: "Du", others: "Övriga")
+                            notes: "Anteckningar", you: "Du", others: "Övriga", speaker: "Talare")
         case .english:
             return Headings(transcript: "Transcript", actionItems: "Action items", unavailable: "No summary", notes: "Notes",
-                            you: "You", others: "Others")
+                            you: "You", others: "Others", speaker: "Speaker")
         }
     }
 
     struct Headings {
-        let transcript, actionItems, unavailable, notes, you, others: String
+        let transcript, actionItems, unavailable, notes, you, others, speaker: String
     }
 }
 
-/// Who spoke a segment: the microphone stem is you, the system audio stem the other participants.
-enum Speaker: String {
+/// Who spoke a segment: the microphone stem is you, the system audio stem the other participants, which speaker
+/// recognition tells apart as numbered speakers.
+enum Speaker: Hashable {
     case you
     case others
+    case numbered(Int)
+
+    private static let numberedPrefix = "speaker-"
+
+    init?(rawValue: String) {
+        switch rawValue {
+        case "you": self = .you
+        case "others": self = .others
+        default:
+            guard rawValue.hasPrefix(Self.numberedPrefix), let number = Int(rawValue.dropFirst(Self.numberedPrefix.count)),
+                  number > 0 else { return nil }
+            self = .numbered(number)
+        }
+    }
+
+    var rawValue: String {
+        switch self {
+        case .you: return "you"
+        case .others: return "others"
+        case .numbered(let number): return Self.numberedPrefix + String(number)
+        }
+    }
 
     func name(in language: MeetingLanguage) -> String {
-        self == .you ? language.headings.you : language.headings.others
+        switch self {
+        case .you: return language.headings.you
+        case .others: return language.headings.others
+        case .numbered(let number): return "\(language.headings.speaker) \(number)"
+        }
     }
+}
+
+typealias SpeakerNames = [Speaker: String]
+
+extension SpeakerNames {
+    /// The name the user gave a speaker, or its label in `language`.
+    func name(of speaker: Speaker, in language: MeetingLanguage) -> String { self[speaker] ?? speaker.name(in: language) }
 }
 
 struct TranscriptSegment: Equatable {
@@ -46,9 +80,11 @@ struct TranscriptSegment: Equatable {
     let text: String
     var speaker: Speaker? = nil
 
-    func line(_ language: MeetingLanguage) -> String {
-        "\(ProcessingLogic.timestamp(start)) " + (speaker.map { "\($0.name(in: language)): " } ?? "") + text
+    func line(_ language: MeetingLanguage, names: SpeakerNames = [:]) -> String {
+        "\(ProcessingLogic.timestamp(start)) " + (speaker.map { "\(names.name(of: $0, in: language)): " } ?? "") + text
     }
+
+    func with(speaker: Speaker?) -> TranscriptSegment { TranscriptSegment(start: start, text: text, speaker: speaker) }
 }
 
 struct MeetingSummary: Codable, Equatable {
@@ -200,6 +236,7 @@ extension ProcessingLogic {
 
 enum ProcessingStage: Equatable {
     case transcribing(progress: Double? = nil)
+    case recognisingSpeakers(progress: Double? = nil)
     case summarising(part: Int, of: Int)
     case combining
 
@@ -207,6 +244,8 @@ enum ProcessingStage: Equatable {
         switch self {
         case .transcribing(let progress?): return "Transcribing \(name)\u{2026} \(ProcessingLogic.percent(progress))"
         case .transcribing: return "Transcribing \(name)\u{2026}"
+        case .recognisingSpeakers(let progress?): return "Recognising speakers in \(name)\u{2026} \(ProcessingLogic.percent(progress))"
+        case .recognisingSpeakers: return "Recognising speakers in \(name)\u{2026}"
         case .summarising(let part, let total) where total > 1: return "Summarising \(name)\u{2026} (\(part)/\(total))"
         case .summarising: return "Summarising \(name)\u{2026}"
         case .combining: return "Summarising \(name)\u{2026} (combining)"
@@ -257,9 +296,8 @@ enum ProcessingLogic {
     /// One transcript from the two stems, by start time. A microphone segment that repeats a system segment spoken at
     /// the same time is the other participants bleeding into the microphone, so only the system one is kept.
     static func mergeSpeakers(you: [TranscriptSegment], others: [TranscriptSegment]) -> [TranscriptSegment] {
-        let others = others.map { TranscriptSegment(start: $0.start, text: $0.text, speaker: .others) }
-        let you = you.filter { mine in !others.contains { isEcho(mine, of: $0) } }
-            .map { TranscriptSegment(start: $0.start, text: $0.text, speaker: .you) }
+        let others = others.map { $0.with(speaker: .others) }
+        let you = you.filter { mine in !others.contains { isEcho(mine, of: $0) } }.map { $0.with(speaker: .you) }
         return (others + you).enumerated()
             .sorted { $0.element.start != $1.element.start ? $0.element.start < $1.element.start : $0.offset < $1.offset }
             .map(\.element)
@@ -333,13 +371,13 @@ enum ProcessingLogic {
     }
 
     static func transcriptMarkdown(audioName: String, language: MeetingLanguage, engine: String,
-                                   segments: [TranscriptSegment]) -> String {
+                                   segments: [TranscriptSegment], names: SpeakerNames = [:]) -> String {
         """
         # \(language.headings.transcript): \(baseName(audioName))
 
         _\(audioName) \u{00B7} \(language.displayName) \u{00B7} on-device \(engine)_
 
-        \(segments.map { $0.line(language) }.joined(separator: "\n\n"))
+        \(segments.map { $0.line(language, names: names) }.joined(separator: "\n\n"))
 
         """
     }
@@ -385,7 +423,8 @@ enum ProcessingLogic {
         if !notes.isEmpty { parts.append("## \(language.headings.notes)\n\n\(notes)\n") }
         if !content.segments.isEmpty {
             parts.append(transcriptMarkdown(audioName: meeting.audioFile, language: language,
-                                            engine: meeting.transcriptEngine ?? "transcription", segments: content.segments))
+                                            engine: meeting.transcriptEngine ?? "transcription", segments: content.segments,
+                                            names: content.names))
         }
         return parts.joined(separator: "\n")
     }
@@ -394,11 +433,14 @@ enum ProcessingLogic {
         URL(fileURLWithPath: audioName).deletingPathExtension().lastPathComponent
     }
 
-    static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?)? {
-        guard let index = arguments.firstIndex(of: "--process"), index + 1 < arguments.count else { return nil }
+    /// `--process <audio>` transcribes, recognises speakers and summarises; `--recognise-speakers <audio>` only
+    /// recognises the speakers of its stored transcript.
+    static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?, recogniseOnly: Bool)? {
+        guard let index = arguments.firstIndex(where: { $0 == "--process" || $0 == "--recognise-speakers" }),
+              index + 1 < arguments.count else { return nil }
         let language = arguments.firstIndex(of: "--language").flatMap {
             $0 + 1 < arguments.count ? MeetingLanguage(rawValue: arguments[$0 + 1]) : nil
         }
-        return (URL(fileURLWithPath: arguments[index + 1]), language)
+        return (URL(fileURLWithPath: arguments[index + 1]), language, arguments[index] == "--recognise-speakers")
     }
 }

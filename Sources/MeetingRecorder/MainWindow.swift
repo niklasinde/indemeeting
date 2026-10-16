@@ -165,6 +165,10 @@ final class RecordingLibrary: ObservableObject {
         perform { try store.setNotes(entry.fileName, notes) }
     }
 
+    func renameSpeaker(_ speaker: Speaker, of entry: RecordingEntry, to name: String) {
+        perform { try store.renameSpeaker(entry.fileName, speaker, to: name) }
+    }
+
     func setChecked(_ item: ChecklistItem, _ checked: Bool) {
         guard let id = Int64(item.key) else { return }
         perform { try store.setChecked(actionItem: id, checked) }
@@ -365,6 +369,10 @@ struct MainView: View {
                 Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
                 Button("Transcribe & summarise") { processor.process(entry.audio) }
                     .disabled(processor.processing == entry.audio)
+                Button("Recognise speakers") { processor.recogniseSpeakers(entry.audio) }
+                    .disabled(processor.processing == entry.audio || !Diarizer.isReady)
+                    .help(Diarizer.isReady ? "Tell the speakers apart again without transcribing"
+                          : "Download \(SpeakerModel.name) in Settings first")
                 Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
                 Divider()
                 Button("Delete\u{2026}", role: .destructive) { library.confirmingDelete = true }

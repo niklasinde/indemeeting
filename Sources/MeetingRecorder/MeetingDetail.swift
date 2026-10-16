@@ -260,20 +260,20 @@ struct TranscriptView: View {
     let playback: AudioPlayback
 
     var body: some View {
-        let turns = LibraryLogic.speakerTurns(library.content(of: entry)?.segments ?? [])
-        if turns.isEmpty {
+        let content = library.content(of: entry)
+        let rows = SpeakerLogic.rows(content?.segments ?? [])
+        if rows.isEmpty {
             EmptyState(entry: entry, processor: processor, notice: SummaryNotice(
                 title: "No transcript yet", message: "Transcribe this recording on this Mac. Nothing leaves your computer."))
         } else {
-            let rows = turns.flatMap { turn in
-                turn.paragraphs.enumerated().map { (speaker: $0.offset == 0 ? turn.speaker : nil, paragraph: $0.element) }
-            }
             LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
-                            if let speaker = row.speaker {
-                                Text(speaker.name(in: language)).foregroundStyle(.secondary)
+                            if row.showsSpeaker, let speaker = row.paragraph.speaker {
+                                SpeakerLabel(speaker: speaker, name: content?.names[speaker], enabled: library.canEdit) {
+                                    library.renameSpeaker(speaker, of: entry, to: $0)
+                                }
                             }
                             Button(LibraryLogic.durationText(row.paragraph.start)) { playback.play(from: row.paragraph.start) }
                                 .buttonStyle(.plain)
@@ -288,6 +288,53 @@ struct TranscriptView: View {
                 }
             }
         }
+    }
+}
+
+/// A speaker's name in the transcript; clicking it renames the speaker for this meeting.
+private struct SpeakerLabel: View {
+    let speaker: Speaker
+    let name: String?
+    let enabled: Bool
+    let rename: (String) -> Void
+    @State private var editing = false
+    @State private var draft = ""
+
+    var body: some View {
+        Button(name ?? speaker.name(in: .english)) {
+            draft = name ?? ""
+            editing = true
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .disabled(!enabled)
+        .help("Rename this speaker")
+        .popover(isPresented: $editing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Name \(speaker.name(in: .english))").font(.headline)
+                TextField(speaker.name(in: .english), text: $draft)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 220)
+                    .onSubmit(save)
+                Text(speaker == .you || speaker == .others ? "Used in this meeting\u{2019}s transcript and summary."
+                     : "Also remembers the voice, so later meetings recognise it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { editing = false }.keyboardShortcut(.cancelAction)
+                    Button("Save", action: save).keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(14)
+            .frame(width: 248)
+        }
+    }
+
+    private func save() {
+        editing = false
+        if draft != (name ?? "") { rename(draft) }
     }
 }
 

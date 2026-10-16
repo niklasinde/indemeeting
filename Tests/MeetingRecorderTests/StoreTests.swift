@@ -105,6 +105,57 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingLogic.exportMarkdown(content!).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Övriga: Hallå."), "export")
     }),
 
+    ("migration 4 adds speakers and known voices to an existing database", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(3)))
+        try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text, speaker) VALUES (1, 0, 3, 'Hej.', 'others')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == 4, "migrated to 4")
+        let content = try store.content(of: "Meeting-2026-10-14-0900.m4a")
+        check(content?.segments == [TranscriptSegment(start: 3, text: "Hej.", speaker: .others)] && content?.names == [:], "kept")
+        check(try store.knownVoices().isEmpty, "no voices")
+    }),
+
+    ("naming a speaker names it in the meeting and remembers its voice", {
+        try withStore { store, folder in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            let labelled = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you),
+                            TranscriptSegment(start: 2, text: "Hallå.", speaker: .numbered(1)),
+                            TranscriptSegment(start: 3, text: "Tjena.", speaker: .numbered(2))]
+            try store.saveTranscript(name, segments: labelled, language: .swedish, engine: "x", speakers: [
+                SpeakerProfile(speaker: .numbered(1), embedding: [1, 0]), SpeakerProfile(speaker: .numbered(2), name: "Erik", embedding: [0, 1])])
+            check(try store.content(of: name)?.names == [.numbered(2): "Erik"], "recognised name saved")
+            try store.renameSpeaker(name, .numbered(1), to: "  Anna ")
+            let content = try store.content(of: name)!
+            check(content.names == [.numbered(1): "Anna", .numbered(2): "Erik"], "names \(content.names)")
+            check(ProcessingLogic.exportMarkdown(content).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Anna: Hallå.\n\n[00:00:03] Erik: Tjena."),
+                  "export uses the names")
+            check(try store.knownVoices().map(\.name) == ["Anna"], "voice remembered")
+            check(try store.knownVoices().first?.embedding == [1, 0], "with the speaker's embedding")
+            let other = "Meeting-2026-10-16-0900.m4a"
+            try store.saveTranscript(other, segments: labelled, language: .swedish, engine: "x",
+                                     speakers: [SpeakerProfile(speaker: .numbered(1), embedding: [0, 2])])
+            try store.renameSpeaker(other, .numbered(1), to: "anna")
+            let voices = try store.knownVoices()
+            check(voices.count == 1 && voices[0].embedding == [0.5, 0.5], "same name blends \(voices)")
+            try store.renameSpeaker(name, .you, to: "Niklas")
+            check(try store.content(of: name)?.names[.you] == "Niklas" && (try store.knownVoices().count) == 1,
+                  "you can be named, without a voice")
+            try store.renameSpeaker(name, .numbered(1), to: "")
+            check(try store.content(of: name)?.names[.numbered(1)] == nil, "an empty name gives the label back")
+            try store.saveTranscript(name, segments: labelled, language: .swedish, engine: "x")
+            check(try store.content(of: name)?.names == [:], "a new transcript replaces the speakers")
+            try store.deleteKnownVoice(voices[0].id)
+            check(try store.knownVoices().isEmpty, "voice forgotten")
+            try store.delete(other)
+            check(try count("speakers", in: folder) == 0, "speakers deleted with their meeting")
+        }
+    }),
+
     ("migration 3 backfills the transcribed and summarised flags", {
         let folder = try tempFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

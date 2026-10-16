@@ -34,7 +34,7 @@ enum PreviewRenderer {
         let (library, window) = makeWindow(store: store, folder: folder)
         if let standup = library.recordings.first {
             try? store.saveTranscript(standup.fileName, segments: SampleLibrary.labelledTranscript, language: .swedish,
-                                      engine: "DictationTranscriber")
+                                      engine: "DictationTranscriber", speakers: [SpeakerProfile(speaker: .numbered(2), name: "Elin")])
         }
 
         let shots: [(name: String, meeting: Int, tab: DetailTab)] = [
@@ -87,8 +87,13 @@ enum PreviewRenderer {
         models.refresh()
         let whisper = WhisperModels()
         whisper.refresh()
+        let speakers = SpeakerRecognitionModels()
+        speakers.status = .installed
+        speakers.voices = ["Elin", "Johan"].enumerated().map {
+            KnownVoice(id: Int64($0.offset), name: $0.element, embedding: [], updated: Date(timeIntervalSinceNow: -86_400 * Double($0.offset)))
+        }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            await saveSettings(models, whisper, appearance: appearance, to: output.appendingPathComponent(
+            await saveSettings(models, whisper, speakers, appearance: appearance, to: output.appendingPathComponent(
                 "settings-\(appearance == .aqua ? "light" : "dark").png"))
         }
         let downloading = SpeechModels()
@@ -96,14 +101,16 @@ enum PreviewRenderer {
         let whisperDownloading = WhisperModels()
         let (tiny, small, large) = (WhisperModel.all[0], WhisperModel.all[2], WhisperModel.all[4])
         whisperDownloading.statuses = [tiny: .installed, small: .downloading(0.42), large: .failed("The network connection was lost.")]
-        await saveSettings(downloading, whisperDownloading, appearance: .aqua,
+        let speakersDownloading = SpeakerRecognitionModels()
+        speakersDownloading.status = .downloading(0.6)
+        await saveSettings(downloading, whisperDownloading, speakersDownloading, appearance: .aqua,
                            to: output.appendingPathComponent("settings-downloading-light.png"))
     }
 
     @MainActor
-    private static func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, appearance: NSAppearance.Name,
-                                     to url: URL) async {
-        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper))
+    private static func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, _ speakers: SpeakerRecognitionModels,
+                                     appearance: NSAppearance.Name, to url: URL) async {
+        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers))
         window.appearance = NSAppearance(named: appearance)
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
@@ -217,8 +224,7 @@ private enum SampleLibrary {
     ].map { TranscriptSegment(start: $0.0, text: $0.1) }
 
     static let labelledTranscript = transcript.enumerated().map { index, segment in
-        TranscriptSegment(start: segment.start, text: segment.text,
-                          speaker: [0, 5, 6, 7, 9, 10, 13].contains(index) ? .you : .others)
+        segment.with(speaker: [0, 5, 9, 10, 13].contains(index) ? .you : [6, 7].contains(index) ? .numbered(2) : .numbered(1))
     }
 
     private static func legacySummary(_ audioName: String) -> String {

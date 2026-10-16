@@ -71,6 +71,7 @@ struct MeetingContent: Equatable {
     let segments: [TranscriptSegment]
     /// Action item keys are their row ids.
     let summary: ParsedSummary
+    var names: SpeakerNames = [:]
 }
 
 /// All meeting data except the audio. Every call runs on one serial queue; writes post `didChange` on the main queue.
@@ -133,6 +134,21 @@ final class MeetingStore: @unchecked Sendable {
         ALTER TABLE meetings ADD COLUMN summarised INTEGER NOT NULL DEFAULT 0;
         UPDATE meetings SET transcribed = EXISTS (SELECT 1 FROM transcript_segments WHERE meeting_id = meetings.id),
                             summarised = status = 'summarised';
+        """,
+        """
+        CREATE TABLE speakers (
+            meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            label TEXT NOT NULL,
+            name TEXT,
+            embedding BLOB,
+            PRIMARY KEY (meeting_id, label)
+        );
+        CREATE TABLE known_voices (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            embedding BLOB NOT NULL,
+            updated REAL NOT NULL
+        );
         """,
     ]
 
@@ -218,9 +234,13 @@ final class MeetingStore: @unchecked Sendable {
             guard let meeting = try meeting(audioFile) else { return nil }
             let segments = try db.query("SELECT start, text, speaker FROM transcript_segments WHERE meeting_id = ? ORDER BY position",
                                         [meeting.id]) {
-                TranscriptSegment(start: $0.double(0), text: $0.string(1), speaker: $0.optionalString(2).flatMap(Speaker.init))
+                TranscriptSegment(start: $0.double(0), text: $0.string(1), speaker: $0.optionalString(2).flatMap(Speaker.init(rawValue:)))
             }
-            return MeetingContent(meeting: meeting, segments: segments, summary: try summary(of: meeting))
+            let names = try db.query("SELECT label, name FROM speakers WHERE meeting_id = ? AND name IS NOT NULL", [meeting.id]) {
+                (Speaker(rawValue: $0.string(0)), $0.string(1))
+            }
+            return MeetingContent(meeting: meeting, segments: segments, summary: try summary(of: meeting),
+                                  names: SpeakerNames(names.compactMap { speaker, name in speaker.map { ($0, name) } }) { $1 })
         }
     }
 
@@ -264,13 +284,51 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
-    func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, engine: String) throws {
+    /// Replaces the transcript and the meeting's speakers.
+    func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, engine: String,
+                        speakers: [SpeakerProfile] = []) throws {
         try write {
             let id = try ensure(audioFile)
             try db.run("UPDATE meetings SET language = ?, transcript_engine = ? WHERE id = ?", [language.rawValue, engine, id])
             try replaceSegments(id, segments)
+            try db.run("DELETE FROM speakers WHERE meeting_id = ?", [id])
+            for profile in speakers {
+                try db.run("INSERT INTO speakers (meeting_id, label, name, embedding) VALUES (?, ?, ?, ?)",
+                           [id, profile.speaker.rawValue, profile.name, profile.embedding.map(SpeakerLogic.encode)])
+            }
             try reindex(id)
         }
+    }
+
+    /// Names a speaker of one meeting, or gives it back its label when `name` is empty. A named speaker's voice is
+    /// remembered under that name, so later meetings recognise it.
+    func renameSpeaker(_ audioFile: String, _ speaker: Speaker, to name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmed.isEmpty ? nil : trimmed
+        try write {
+            let id = try ensure(audioFile)
+            try db.run("""
+                INSERT INTO speakers (meeting_id, label, name) VALUES (?, ?, ?)
+                ON CONFLICT (meeting_id, label) DO UPDATE SET name = excluded.name
+                """, [id, speaker.rawValue, name])
+            let voice = try db.query("SELECT embedding FROM speakers WHERE meeting_id = ? AND label = ?",
+                                     [id, speaker.rawValue]) { $0.optionalData(0) }.first ?? nil
+            guard let name, let voice else { return }
+            try rememberVoice(name, SpeakerLogic.decode(voice))
+        }
+    }
+
+    func knownVoices() throws -> [KnownVoice] {
+        try read {
+            try db.query("SELECT id, name, embedding, updated FROM known_voices ORDER BY name COLLATE NOCASE") {
+                KnownVoice(id: $0.int64(0), name: $0.string(1), embedding: SpeakerLogic.decode($0.optionalData(2) ?? Data()),
+                           updated: Date(timeIntervalSince1970: $0.double(3)))
+            }
+        }
+    }
+
+    func deleteKnownVoice(_ id: Int64) throws {
+        try write { try db.run("DELETE FROM known_voices WHERE id = ?", [id]) }
     }
 
     /// Replaces the summary; a summary with `unavailable` set clears it and records why. Items checked before stay
@@ -375,6 +433,15 @@ final class MeetingStore: @unchecked Sendable {
             SummarySection(heading: topic.title, lines: (points[topic.id] ?? []).map { .bullet($0.text) })
         }
         return summary
+    }
+
+    private func rememberVoice(_ name: String, _ voice: [Float]) throws {
+        let known = try db.query("SELECT embedding FROM known_voices WHERE name = ?", [name]) { $0.optionalData(0) }.first ?? nil
+        let blended = known.map { SpeakerLogic.blend(SpeakerLogic.decode($0), voice) } ?? voice
+        try db.run("""
+            INSERT INTO known_voices (name, embedding, updated) VALUES (?, ?, ?)
+            ON CONFLICT (name) DO UPDATE SET embedding = excluded.embedding, updated = excluded.updated
+            """, [name, SpeakerLogic.encode(blended), Date().timeIntervalSince1970])
     }
 
     private func replaceSegments(_ id: Int64, _ segments: [TranscriptSegment]) throws {

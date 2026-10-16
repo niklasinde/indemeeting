@@ -9,11 +9,15 @@ final class SettingsWindow {
 
     private let models = SpeechModels()
     private let whisper = WhisperModels()
-    private lazy var window = AppWindow { [models, whisper] in Self.makeWindow(SettingsView(models: models, whisper: whisper)) }
+    let speakers = SpeakerRecognitionModels()
+    private lazy var window = AppWindow { [models, whisper, speakers] in
+        Self.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers))
+    }
 
     func show() {
         models.refresh()
         whisper.refresh()
+        speakers.refresh()
         window.show()
     }
 
@@ -149,9 +153,60 @@ final class WhisperModels: ObservableObject {
     }
 }
 
+/// The speaker recognition models, their download, and the voices recognised across meetings.
+@MainActor
+final class SpeakerRecognitionModels: ObservableObject {
+    @Published var status = SpeechModelStatus.notDownloaded
+    @Published var voices: [KnownVoice] = []
+    var store: MeetingStore?
+    private var download: Task<Void, Never>?
+
+    func refresh() {
+        voices = (try? store?.knownVoices()) ?? voices
+        guard download == nil else { return }
+        if !Diarizer.isAvailable {
+            status = .unsupported
+        } else if SpeakerModel.isInstalled() {
+            status = .installed
+        } else if case .failed = status {
+            return
+        } else {
+            status = .notDownloaded
+        }
+    }
+
+    func startDownload() {
+        status = .downloading(0)
+        download = Task {
+            do {
+                try await Diarizer.download { fraction in
+                    Task { @MainActor in if self.download != nil { self.status = .downloading(fraction) } }
+                }
+                status = .installed
+            } catch {
+                status = Task.isCancelled ? .notDownloaded : .failed(error.localizedDescription)
+            }
+            download = nil
+        }
+    }
+
+    func cancel() { download?.cancel() }
+
+    func remove() {
+        SpeakerModel.remove()
+        status = .notDownloaded
+    }
+
+    func delete(_ voice: KnownVoice) {
+        try? store?.deleteKnownVoice(voice.id)
+        voices.removeAll { $0.id == voice.id }
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var models: SpeechModels
     @ObservedObject var whisper: WhisperModels
+    @ObservedObject var speakers: SpeakerRecognitionModels
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
@@ -190,6 +245,26 @@ struct SettingsView: View {
                     }
                 }
             }
+            section(SpeakerModel.name, footer: "Tells the other participants apart as Speaker 1, Speaker 2, \u{2026} on this Mac "
+                    + "with FluidAudio\u{2019}s pyannote models, downloaded once from Hugging Face. Click a speaker in a "
+                    + "transcript to name them; named voices are recognised in later meetings.") {
+                modelRow("Speaker models", size: SpeakerModel.sizeText, status: speakers.status, download: speakers.startDownload,
+                         cancel: speakers.cancel, remove: speakers.remove)
+            }
+            section("Known voices", footer: nil) {
+                if speakers.voices.isEmpty {
+                    row("No voices yet", detail: "Name a speaker in a transcript to remember their voice") {}
+                }
+                ForEach(Array(speakers.voices.enumerated()), id: \.element.id) { index, voice in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    row(voice.name, detail: "Updated \(voice.updated.formatted(date: .abbreviated, time: .omitted))") {
+                        Button { speakers.delete(voice) } label: { Image(systemName: "trash") }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help("Forget this voice")
+                    }
+                }
+            }
             section("Summaries", footer: nil) {
                 row("Apple Intelligence", detail: models.summaryReason?.sentence ?? "Ready \u{2014} meetings are summarised on this Mac") {
                     if let reason = models.summaryReason, let settings = SummaryNotice(reason).settings {
@@ -206,6 +281,7 @@ struct SettingsView: View {
         .onReceive(poll) { _ in
             models.refresh()
             whisper.refresh()
+            speakers.refresh()
         }
         .onChange(of: language) { models.refresh() }
     }
@@ -228,19 +304,27 @@ struct SettingsView: View {
     }
 
     private func whisperRow(_ model: WhisperModel) -> some View {
-        let status = whisper.status(of: model)
-        return row(model.name, detail: "\(model.sizeText) \u{00B7} \(status.text)") {
+        modelRow(model.name, size: model.sizeText, status: whisper.status(of: model), download: { whisper.download(model) },
+                 cancel: { whisper.cancel(model) }, remove: { whisper.remove(model) })
+    }
+
+    /// A downloadable model: its size and status, with Download, a cancellable progress bar, or Remove.
+    private func modelRow(_ title: String, size: String, status: SpeechModelStatus, download: @escaping () -> Void,
+                          cancel: @escaping () -> Void, remove: @escaping () -> Void) -> some View {
+        row(title, detail: status == .unsupported ? status.text : "\(size) \u{00B7} \(status.text)") {
             switch status {
             case .downloading(let fraction):
                 ProgressView(value: fraction ?? 0).frame(width: 120)
-                Button { whisper.cancel(model) } label: { Image(systemName: "xmark.circle.fill") }
+                Button(action: cancel) { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.borderless)
                     .foregroundStyle(.secondary)
                     .help("Cancel the download")
             case .installed:
-                Button("Remove") { whisper.remove(model) }
+                Button("Remove", action: remove)
+            case .unsupported:
+                EmptyView()
             default:
-                Button("Download") { whisper.download(model) }
+                Button("Download", action: download)
             }
         }
     }

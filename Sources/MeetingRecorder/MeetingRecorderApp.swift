@@ -14,12 +14,28 @@ enum Main {
                 FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
                 exit(1)
             }
-            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, store: store)
+            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, recogniseOnly: job.recogniseOnly,
+                                               store: store)
         }
+        if CommandLine.arguments.contains("--download-speaker-model") { downloadSpeakerModel() }
         if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
             recordFromCommandLine(job)
         }
         MeetingRecorderApp.main()
+    }
+
+    private static func downloadSpeakerModel() -> Never {
+        Task {
+            do {
+                try await Diarizer.download { print("Downloading \(SpeakerModel.name)\u{2026} \(ProcessingLogic.percent($0))") }
+                print("Saved to \(SpeakerModel.folder().path)")
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+        }
+        dispatchMain()
     }
 
     private static func recordFromCommandLine(_ job: RecordJob) -> Never {
@@ -108,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleRecording()
         }
         OnboardingWindow.shared.recorder = recorder
+        SettingsWindow.shared.speakers.store = store
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.summariseWhenModelReady()
     }

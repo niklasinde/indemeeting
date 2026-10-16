@@ -1,4 +1,4 @@
-// swift-tools-version:5.9
+// swift-tools-version:6.2
 import Foundation
 import PackageDescription
 
@@ -15,9 +15,14 @@ let hasWhisper = FileManager.default.fileExists(atPath: URL(fileURLWithPath: #fi
 let package = Package(
     name: "MeetingRecorder",
     platforms: [.macOS("26.0")],
+    // Only diarization is used, so FluidAudio's NeMo text-processing trait (a prebuilt binary) stays off.
+    dependencies: [.package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5", traits: [])],
     targets: [
-        .executableTarget(name: "MeetingRecorder", dependencies: hasWhisper ? ["whisper"] : [], path: "Sources/MeetingRecorder"),
+        .executableTarget(name: "MeetingRecorder",
+                          dependencies: [.product(name: "FluidAudio", package: "FluidAudio")] + (hasWhisper ? ["whisper"] : []),
+                          path: "Sources/MeetingRecorder"),
         .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests",
                     swiftSettings: testSettings)
-    ] + (hasWhisper ? [.binaryTarget(name: "whisper", path: whisperPath)] : [])
+    ] + (hasWhisper ? [.binaryTarget(name: "whisper", path: whisperPath)] : []),
+    swiftLanguageModes: [.v5]
 )

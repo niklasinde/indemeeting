@@ -77,11 +77,6 @@ struct ChecklistItem: Equatable, Identifiable {
     var id: String { key }
 }
 
-struct SpeakerTurn: Equatable {
-    let speaker: Speaker?
-    var paragraphs: [TranscriptSegment]
-}
-
 struct SummarySection: Equatable {
     let heading: String
     var lines: [MarkdownBlock]
@@ -273,17 +268,6 @@ enum LibraryLogic {
                                                              speaker: last.speaker)
             } else {
                 result.append(segment)
-            }
-        }
-    }
-
-    /// The paragraphs grouped into runs of one speaker.
-    static func speakerTurns(_ segments: [TranscriptSegment], span: TimeInterval = 30) -> [SpeakerTurn] {
-        paragraphs(segments, span: span).reduce(into: []) { turns, paragraph in
-            if let last = turns.last, last.speaker == paragraph.speaker {
-                turns[turns.count - 1].paragraphs.append(paragraph)
-            } else {
-                turns.append(SpeakerTurn(speaker: paragraph.speaker, paragraphs: [paragraph]))
             }
         }
     }

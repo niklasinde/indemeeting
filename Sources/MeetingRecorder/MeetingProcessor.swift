@@ -3,8 +3,10 @@ import os
 import UniformTypeIdentifiers
 
 struct ProcessingResult {
-    let title: String?
-    let unavailable: SummaryUnavailable?
+    var title: String?
+    var unavailable: SummaryUnavailable?
+    /// How many speakers "Recognise speakers" told apart, when that is all that ran.
+    var speakers: Int?
 }
 
 enum MeetingPipeline {
@@ -16,8 +18,48 @@ enum MeetingPipeline {
             let transcript = try await Transcriber.transcribeMeeting(audio, language: language) { fraction in
                 Task { @MainActor in progress(.transcribing(progress: fraction)) }
             }
-            try store.saveTranscript(audio.lastPathComponent, segments: transcript.segments, language: language, engine: transcript.engine)
-            return try await summarise(audio, segments: transcript.segments, language: language, store: store, progress: progress)
+            let recognised = await recogniseSpeakers(transcript.segments, in: audio, store: store, progress: progress)
+            try store.saveTranscript(audio.lastPathComponent, segments: recognised.segments, language: language,
+                                     engine: transcript.engine, speakers: recognised.speakers)
+            return try await summarise(audio, segments: recognised.segments, names: recognised.names, language: language,
+                                       store: store, progress: progress)
+        }
+    }
+
+    /// Tells the speakers of the stored transcript apart again without transcribing, or runs the whole pipeline when
+    /// there is no transcript.
+    static func recogniseSpeakers(_ audio: URL, store: MeetingStore,
+                                  progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
+        guard let content = try store.content(of: audio.lastPathComponent), content.meeting.transcribed else {
+            return try await run(audio, language: .current, store: store, progress: progress)
+        }
+        return try await recordingFailure(of: audio, in: store) {
+            await progress(.recognisingSpeakers())
+            let recognised = try await Diarizer.recognise(content.segments, in: audio, known: try store.knownVoices()) { fraction in
+                Task { @MainActor in progress(.recognisingSpeakers(progress: fraction)) }
+            }
+            let meeting = content.meeting
+            try store.saveTranscript(meeting.audioFile, segments: recognised.segments, language: meeting.language ?? .current,
+                                     engine: meeting.transcriptEngine ?? "transcription", speakers: recognised.speakers)
+            return ProcessingResult(speakers: recognised.speakers.count)
+        }
+    }
+
+    /// Numbered speakers when the speaker recognition models are downloaded; a failure keeps the transcript as it is.
+    private static func recogniseSpeakers(_ segments: [TranscriptSegment], in audio: URL, store: MeetingStore,
+                                          progress: @escaping @MainActor (ProcessingStage) -> Void) async
+    -> (segments: [TranscriptSegment], speakers: [SpeakerProfile], names: SpeakerNames) {
+        guard Diarizer.isReady else { return (segments, [], [:]) }
+        await progress(.recognisingSpeakers())
+        do {
+            let recognised = try await Diarizer.recognise(segments, in: audio, known: try store.knownVoices()) { fraction in
+                Task { @MainActor in progress(.recognisingSpeakers(progress: fraction)) }
+            }
+            let names = SpeakerNames(recognised.speakers.compactMap { profile in profile.name.map { (profile.speaker, $0) } }) { $1 }
+            return (recognised.segments, recognised.speakers, names)
+        } catch {
+            log("\(audio.lastPathComponent) speaker recognition failed: \(ProcessingLogic.errorDetails(error))")
+            return (segments, [], [:])
         }
     }
 
@@ -29,16 +71,17 @@ enum MeetingPipeline {
             return try await run(audio, language: .current, store: store, progress: progress)
         }
         return try await recordingFailure(of: audio, in: store) {
-            try await summarise(audio, segments: content.segments, language: content.meeting.language ?? .current,
-                                store: store, progress: progress)
+            try await summarise(audio, segments: content.segments, names: content.names,
+                                language: content.meeting.language ?? .current, store: store, progress: progress)
         }
     }
 
-    private static func summarise(_ audio: URL, segments: [TranscriptSegment], language: MeetingLanguage, store: MeetingStore,
+    private static func summarise(_ audio: URL, segments: [TranscriptSegment], names: SpeakerNames, language: MeetingLanguage,
+                                  store: MeetingStore,
                                   progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         let name = audio.lastPathComponent
         do {
-            let summary = try await Summarizer.summarise(segments, language: language, progress: progress)
+            let summary = try await Summarizer.summarise(segments, names: names, language: language, progress: progress)
             try store.saveSummary(name, ParsedSummary(summary))
             return ProcessingResult(title: summary.title, unavailable: nil)
         } catch let reason as SummaryUnavailable {
@@ -54,19 +97,29 @@ enum MeetingPipeline {
             return try await body()
         } catch {
             let details = ProcessingLogic.errorDetails(error)
-            Logger(subsystem: "MeetingRecorder", category: "processing").error("\(name, privacy: .public) failed: \(details, privacy: .public)")
-            FileHandle.standardError.write(Data("\(name) failed: \(details)\n".utf8))
+            log("\(name) failed: \(details)")
             try? store.setFailed(name, message: details)
             throw error
         }
     }
 
-    static func runFromCommandLine(_ audio: URL, language: MeetingLanguage, store: MeetingStore) -> Never {
+    private static func log(_ message: String) {
+        Logger(subsystem: "MeetingRecorder", category: "processing").error("\(message, privacy: .public)")
+        FileHandle.standardError.write(Data((message + "\n").utf8))
+    }
+
+    static func runFromCommandLine(_ audio: URL, language: MeetingLanguage, recogniseOnly: Bool, store: MeetingStore) -> Never {
         Task {
             do {
-                let result = try await run(audio, language: language, store: store) { print($0.text(for: audio.lastPathComponent)) }
+                let progress: @MainActor (ProcessingStage) -> Void = { print($0.text(for: audio.lastPathComponent)) }
+                let result = recogniseOnly ? try await recogniseSpeakers(audio, store: store, progress: progress)
+                    : try await run(audio, language: language, store: store, progress: progress)
                 print("Saved to \(AppPaths.database.path)")
-                print(result.unavailable?.message ?? "Summary: \(result.title ?? "")")
+                if let content = try store.content(of: audio.lastPathComponent) {
+                    let speakers = Set(content.segments.compactMap(\.speaker))
+                    print("Speakers: " + speakers.map { content.names.name(of: $0, in: .english) }.sorted().joined(separator: ", "))
+                }
+                print(result.speakers.map { "Recognised \($0) speakers" } ?? result.unavailable?.message ?? "Summary: \(result.title ?? "")")
                 exit(0)
             } catch {
                 FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
@@ -102,6 +155,11 @@ final class MeetingProcessor: ObservableObject {
     /// Summarises the meeting's stored transcript, transcribing first only when it has none.
     func summarise(_ audio: URL) {
         enqueue(audio) { [store] in try await MeetingPipeline.resummarise(audio, store: store, progress: $0) }
+    }
+
+    /// Tells the speakers of the stored transcript apart, transcribing first only when it has none.
+    func recogniseSpeakers(_ audio: URL) {
+        enqueue(audio) { [store] in try await MeetingPipeline.recogniseSpeakers(audio, store: store, progress: $0) }
     }
 
     /// While Apple Intelligence is off or downloading, waits for it and then summarises every meeting left without a summary.
@@ -158,7 +216,10 @@ final class MeetingProcessor: ObservableObject {
         do {
             let result = try await job { [weak self] in self?.status = $0.text(for: name) }
             latestMeeting = audio
-            if let reason = result.unavailable {
+            if let speakers = result.speakers {
+                status = "\(speakers) speaker\(speakers == 1 ? "" : "s") recognised: \(name)"
+                notifier?.postProcessed(title: "Speakers recognised", body: status ?? name, meeting: audio)
+            } else if let reason = result.unavailable {
                 status = reason.message
                 notifier?.postProcessed(title: "Transcript ready, no summary", body: reason.message, meeting: audio)
                 summariseWhenModelReady()
