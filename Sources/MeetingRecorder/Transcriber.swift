@@ -28,7 +28,7 @@ enum Transcriber {
     static func engine(for language: MeetingLanguage) throws -> any SpeechEngine {
         switch TranscriptionEngine.current(for: language) {
         case .apple: return AppleSpeechEngine(language: language)
-        case .whisper(let model): return try WhisperEngine(model: model)
+        case .whisper(let model): return try WhisperEngine(model: model, language: language)
         }
     }
 

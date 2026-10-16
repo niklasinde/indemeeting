@@ -2,15 +2,16 @@ import AVFoundation
 #if canImport(whisper)
 import whisper
 
-/// Transcribes Swedish with a downloaded KB-Whisper model through whisper.cpp, on the GPU with Metal.
+/// Transcribes with a downloaded Whisper model through whisper.cpp, on the GPU with Metal.
 final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     static let sampleRate: Double = 16_000
 
     private let model: WhisperModel
+    private let language: String
     private let context: OpaquePointer
     private let queue = DispatchQueue(label: "whisper", qos: .userInitiated)
 
-    init(model: WhisperModel) throws {
+    init(model: WhisperModel, language: MeetingLanguage) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
         whisper_log_set({ level, text, _ in
             guard level == GGML_LOG_LEVEL_ERROR, let text, case let message = String(cString: text), !message.contains("Core ML")
@@ -24,6 +25,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
             throw WhisperModelError.couldNotLoad(model)
         }
         self.model = model
+        self.language = language.locale.language.languageCode?.identifier ?? "auto"
         self.context = context
     }
 
@@ -35,7 +37,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
             queue.async { continuation.resume(with: Result { try self.run(samples, progress: progress) }) }
         }
         guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
-        return Transcript(segments: segments, engine: model.engineName)
+        return Transcript(segments: segments, engine: model.id)
     }
 
     private final class ProgressBox {
@@ -58,7 +60,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         }
         params.progress_callback_user_data = Unmanaged.passUnretained(box).toOpaque()
         let status = withExtendedLifetime(box) {
-            "sv".withCString { language in
+            language.withCString { language in
                 params.language = language
                 return samples.withUnsafeBufferPointer { whisper_full(context, params, $0.baseAddress, Int32($0.count)) }
             }
@@ -87,7 +89,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
 }
 #else
 final class WhisperEngine: SpeechEngine {
-    init(model: WhisperModel) throws { throw WhisperModelError.unavailable }
+    init(model: WhisperModel, language: MeetingLanguage) throws { throw WhisperModelError.unavailable }
 
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         throw WhisperModelError.unavailable

@@ -82,18 +82,18 @@ final class SpeechModels: ObservableObject {
     }
 }
 
-/// The downloaded KB-Whisper models, and the downloads in progress.
+/// The downloaded Whisper models, and the downloads in progress.
 @MainActor
 final class WhisperModels: ObservableObject {
     @Published var statuses: [WhisperModel: SpeechModelStatus] = [:]
     private var downloads: [WhisperModel: (task: URLSessionDownloadTask, progress: AnyCancellable)] = [:]
 
-    var installed: [WhisperModel] { WhisperModel.allCases.filter { status(of: $0) == .installed } }
+    var installed: [WhisperModel] { WhisperModel.all.filter { status(of: $0) == .installed } }
 
     func status(of model: WhisperModel) -> SpeechModelStatus { statuses[model] ?? .notDownloaded }
 
     func refresh() {
-        for model in WhisperModel.allCases where downloads[model] == nil {
+        for model in WhisperModel.all where downloads[model] == nil {
             if model.isInstalled() {
                 statuses[model] = .installed
             } else if case .failed = statuses[model] {
@@ -153,7 +153,6 @@ struct SettingsView: View {
     @ObservedObject var models: SpeechModels
     @ObservedObject var whisper: WhisperModels
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
-    @AppStorage(TranscriptionEngine.storageKey(for: .swedish)) private var swedishEngine = TranscriptionEngine.appleValue
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
@@ -175,20 +174,20 @@ struct SettingsView: View {
                     speechRow(language)
                 }
             }
-            section("KB-Whisper", footer: "Swedish speech models from the National Library of Sweden, downloaded from Hugging Face "
-                    + "and run on this Mac with whisper.cpp. Larger models are more accurate and slower.") {
-                row("Transcribe \(MeetingLanguage.swedish.displayName) with") {
-                    Picker("Transcribe \(MeetingLanguage.swedish.displayName) with", selection: swedishEngineChoice) {
-                        ForEach(TranscriptionEngine.choices(for: .swedish, installed: whisper.installed), id: \.self) {
-                            Text($0.displayName).tag($0)
-                        }
+            section("Transcription", footer: nil) {
+                ForEach(Array(TranscriptionEngine.whisperLanguages.enumerated()), id: \.element) { index, language in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    row("Transcribe \(language.displayName) with") {
+                        EnginePicker(language: language, installed: whisper.installed)
                     }
-                    .labelsHidden()
-                    .fixedSize()
                 }
-                ForEach(WhisperModel.allCases) { model in
-                    Divider().padding(.leading, 14)
-                    whisperRow(model)
+            }
+            ForEach(WhisperModel.families, id: \.self) { family in
+                section(family.name, footer: family.about) {
+                    ForEach(Array(WhisperModel.all.filter { $0.family == family }.enumerated()), id: \.element) { index, model in
+                        if index > 0 { Divider().padding(.leading, 14) }
+                        whisperRow(model)
+                    }
                 }
             }
             section("Summaries", footer: nil) {
@@ -228,14 +227,9 @@ struct SettingsView: View {
         }
     }
 
-    private var swedishEngineChoice: Binding<TranscriptionEngine> {
-        Binding(get: { TranscriptionEngine.selected(for: .swedish, stored: swedishEngine, installed: whisper.installed) },
-                set: { swedishEngine = $0.storedValue })
-    }
-
     private func whisperRow(_ model: WhisperModel) -> some View {
         let status = whisper.status(of: model)
-        return row(model.displayName, detail: "\(model.sizeText) \u{00B7} \(status.text)") {
+        return row(model.name, detail: "\(model.sizeText) \u{00B7} \(status.text)") {
             switch status {
             case .downloading(let fraction):
                 ProgressView(value: fraction ?? 0).frame(width: 120)
@@ -288,5 +282,28 @@ struct SettingsView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(minHeight: 44)
+    }
+}
+
+/// Picks what transcribes a language: Apple, or a downloaded Whisper model that supports it.
+private struct EnginePicker: View {
+    let language: MeetingLanguage
+    let installed: [WhisperModel]
+    @AppStorage private var stored: String
+
+    init(language: MeetingLanguage, installed: [WhisperModel]) {
+        self.language = language
+        self.installed = installed
+        _stored = AppStorage(wrappedValue: TranscriptionEngine.appleValue, TranscriptionEngine.storageKey(for: language))
+    }
+
+    var body: some View {
+        Picker("Transcribe \(language.displayName) with", selection: Binding(
+            get: { TranscriptionEngine.selected(for: language, stored: stored, installed: installed) },
+            set: { stored = $0.storedValue })) {
+            ForEach(TranscriptionEngine.choices(for: language, installed: installed), id: \.self) { Text($0.displayName).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
     }
 }

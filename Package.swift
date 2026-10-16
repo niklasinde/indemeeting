@@ -7,17 +7,17 @@ let testingPlugins = "/Library/Developer/CommandLineTools/usr/lib/swift/host/plu
 let testSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: testingPlugins)
     ? [.unsafeFlags(["-plugin-path", testingPlugins])] : []
 
+// Built from source by scripts/build-whisper.sh (build.sh runs it). Without it the app builds without KB-Whisper.
+let whisperPath = ".deps/whisper.xcframework"
+let hasWhisper = FileManager.default.fileExists(atPath: URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().appendingPathComponent(whisperPath).path)
+
 let package = Package(
     name: "MeetingRecorder",
     platforms: [.macOS("26.0")],
     targets: [
-        .executableTarget(name: "MeetingRecorder", dependencies: ["whisper"], path: "Sources/MeetingRecorder",
-                          linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks",
-                                                          "-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
-        .binaryTarget(name: "whisper",
-                      url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5130/whisper-b5130-xcframework.zip",
-                      checksum: "033a43b0174e8cf9b366f72e4a428cdcf126f93ad1c87d3fa119a96bed6f231a"),
+        .executableTarget(name: "MeetingRecorder", dependencies: hasWhisper ? ["whisper"] : [], path: "Sources/MeetingRecorder"),
         .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests",
                     swiftSettings: testSettings)
-    ]
+    ] + (hasWhisper ? [.binaryTarget(name: "whisper", path: whisperPath)] : [])
 )

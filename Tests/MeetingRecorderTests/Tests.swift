@@ -16,6 +16,8 @@ func check(_ condition: @autoclosure () throws -> Bool, _ message: String, line:
 
 private let rate = PCMNormalizer.format.sampleRate
 
+private func kb(_ name: String) -> WhisperModel { WhisperModel.with(id: "kb-whisper-\(name)")! }
+
 private func sine(_ frequency: Double, seconds: Double, amplitude: Float = 0.2) -> [Float] {
     (0..<Int(seconds * rate)).map { amplitude * Float(sin(2 * .pi * frequency * Double($0) / rate)) }
 }
@@ -538,43 +540,47 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("KB-Whisper models name their files and engines", {
-        check(WhisperModel.allCases.map(\.engineName) == ["kb-whisper-tiny", "kb-whisper-base", "kb-whisper-small",
-                                                           "kb-whisper-medium-q5_0", "kb-whisper-large-q5_0"], "engines")
-        check(WhisperModel.medium.remoteURL.absoluteString
+        check(WhisperModel.all.map(\.id) == ["kb-whisper-tiny", "kb-whisper-base", "kb-whisper-small",
+                                              "kb-whisper-medium-q5_0", "kb-whisper-large-q5_0"], "engines")
+        check(kb("medium-q5_0").remoteURL.absoluteString
               == "https://huggingface.co/KBLab/kb-whisper-medium/resolve/main/ggml-model-q5_0.bin", "quantized url")
-        check(WhisperModel.tiny.remoteURL.absoluteString.hasSuffix("kb-whisper-tiny/resolve/main/ggml-model.bin"), "full url")
-        check(WhisperModel.large.fileName == "kb-whisper-large-q5_0.bin" && WhisperModel.base.displayName == "Base", "names")
-        check(WhisperModel.tiny.sizeText.hasSuffix(" MB") && WhisperModel.large.sizeText.hasSuffix(" GB"), WhisperModel.large.sizeText)
-        check(WhisperModel.allCases.allSatisfy { $0.sha256.count == 64 }, "checksums")
+        check(kb("tiny").remoteURL.absoluteString.hasSuffix("kb-whisper-tiny/resolve/main/ggml-model.bin"), "full url")
+        check(kb("large-q5_0").fileName == "kb-whisper-large-q5_0.bin" && kb("base").name == "Base", "names")
+        check(kb("tiny").sizeText.hasSuffix(" MB") && kb("large-q5_0").sizeText.hasSuffix(" GB"), kb("large-q5_0").sizeText)
+        check(WhisperModel.all.allSatisfy { $0.sha256.count == 64 && $0.family == .kb && $0.languages == [.swedish] }, "catalogue")
+        check(WhisperModel.families == [.kb] && WhisperModel.with(id: "x") == nil, "families")
     }),
 
     ("KB-Whisper models are installed only when the whole file is there", {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("models-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
+        let tiny = kb("tiny")
         check(WhisperModel.installed(in: folder).isEmpty, "empty")
-        try Data(count: 10).write(to: WhisperModel.tiny.url(in: folder))
-        check(!WhisperModel.tiny.isInstalled(in: folder), "partial file")
-        check((try? WhisperModel.tiny.verify(WhisperModel.tiny.url(in: folder))) == nil, "wrong size rejected")
+        try Data(count: 10).write(to: tiny.url(in: folder))
+        check(!tiny.isInstalled(in: folder), "partial file")
+        check((try? tiny.verify(tiny.url(in: folder))) == nil, "wrong size rejected")
         do {
-            try WhisperModel.tiny.verify(WhisperModel.tiny.url(in: folder))
+            try tiny.verify(tiny.url(in: folder))
         } catch let error as WhisperModelError {
-            check(error == .wrongSize(expected: WhisperModel.tiny.bytes, got: 10), "\(error)")
+            check(error == .wrongSize(expected: tiny.bytes, got: 10), "\(error)")
         }
         check(AppPaths.models.lastPathComponent == "Models", AppPaths.models.path)
     }),
 
     ("transcription engine choice falls back to Apple", {
-        check(TranscriptionEngine(storedValue: "kb-whisper-medium-q5_0") == .whisper(.medium), "stored whisper")
+        let (tiny, medium) = (kb("tiny"), kb("medium-q5_0"))
+        check(TranscriptionEngine(storedValue: "kb-whisper-medium-q5_0") == .whisper(medium), "stored whisper")
         check(TranscriptionEngine(storedValue: nil) == .apple && TranscriptionEngine(storedValue: "x") == .apple, "default")
-        check(TranscriptionEngine.whisper(.small).storedValue == "kb-whisper-small", "stores engine name")
-        check(TranscriptionEngine.whisper(.large).displayName == "KB-Whisper Large", "display")
-        check(TranscriptionEngine.choices(for: .swedish, installed: [.tiny, .medium]) == [.apple, .whisper(.tiny), .whisper(.medium)],
+        check(TranscriptionEngine.whisper(kb("small")).storedValue == "kb-whisper-small", "stores engine name")
+        check(TranscriptionEngine.whisper(kb("large-q5_0")).displayName == "KB-Whisper Large", "display")
+        check(TranscriptionEngine.choices(for: .swedish, installed: [tiny, medium]) == [.apple, .whisper(tiny), .whisper(medium)],
               "swedish choices")
-        check(TranscriptionEngine.choices(for: .english, installed: [.tiny]) == [.apple], "english is Apple")
-        check(TranscriptionEngine.selected(for: .swedish, stored: "kb-whisper-tiny", installed: [.tiny]) == .whisper(.tiny), "kept")
+        check(TranscriptionEngine.choices(for: .english, installed: [tiny]) == [.apple], "english is Apple")
+        check(TranscriptionEngine.selected(for: .swedish, stored: "kb-whisper-tiny", installed: [tiny]) == .whisper(tiny), "kept")
         check(TranscriptionEngine.selected(for: .swedish, stored: "kb-whisper-tiny", installed: []) == .apple, "removed model")
-        check(TranscriptionEngine.selected(for: .english, stored: "kb-whisper-tiny", installed: [.tiny]) == .apple, "english")
+        check(TranscriptionEngine.selected(for: .english, stored: "kb-whisper-tiny", installed: [tiny]) == .apple, "english")
+        check(TranscriptionEngine.whisperLanguages == [.swedish], "languages with a choice")
         check(TranscriptionEngine.storageKey(for: .swedish) == "transcriptionEngine.sv-SE", "key")
     }),
 

@@ -40,6 +40,10 @@ Produces `MeetingRecorder.app`, signed with `MeetingRecorder.entitlements` and t
 Swift 6.4 or Xcode); if SwiftPM fails, the script falls back to plain `swiftc`. `./build.sh --release <path>.app`
 builds a universal (arm64 + x86_64) app at that path and fails instead of signing ad-hoc.
 
+The first build also needs `cmake` (`brew install cmake`): `build.sh` runs `scripts/build-whisper.sh` when
+`.deps/whisper.xcframework` is missing, which compiles whisper.cpp for KB-Whisper (see below). Run that script once
+before a plain `swift build`; without it SwiftPM builds the app without KB-Whisper.
+
 ### Release
 
     scripts/package.sh
@@ -218,8 +222,8 @@ summary.
 Swedish can instead be transcribed with [KB-Whisper](https://huggingface.co/KBLab), the National Library of Sweden's
 Whisper models, through [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on the GPU (Metal). It punctuates and
 is usually more accurate than Apple's dictation model. Settings > KB-Whisper lists the models with their size,
-Download (with progress, cancellable) and Remove, and "Transcribe Svenska with" picks Apple or one of the downloaded
-models (stored in UserDefaults as `transcriptionEngine.sv-SE`). English always uses Apple.
+Download (with progress, cancellable) and Remove, and Settings > Transcription > "Transcribe Svenska with" picks Apple or
+one of the downloaded models (stored in UserDefaults as `transcriptionEngine.sv-SE`). English uses Apple.
 
 | Model  | File on Hugging Face  | Size    |
 |--------|-----------------------|---------|
@@ -230,16 +234,24 @@ models (stored in UserDefaults as `transcriptionEngine.sv-SE`). English always u
 | Large  | `ggml-model-q5_0.bin` | 1.08 GB |
 
 Models are downloaded from `https://huggingface.co/KBLab/kb-whisper-<size>/resolve/main/<file>`, checked against the
-size and SHA-256 that Hugging Face lists (in `WhisperLogic.swift`), and moved into
+size and SHA-256 that Hugging Face lists, and moved into
 `~/Library/Application Support/MeetingRecorder/Models/` (`<data-dir>/Models` with `--data-dir`) as
 `kb-whisper-<size>[-q5_0].bin`. The meeting's `transcript_engine` is that name, e.g. `kb-whisper-medium-q5_0`. Stems are
 transcribed one by one with the same model, so speakers and echo removal work as with Apple, and the menu shows the
 progress. Bracketed sound labels such as `[MUSIK]` are dropped.
 
-whisper.cpp comes from the prebuilt `whisper-b5130-xcframework.zip` release (the build of v1.9.4) as a SwiftPM
-`binaryTarget` pinned by checksum. It is a dynamic, universal framework; `build.sh` copies it into
-`Contents/Frameworks` and signs it. `test.sh` compiles `WhisperLogic.swift` only; `WhisperEngine.swift` is behind
-`#if canImport(whisper)`, so the `swiftc` fallback builds without KB-Whisper. To try a model headlessly without changing
+The models are one list, `WhisperModel.all` in `WhisperLogic.swift`: each entry has an id (the file and engine name),
+display name, family, Hugging Face repo and file, size, SHA-256 and the languages it transcribes. Adding a model is one
+entry there; Settings gets a section per family and offers a "Transcribe <language> with" picker for every language some
+model supports (a multilingual model listing `.english` would make English selectable too).
+
+whisper.cpp v1.9.4 (commit `927cfce`) is built from source by `scripts/build-whisper.sh` into `.deps/` (gitignored):
+one universal static library with the Metal shaders embedded (`GGML_METAL_EMBED_LIBRARY`), wrapped in
+`.deps/whisper.xcframework` with a `whisper` module map that also links Metal, Accelerate and libc++. SwiftPM uses it
+as a local `binaryTarget` and links it into the executable, so the app has no `Contents/Frameworks` and library
+validation stays on under the hardened runtime. It adds about 3.7 MB per architecture. Delete `.deps/` to rebuild it.
+`test.sh` compiles `WhisperLogic.swift` only; `WhisperEngine.swift` is behind `#if canImport(whisper)`, so the `swiftc`
+fallback builds without KB-Whisper. To try a model headlessly without changing
 the saved choice, pass it as an argument default:
 
     .build/debug/MeetingRecorder --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny

@@ -94,7 +94,8 @@ enum PreviewRenderer {
         let downloading = SpeechModels()
         downloading.statuses = [.swedish: .downloading(0.42), .english: .notDownloaded]
         let whisperDownloading = WhisperModels()
-        whisperDownloading.statuses = [.tiny: .installed, .small: .downloading(0.42), .large: .failed("The network connection was lost.")]
+        let (tiny, small, large) = (WhisperModel.all[0], WhisperModel.all[2], WhisperModel.all[4])
+        whisperDownloading.statuses = [tiny: .installed, small: .downloading(0.42), large: .failed("The network connection was lost.")]
         await saveSettings(downloading, whisperDownloading, appearance: .aqua,
                            to: output.appendingPathComponent("settings-downloading-light.png"))
     }
