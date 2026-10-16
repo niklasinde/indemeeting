@@ -211,14 +211,12 @@ struct MenuContent: View {
 
 enum MenuIcon {
     static func image(recording: Bool) -> NSImage {
-        let name = recording ? "record.circle.fill" : "waveform.circle"
+        let name = recording ? "record.circle.fill" : "waveform.circle.fill"
         let base = NSImage(systemSymbolName: name, accessibilityDescription: "Meeting Recorder") ?? NSImage()
-        guard recording else {
-            base.isTemplate = true
-            return base
-        }
-        let image = base.withSymbolConfiguration(.init(paletteColors: [.systemRed])) ?? base
-        image.isTemplate = false
+        var config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+        if recording { config = config.applying(.init(paletteColors: [.systemRed])) }
+        let image = base.withSymbolConfiguration(config) ?? base
+        image.isTemplate = !recording
         return image
     }
 }
