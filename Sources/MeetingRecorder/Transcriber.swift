@@ -18,16 +18,29 @@ struct Transcript {
     let engine: String
 }
 
+typealias TranscriptionProgress = @Sendable (Double) -> Void
+
+protocol SpeechEngine {
+    func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript
+}
+
 enum Transcriber {
-    static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
-        try await SpeechAnalyzerTranscriber.transcribe(audio, language: language)
+    static func engine(for language: MeetingLanguage) throws -> any SpeechEngine {
+        switch TranscriptionEngine.current(for: language) {
+        case .apple: return AppleSpeechEngine(language: language)
+        case .whisper(let model): return try WhisperEngine(model: model)
+        }
     }
 
     /// A meeting with stems is transcribed per stem, so every segment has a speaker; others from the mix.
-    static func transcribeMeeting(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
-        guard let stems = RecordingLogic.stems(of: audio) else { return try await transcribe(audio, language: language) }
+    static func transcribeMeeting(_ audio: URL, language: MeetingLanguage,
+                                  progress: @escaping TranscriptionProgress = { _ in }) async throws -> Transcript {
+        let engine = try engine(for: language)
+        guard let stems = RecordingLogic.stems(of: audio) else { return try await engine.transcribe(audio, progress: progress) }
         var transcripts: [Transcript?] = []
-        for stem in stems { transcripts.append(try await transcribeSpeech(stem, language: language)) }
+        for (index, stem) in stems.enumerated() {
+            transcripts.append(try await transcribeSpeech(stem, engine) { progress((Double(index) + $0) / Double(stems.count)) })
+        }
         let segments = ProcessingLogic.mergeSpeakers(you: transcripts[AudioSource.microphone.rawValue]?.segments ?? [],
                                                      others: transcripts[AudioSource.system.rawValue]?.segments ?? [])
         guard let engine = transcripts.lazy.compactMap({ $0?.engine }).first, !segments.isEmpty else {
@@ -36,9 +49,10 @@ enum Transcriber {
         return Transcript(segments: segments, engine: engine)
     }
 
-    private static func transcribeSpeech(_ audio: URL, language: MeetingLanguage) async throws -> Transcript? {
+    private static func transcribeSpeech(_ audio: URL, _ engine: any SpeechEngine,
+                                         progress: @escaping TranscriptionProgress) async throws -> Transcript? {
         do {
-            return try await transcribe(audio, language: language)
+            return try await engine.transcribe(audio, progress: progress)
         } catch TranscriptionError.noSpeech {
             return nil
         }
@@ -82,8 +96,10 @@ enum SpeechModel {
     }
 }
 
-private enum SpeechAnalyzerTranscriber {
-    static func transcribe(_ audio: URL, language: MeetingLanguage) async throws -> Transcript {
+private struct AppleSpeechEngine: SpeechEngine {
+    let language: MeetingLanguage
+
+    func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         switch await SpeechModel.make(for: language) {
         case .speech(let module): return Transcript(segments: try await run(module, audio), engine: "SpeechTranscriber")
         case .dictation(let module): return Transcript(segments: try await run(module, audio), engine: "DictationTranscriber")
@@ -91,7 +107,7 @@ private enum SpeechAnalyzerTranscriber {
         }
     }
 
-    private static func run<Module: SpeechModule>(_ module: Module, _ audio: URL) async throws -> [TranscriptSegment]
+    private func run<Module: SpeechModule>(_ module: Module, _ audio: URL) async throws -> [TranscriptSegment]
     where Module.Result: TextResult {
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
             try await request.downloadAndInstall()

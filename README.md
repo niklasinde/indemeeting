@@ -213,6 +213,37 @@ summary.
   Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards. "Still downloading" is also what the
   API reports when the Mac and Siri languages differ (e.g. English (Sweden) vs English (US)), so the app says both.
 
+### KB-Whisper (Swedish)
+
+Swedish can instead be transcribed with [KB-Whisper](https://huggingface.co/KBLab), the National Library of Sweden's
+Whisper models, through [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on the GPU (Metal). It punctuates and
+is usually more accurate than Apple's dictation model. Settings > KB-Whisper lists the models with their size,
+Download (with progress, cancellable) and Remove, and "Transcribe Svenska with" picks Apple or one of the downloaded
+models (stored in UserDefaults as `transcriptionEngine.sv-SE`). English always uses Apple.
+
+| Model  | File on Hugging Face  | Size    |
+|--------|-----------------------|---------|
+| Tiny   | `ggml-model.bin`      | 78 MB   |
+| Base   | `ggml-model.bin`      | 148 MB  |
+| Small  | `ggml-model.bin`      | 488 MB  |
+| Medium | `ggml-model-q5_0.bin` | 539 MB  |
+| Large  | `ggml-model-q5_0.bin` | 1.08 GB |
+
+Models are downloaded from `https://huggingface.co/KBLab/kb-whisper-<size>/resolve/main/<file>`, checked against the
+size and SHA-256 that Hugging Face lists (in `WhisperLogic.swift`), and moved into
+`~/Library/Application Support/MeetingRecorder/Models/` (`<data-dir>/Models` with `--data-dir`) as
+`kb-whisper-<size>[-q5_0].bin`. The meeting's `transcript_engine` is that name, e.g. `kb-whisper-medium-q5_0`. Stems are
+transcribed one by one with the same model, so speakers and echo removal work as with Apple, and the menu shows the
+progress. Bracketed sound labels such as `[MUSIK]` are dropped.
+
+whisper.cpp comes from the prebuilt `whisper-b5130-xcframework.zip` release (the build of v1.9.4) as a SwiftPM
+`binaryTarget` pinned by checksum. It is a dynamic, universal framework; `build.sh` copies it into
+`Contents/Frameworks` and signs it. `test.sh` compiles `WhisperLogic.swift` only; `WhisperEngine.swift` is behind
+`#if canImport(whisper)`, so the `swiftc` fallback builds without KB-Whisper. To try a model headlessly without changing
+the saved choice, pass it as an argument default:
+
+    .build/debug/MeetingRecorder --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny
+
 Settings… (Cmd-, in the menu bar menu, the app menu and the window's "…" menu) holds the default meeting language, each
 language's speech model (installed, downloading with progress, not downloaded, or unavailable, with Download and Remove;
 Remove releases the app's reservation so macOS may delete the model) and the Apple Intelligence status for summaries.

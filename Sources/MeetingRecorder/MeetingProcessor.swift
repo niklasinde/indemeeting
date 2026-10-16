@@ -12,8 +12,10 @@ enum MeetingPipeline {
     static func run(_ audio: URL, language: MeetingLanguage, store: MeetingStore,
                     progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         try await recordingFailure(of: audio, in: store) {
-            await progress(.transcribing)
-            let transcript = try await Transcriber.transcribeMeeting(audio, language: language)
+            await progress(.transcribing())
+            let transcript = try await Transcriber.transcribeMeeting(audio, language: language) { fraction in
+                Task { @MainActor in progress(.transcribing(progress: fraction)) }
+            }
             try store.saveTranscript(audio.lastPathComponent, segments: transcript.segments, language: language, engine: transcript.engine)
             return try await summarise(audio, segments: transcript.segments, language: language, store: store, progress: progress)
         }

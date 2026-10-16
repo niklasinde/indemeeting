@@ -16,10 +16,12 @@ enum AppPaths {
                 .appendingPathComponent("MeetingRecordings", isDirectory: true)
     }
 
-    static var database: URL {
-        (dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("MeetingRecorder", isDirectory: true))
-            .appendingPathComponent("meetings.sqlite")
+    static var database: URL { support.appendingPathComponent("meetings.sqlite") }
+    static var models: URL { support.appendingPathComponent("Models", isDirectory: true) }
+
+    private static var support: URL {
+        dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MeetingRecorder", isDirectory: true)
     }
 }
 

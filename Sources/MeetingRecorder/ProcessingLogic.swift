@@ -199,12 +199,13 @@ extension ProcessingLogic {
 }
 
 enum ProcessingStage: Equatable {
-    case transcribing
+    case transcribing(progress: Double? = nil)
     case summarising(part: Int, of: Int)
     case combining
 
     func text(for name: String) -> String {
         switch self {
+        case .transcribing(let progress?): return "Transcribing \(name)\u{2026} \(ProcessingLogic.percent(progress))"
         case .transcribing: return "Transcribing \(name)\u{2026}"
         case .summarising(let part, let total) where total > 1: return "Summarising \(name)\u{2026} (\(part)/\(total))"
         case .summarising: return "Summarising \(name)\u{2026}"
@@ -214,6 +215,8 @@ enum ProcessingStage: Equatable {
 }
 
 enum ProcessingLogic {
+    static func percent(_ fraction: Double) -> String { "\(Int((fraction * 100).rounded()))%" }
+
     static func timestamp(_ seconds: TimeInterval) -> String {
         "[\(RecordingLogic.elapsedText(max(seconds, 0)))]"
     }

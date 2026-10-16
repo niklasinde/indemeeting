@@ -3,17 +3,22 @@ import AVFoundation
 final class PCMNormalizer {
     static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
 
+    private let format: AVAudioFormat
     private var converter: AVAudioConverter?
+
+    init(format: AVAudioFormat = PCMNormalizer.format) {
+        self.format = format
+    }
 
     func samples(from buffer: AVAudioPCMBuffer) -> [Float] {
         if converter?.inputFormat != buffer.format {
-            converter = AVAudioConverter(from: buffer.format, to: Self.format)
+            converter = AVAudioConverter(from: buffer.format, to: format)
             converter?.downmix = true
         }
         guard let converter else { return [] }
-        let ratio = Self.format.sampleRate / buffer.format.sampleRate
+        let ratio = format.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-        guard let output = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: capacity) else { return [] }
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return [] }
 
         var consumed = false
         var error: NSError?

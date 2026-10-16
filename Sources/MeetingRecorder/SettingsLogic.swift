@@ -25,7 +25,7 @@ enum SpeechModelStatus: Equatable {
         case .checking: return "Checking\u{2026}"
         case .unsupported: return "Not available on this Mac"
         case .notDownloaded: return "Not downloaded"
-        case .downloading(let fraction?): return "Downloading\u{2026} \(Int((fraction * 100).rounded()))%"
+        case .downloading(let fraction?): return "Downloading\u{2026} \(ProcessingLogic.percent(fraction))"
         case .downloading(nil): return "Downloading\u{2026}"
         case .installed: return "Installed"
         case .failed(let message): return "Download failed \u{2014} \(message)"

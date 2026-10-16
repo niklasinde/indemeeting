@@ -8,10 +8,12 @@ final class SettingsWindow {
     static let shared = SettingsWindow()
 
     private let models = SpeechModels()
-    private lazy var window = AppWindow { [models] in Self.makeWindow(SettingsView(models: models)) }
+    private let whisper = WhisperModels()
+    private lazy var window = AppWindow { [models, whisper] in Self.makeWindow(SettingsView(models: models, whisper: whisper)) }
 
     func show() {
         models.refresh()
+        whisper.refresh()
         window.show()
     }
 
@@ -80,9 +82,78 @@ final class SpeechModels: ObservableObject {
     }
 }
 
+/// The downloaded KB-Whisper models, and the downloads in progress.
+@MainActor
+final class WhisperModels: ObservableObject {
+    @Published var statuses: [WhisperModel: SpeechModelStatus] = [:]
+    private var downloads: [WhisperModel: (task: URLSessionDownloadTask, progress: AnyCancellable)] = [:]
+
+    var installed: [WhisperModel] { WhisperModel.allCases.filter { status(of: $0) == .installed } }
+
+    func status(of model: WhisperModel) -> SpeechModelStatus { statuses[model] ?? .notDownloaded }
+
+    func refresh() {
+        for model in WhisperModel.allCases where downloads[model] == nil {
+            if model.isInstalled() {
+                statuses[model] = .installed
+            } else if case .failed = statuses[model] {
+                continue
+            } else {
+                statuses[model] = .notDownloaded
+            }
+        }
+    }
+
+    func download(_ model: WhisperModel) {
+        statuses[model] = .downloading(0)
+        let task = URLSession.shared.downloadTask(with: model.remoteURL) { [weak self] file, response, error in
+            let result = Result { try Self.install(model, file: file, response: response, error: error) }
+            Task { @MainActor in self?.finish(model, result) }
+        }
+        let progress = task.progress.publisher(for: \.fractionCompleted)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] fraction in
+                if self?.downloads[model] != nil { self?.statuses[model] = .downloading(fraction) }
+            }
+        downloads[model] = (task, progress)
+        task.resume()
+    }
+
+    func cancel(_ model: WhisperModel) {
+        downloads[model]?.task.cancel()
+    }
+
+    func remove(_ model: WhisperModel) {
+        try? FileManager.default.removeItem(at: model.url())
+        statuses[model] = .notDownloaded
+    }
+
+    private func finish(_ model: WhisperModel, _ result: Result<Void, Error>) {
+        downloads[model] = nil
+        switch result {
+        case .success: statuses[model] = .installed
+        case .failure(let error as URLError) where error.code == .cancelled: statuses[model] = .notDownloaded
+        case .failure(let error): statuses[model] = .failed(error.localizedDescription)
+        }
+    }
+
+    /// Moves a finished download into the models folder once it is the expected file.
+    private nonisolated static func install(_ model: WhisperModel, file: URL?, response: URLResponse?, error: Error?) throws {
+        if let error { throw error }
+        if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { throw WhisperModelError.http(status) }
+        guard let file else { throw URLError(.cannotOpenFile) }
+        try model.verify(file)
+        try FileManager.default.createDirectory(at: AppPaths.models, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: model.url())
+        try FileManager.default.moveItem(at: file, to: model.url())
+    }
+}
+
 struct SettingsView: View {
     @ObservedObject var models: SpeechModels
+    @ObservedObject var whisper: WhisperModels
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
+    @AppStorage(TranscriptionEngine.storageKey(for: .swedish)) private var swedishEngine = TranscriptionEngine.appleValue
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
@@ -104,6 +175,22 @@ struct SettingsView: View {
                     speechRow(language)
                 }
             }
+            section("KB-Whisper", footer: "Swedish speech models from the National Library of Sweden, downloaded from Hugging Face "
+                    + "and run on this Mac with whisper.cpp. Larger models are more accurate and slower.") {
+                row("Transcribe \(MeetingLanguage.swedish.displayName) with") {
+                    Picker("Transcribe \(MeetingLanguage.swedish.displayName) with", selection: swedishEngineChoice) {
+                        ForEach(TranscriptionEngine.choices(for: .swedish, installed: whisper.installed), id: \.self) {
+                            Text($0.displayName).tag($0)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                ForEach(WhisperModel.allCases) { model in
+                    Divider().padding(.leading, 14)
+                    whisperRow(model)
+                }
+            }
             section("Summaries", footer: nil) {
                 row("Apple Intelligence", detail: models.summaryReason?.sentence ?? "Ready \u{2014} meetings are summarised on this Mac") {
                     if let reason = models.summaryReason, let settings = SummaryNotice(reason).settings {
@@ -117,7 +204,10 @@ struct SettingsView: View {
         .padding(24)
         .frame(width: 520)
         .fixedSize(horizontal: false, vertical: true)
-        .onReceive(poll) { _ in models.refresh() }
+        .onReceive(poll) { _ in
+            models.refresh()
+            whisper.refresh()
+        }
         .onChange(of: language) { models.refresh() }
     }
 
@@ -134,6 +224,29 @@ struct SettingsView: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
             default:
                 if status.canDownload { Button("Download") { models.download(language) } }
+            }
+        }
+    }
+
+    private var swedishEngineChoice: Binding<TranscriptionEngine> {
+        Binding(get: { TranscriptionEngine.selected(for: .swedish, stored: swedishEngine, installed: whisper.installed) },
+                set: { swedishEngine = $0.storedValue })
+    }
+
+    private func whisperRow(_ model: WhisperModel) -> some View {
+        let status = whisper.status(of: model)
+        return row(model.displayName, detail: "\(model.sizeText) \u{00B7} \(status.text)") {
+            switch status {
+            case .downloading(let fraction):
+                ProgressView(value: fraction ?? 0).frame(width: 120)
+                Button { whisper.cancel(model) } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Cancel the download")
+            case .installed:
+                Button("Remove") { whisper.remove(model) }
+            default:
+                Button("Download") { whisper.download(model) }
             }
         }
     }

@@ -25,11 +25,12 @@ fi
 
 if swift build -c release $ARCHS; then
     BIN="$(swift build -c release $ARCHS --show-bin-path)/MeetingRecorder"
+    WHISPER="$(dirname "$BIN")/whisper.framework"
 elif [ $RELEASE = 1 ]; then
     echo "error: swift build failed"
     exit 1
 else
-    echo "swift build failed, falling back to swiftc"
+    echo "swift build failed, falling back to swiftc (without KB-Whisper)"
     BIN=.build/swiftc/MeetingRecorder
     mkdir -p "$(dirname "$BIN")"
     swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/MeetingRecorder/*.swift -o "$BIN"
@@ -38,6 +39,11 @@ fi
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MeetingRecorder"
+if [ -n "${WHISPER:-}" ]; then
+    mkdir -p "$APP/Contents/Frameworks"
+    ditto "$WHISPER" "$APP/Contents/Frameworks/whisper.framework"
+    codesign --force --options runtime --sign "$SIGN" "$APP/Contents/Frameworks/whisper.framework"
+fi
 cp Info.plist "$APP/Contents/Info.plist"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 if BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null)"; then

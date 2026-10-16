@@ -85,18 +85,24 @@ enum PreviewRenderer {
     private static func renderSettings(to output: URL) async {
         let models = SpeechModels()
         models.refresh()
+        let whisper = WhisperModels()
+        whisper.refresh()
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            await saveSettings(models, appearance: appearance, to: output.appendingPathComponent(
+            await saveSettings(models, whisper, appearance: appearance, to: output.appendingPathComponent(
                 "settings-\(appearance == .aqua ? "light" : "dark").png"))
         }
         let downloading = SpeechModels()
         downloading.statuses = [.swedish: .downloading(0.42), .english: .notDownloaded]
-        await saveSettings(downloading, appearance: .aqua, to: output.appendingPathComponent("settings-downloading-light.png"))
+        let whisperDownloading = WhisperModels()
+        whisperDownloading.statuses = [.tiny: .installed, .small: .downloading(0.42), .large: .failed("The network connection was lost.")]
+        await saveSettings(downloading, whisperDownloading, appearance: .aqua,
+                           to: output.appendingPathComponent("settings-downloading-light.png"))
     }
 
     @MainActor
-    private static func saveSettings(_ models: SpeechModels, appearance: NSAppearance.Name, to url: URL) async {
-        let window = SettingsWindow.makeWindow(SettingsView(models: models))
+    private static func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, appearance: NSAppearance.Name,
+                                     to url: URL) async {
+        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper))
         window.appearance = NSAppearance(named: appearance)
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
