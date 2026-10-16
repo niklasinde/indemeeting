@@ -24,7 +24,14 @@ enum Summarizer {
 
     /// Whether Apple Intelligence is off or still downloading, so meetings can be summarised once it is ready.
     static var isWaitingForModel: Bool {
-        [.modelNotReady, .appleIntelligenceOff].contains(unavailableReason(for: .current))
+        switch unavailableReason(for: .current) {
+        case .modelNotReady, .appleIntelligenceOff, .languageMismatch: return true
+        default: return false
+        }
+    }
+
+    static var siriLanguage: String? {
+        UserDefaults(suiteName: "com.apple.assistant.backedup")?.string(forKey: "Session Language")
     }
 
     /// Returns once Apple Intelligence is available, watching the model and checking every minute in case no change
@@ -57,7 +64,8 @@ private struct OnDeviceSummarizer {
         case .available: return model.supportsLocale(language.locale) ? nil : .unsupportedLanguage(language)
         case .unavailable(.appleIntelligenceNotEnabled): return .appleIntelligenceOff
         case .unavailable(.deviceNotEligible): return .deviceNotEligible
-        case .unavailable: return .modelNotReady
+        case .unavailable:
+            return .notReady(macLanguage: Locale.preferredLanguages.first, siriLanguage: Summarizer.siriLanguage)
         }
     }
 

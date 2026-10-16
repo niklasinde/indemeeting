@@ -94,6 +94,7 @@ enum SummaryUnavailable: Error, Equatable {
     case appleIntelligenceOff
     case deviceNotEligible
     case modelNotReady
+    case languageMismatch(mac: String, siri: String)
     case unsupportedLanguage(MeetingLanguage)
     case requiresMacOS26
 
@@ -101,7 +102,8 @@ enum SummaryUnavailable: Error, Equatable {
         switch self {
         case .appleIntelligenceOff: return "Apple Intelligence is turned off"
         case .deviceNotEligible: return "this Mac can\u{2019}t run Apple Intelligence"
-        case .modelNotReady: return "Apple Intelligence is still downloading, or your Mac and Siri languages don\u{2019}t match"
+        case .modelNotReady: return "Apple Intelligence is still downloading"
+        case .languageMismatch: return "your Mac and Siri languages don\u{2019}t match"
         case .unsupportedLanguage(let language): return "Apple Intelligence doesn\u{2019}t support \(language.englishName)"
         case .requiresMacOS26: return "this needs macOS 26 with Apple Intelligence"
         }
@@ -110,14 +112,37 @@ enum SummaryUnavailable: Error, Equatable {
     var message: String { (self == .modelNotReady ? "No summary yet" : "No summary") + " \u{2014} " + reason }
 
     var sentence: String { reason.prefix(1).uppercased() + reason.dropFirst() }
+
+    /// Apple Intelligence only runs when the Mac's first language matches Siri's, so a mismatch explains a model
+    /// that is not ready.
+    static func notReady(macLanguage: String?, siriLanguage: String?) -> SummaryUnavailable {
+        guard let macLanguage, let siriLanguage else { return .modelNotReady }
+        let mac = Locale.Language(identifier: macLanguage), siri = Locale.Language(identifier: siriLanguage)
+        let sameRegion = mac.region == nil || siri.region == nil || mac.region == siri.region
+        return mac.languageCode == siri.languageCode && sameRegion ? .modelNotReady
+            : .languageMismatch(mac: macLanguage, siri: siriLanguage)
+    }
+}
+
+enum SettingsLink: Equatable {
+    case appleIntelligence
+    case languageAndRegion
+
+    var title: String { self == .languageAndRegion ? "Open Language & Region" : "Open Settings" }
+
+    var path: String {
+        self == .languageAndRegion ? "com.apple.Localization-Settings.extension" : "com.apple.Siri-Settings.extension"
+    }
 }
 
 struct SummaryNotice: Equatable {
     let title: String
     let message: String
     var details: String?
-    var showsSettings = false
+    var settings: SettingsLink?
     var canSummarise = true
+
+    var showsSettings: Bool { settings != nil }
 
     static func make(status: ProcessingStatus?, statusMessage: String?, hasTranscript: Bool,
                      currentReason: SummaryUnavailable?) -> SummaryNotice {
@@ -137,14 +162,22 @@ extension SummaryNotice {
         title = reason.message
         switch reason {
         case .modelNotReady:
-            message = "If the languages differ, make them the same in System Settings. Otherwise your transcript is summarised by itself once the download finishes."
-            showsSettings = true
+            message = "Your transcript is summarised by itself once the download finishes."
+            settings = .appleIntelligence
+        case .languageMismatch(let mac, let siri):
+            let english = Locale(identifier: "en")
+            func name(_ identifier: String) -> String { english.localizedString(forIdentifier: identifier) ?? identifier }
+            let region = Locale.Language(identifier: mac).region.flatMap { english.localizedString(forRegionCode: $0.identifier) }
+            message = "Your Mac is set to \(name(mac)) and Siri to \(name(siri)). Apple Intelligence needs them to be the same. "
+                + "In System Settings \u{2192} General \u{2192} Language & Region, add \(name(siri)) and move it to the top"
+                + (region.map { " (keep Region: \($0))" } ?? "") + ", then restart."
+            settings = .languageAndRegion
         case .appleIntelligenceOff:
             message = "Turn it on in System Settings, then click Summarise."
-            showsSettings = true
+            settings = .appleIntelligence
         case .unsupportedLanguage:
             message = "Change the Apple Intelligence language in System Settings, then click Summarise."
-            showsSettings = true
+            settings = .appleIntelligence
         case .deviceNotEligible, .requiresMacOS26:
             message = "The transcript and audio are still here."
             canSummarise = false

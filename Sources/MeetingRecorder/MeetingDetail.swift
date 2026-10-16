@@ -319,7 +319,7 @@ struct EmptyState: View {
                 .padding(.top, 6)
             } else if notice.showsSettings || notice.canSummarise {
                 HStack(spacing: 8) {
-                    if notice.showsSettings { Button("Open Settings") { Permissions.openAppleIntelligenceSettings() } }
+                    if let settings = notice.settings { Button(settings.title) { Permissions.open(settings) } }
                     if notice.canSummarise { Button("Summarise") { processor.summarise(entry.audio) } }
                 }
                 .padding(.top, 6)

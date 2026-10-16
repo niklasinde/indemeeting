@@ -477,7 +477,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(markdown.contains("No summary \u{2014} Apple Intelligence is turned off"), "reason")
         check(markdown.contains("`Meeting-x.transcript.md`"), "points to transcript")
         check(SummaryUnavailable.unsupportedLanguage(.swedish).message.contains("Swedish"), "language named")
-        check(SummaryUnavailable.modelNotReady.message == "No summary yet \u{2014} Apple Intelligence is still downloading, or your Mac and Siri languages don\u{2019}t match", "downloading")
+        check(SummaryUnavailable.modelNotReady.message == "No summary yet \u{2014} Apple Intelligence is still downloading", "downloading")
         check(SummaryUnavailable.deviceNotEligible.sentence == "This Mac can\u{2019}t run Apple Intelligence", "sentence")
     }),
 
@@ -496,8 +496,9 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
             .make(status: status, statusMessage: message, hasTranscript: true, currentReason: reason)
         }
         let downloading = notice(.unavailable, reason: .modelNotReady)
-        check(downloading.title == "No summary yet \u{2014} Apple Intelligence is still downloading, or your Mac and Siri languages don\u{2019}t match", downloading.title)
-        check(downloading.canSummarise && downloading.showsSettings, "summarise and open settings")
+        check(downloading.title == "No summary yet \u{2014} Apple Intelligence is still downloading", downloading.title)
+        check(downloading.canSummarise && downloading.settings == .appleIntelligence && !downloading.message.contains("language"),
+              "summarise and open settings")
         let off = notice(.unavailable, reason: .appleIntelligenceOff)
         check(off.title == "No summary \u{2014} Apple Intelligence is turned off" && off.showsSettings && off.canSummarise, off.title)
         let ineligible = notice(.unavailable, reason: .deviceNotEligible)
@@ -508,6 +509,22 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(failed.title == "No summary \u{2014} summarising failed" && failed.details == "The model refused."
               && failed.canSummarise, failed.title)
         check(notice(.summarised, reason: .appleIntelligenceOff).title == "No summary yet", "reason only for unavailable")
+    }),
+
+    ("a model that is not ready names the Mac and Siri languages when they differ", {
+        let mismatch = SummaryUnavailable.notReady(macLanguage: "en-SE", siriLanguage: "en-US")
+        check(mismatch == .languageMismatch(mac: "en-SE", siri: "en-US"), "\(mismatch)")
+        let notice = SummaryNotice(mismatch)
+        check(notice.title == "No summary \u{2014} your Mac and Siri languages don\u{2019}t match", notice.title)
+        check(notice.message == "Your Mac is set to English (Sweden) and Siri to English (United States). Apple Intelligence "
+              + "needs them to be the same. In System Settings \u{2192} General \u{2192} Language & Region, add English "
+              + "(United States) and move it to the top (keep Region: Sweden), then restart.", notice.message)
+        check(notice.settings == .languageAndRegion && notice.settings?.title == "Open Language & Region" && notice.canSummarise,
+              "language settings")
+        check(SettingsLink.languageAndRegion.path == "com.apple.Localization-Settings.extension", "pane")
+        check(SummaryUnavailable.notReady(macLanguage: "en-US", siriLanguage: "en_US") == .modelNotReady, "same language")
+        check(SummaryUnavailable.notReady(macLanguage: "sv-SE", siriLanguage: nil) == .modelNotReady, "unknown Siri")
+        check(SummaryUnavailable.notReady(macLanguage: "sv-SE", siriLanguage: "en-SE") != .modelNotReady, "other language")
     }),
 
     ("speech model status follows the asset inventory", {
