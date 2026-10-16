@@ -17,9 +17,6 @@ enum Summarizer {
 
 #if canImport(FoundationModels)
 private struct OnDeviceSummarizer {
-    private static let reservedTokens = 2200
-    private static let charactersPerToken = 3
-
     let language: MeetingLanguage
     private let model = SystemLanguageModel.default
 
@@ -34,9 +31,7 @@ private struct OnDeviceSummarizer {
         guard model.supportsLocale(language.locale) else { throw SummaryUnavailable.unsupportedLanguage(language) }
     }
 
-    private var maxCharacters: Int {
-        max(1500, (model.contextSize - Self.reservedTokens) * Self.charactersPerToken)
-    }
+    private var maxCharacters: Int { ProcessingLogic.chunkCharacters(contextSize: model.contextSize) }
 
     func summarise(_ lines: [String], progress: @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary {
         let parts = ProcessingLogic.chunks(lines, maxCharacters: maxCharacters)

@@ -417,6 +417,11 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingLogic.transcriptURL(for: audio) != audio && ProcessingLogic.summaryURL(for: audio) != audio, "never the audio")
     }),
 
+    ("chunk size follows the model context and falls back when it is unknown", {
+        check(ProcessingLogic.chunkCharacters(contextSize: 4096) == 5688, "macOS 26 window")
+        check(ProcessingLogic.chunkCharacters(contextSize: 8192) == 17976, "larger window")
+        check(ProcessingLogic.chunkCharacters(contextSize: 0) == 5688, "not ready reports 0")
+    }),
     ("chunks keep lines whole and respect the limit", {
         let lines = (1...10).map { "[00:00:0\($0 % 10)] " + String(repeating: "a", count: 20) }
         let chunks = ProcessingLogic.chunks(lines, maxCharacters: 100)

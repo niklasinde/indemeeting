@@ -104,7 +104,7 @@ enum SummaryUnavailable: Error, Equatable {
         switch self {
         case .appleIntelligenceOff: return "No summary: Apple Intelligence is off (\(Self.settings))"
         case .deviceNotEligible: return "No summary: this Mac does not support Apple Intelligence"
-        case .modelNotReady: return "No summary: Apple Intelligence model not ready yet"
+        case .modelNotReady: return "No summary: Apple Intelligence model is still downloading"
         case .unsupportedLanguage(let language): return "No summary: Apple Intelligence does not support \(language.englishName)"
         case .requiresMacOS26: return "No summary: needs macOS 26 with Apple Intelligence"
         }
@@ -211,6 +211,14 @@ enum ProcessingLogic {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
+    }
+
+    /// Characters of transcript per model call, leaving room for instructions, schema and the reply.
+    /// A model that is not ready reports a context size of 0, so fall back to the macOS 26 window.
+    static func chunkCharacters(contextSize: Int) -> Int {
+        let reservedTokens = 2200, charactersPerToken = 3
+        let tokens = contextSize > reservedTokens ? contextSize : 4096
+        return max(1500, (tokens - reservedTokens) * charactersPerToken)
     }
 
     static func chunks(_ lines: [String], maxCharacters: Int) -> [String] {
