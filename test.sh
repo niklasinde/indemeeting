@@ -15,8 +15,11 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/LibraryLogic.swift \
     Sources/MeetingRecorder/SQLiteDatabase.swift \
     Sources/MeetingRecorder/MeetingStore.swift \
+    Sources/MeetingRecorder/ActivityLogic.swift \
+    Sources/MeetingRecorder/ActivityStore.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
+    Tests/MeetingRecorderTests/ActivityTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

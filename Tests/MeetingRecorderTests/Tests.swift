@@ -78,7 +78,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests + activityTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {

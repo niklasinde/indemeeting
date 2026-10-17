@@ -77,6 +77,7 @@ struct MeetingContent: Equatable {
 /// All meeting data except the audio. Every call runs on one serial queue; writes post `didChange` on the main queue.
 final class MeetingStore: @unchecked Sendable {
     static let didChange = Notification.Name("MeetingStoreDidChange")
+    static let activityDidChange = Notification.Name("ActivityStoreDidChange")
 
     static let migrations = [
         """
@@ -150,6 +151,47 @@ final class MeetingStore: @unchecked Sendable {
             updated REAL NOT NULL
         );
         """,
+        """
+        CREATE TABLE projects (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            color TEXT NOT NULL
+        );
+        CREATE TABLE project_rules (
+            id INTEGER PRIMARY KEY,
+            project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            field TEXT NOT NULL,
+            pattern TEXT NOT NULL
+        );
+        CREATE TABLE activity_blocks (
+            id INTEGER PRIMARY KEY,
+            start REAL NOT NULL,
+            end REAL NOT NULL,
+            app_bundle TEXT,
+            app_name TEXT,
+            window_title TEXT,
+            url TEXT,
+            repo TEXT,
+            branch TEXT,
+            ticket TEXT,
+            claude_session TEXT,
+            claude_title TEXT,
+            idle INTEGER NOT NULL DEFAULT 0,
+            project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+            typed_excerpt TEXT,
+            category TEXT,
+            ai_description TEXT,
+            ai_project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL
+        );
+        CREATE INDEX activity_blocks_start ON activity_blocks(start);
+        CREATE TABLE activity_ai_cache (
+            key TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            description TEXT,
+            project TEXT,
+            updated REAL NOT NULL
+        );
+        """,
     ]
 
     private static let meetingColumns = """
@@ -175,7 +217,7 @@ final class MeetingStore: @unchecked Sendable {
 
     var isAvailable: Bool { openError == nil }
 
-    private var db: SQLiteDatabase {
+    var db: SQLiteDatabase {
         get throws {
             guard let connection else { throw openError ?? SQLiteError(message: "not open") }
             return connection
@@ -384,13 +426,13 @@ final class MeetingStore: @unchecked Sendable {
 
     // MARK: Internals (on the queue)
 
-    private func read<T>(_ body: () throws -> T) throws -> T {
+    func read<T>(_ body: () throws -> T) throws -> T {
         try queue.sync(execute: body)
     }
 
-    private func write<T>(_ body: () throws -> T) throws -> T {
+    func write<T>(notify: Notification.Name = MeetingStore.didChange, _ body: () throws -> T) throws -> T {
         let result = try queue.sync { try db.transaction(body) }
-        DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didChange, object: self) }
+        DispatchQueue.main.async { NotificationCenter.default.post(name: notify, object: self) }
         return result
     }
 

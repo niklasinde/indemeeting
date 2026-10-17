@@ -114,7 +114,7 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
         try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text, speaker) VALUES (1, 0, 3, 'Hej.', 'others')")
         let store = try MeetingStore.open(at: url)
-        check(try store.schemaVersion() == 4, "migrated to 4")
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
         let content = try store.content(of: "Meeting-2026-10-14-0900.m4a")
         check(content?.segments == [TranscriptSegment(start: 3, text: "Hej.", speaker: .others)] && content?.names == [:], "kept")
         check(try store.knownVoices().isEmpty, "no voices")
