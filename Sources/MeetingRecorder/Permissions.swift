@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import ApplicationServices
 import UserNotifications
 
 enum PermissionError: LocalizedError {
@@ -39,6 +40,14 @@ enum Permissions {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
+    /// Accessibility, for reading window titles. `request` shows the system prompt (once per app signature).
+    static var accessibilityGranted: Bool { AXIsProcessTrusted() }
+
+    static func requestAccessibility() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        _ = AXIsProcessTrustedWithOptions(options)
+    }
+
     static var notificationStatus: UNAuthorizationStatus {
         get async { await UNUserNotificationCenter.current().notificationSettings().authorizationStatus }
     }
@@ -62,6 +71,8 @@ enum Permissions {
     static func open(_ link: SettingsLink) { openSettings(link.path) }
     static func openMicrophoneSettings() { openPrivacySettings(pane: "Privacy_Microphone") }
     static func openSystemAudioSettings() { openPrivacySettings(pane: "Privacy_ScreenCapture") }
+    static func openAccessibilitySettings() { openPrivacySettings(pane: "Privacy_Accessibility") }
+    static func openAutomationSettings() { openPrivacySettings(pane: "Privacy_Automation") }
 }
 
 private enum TCC {

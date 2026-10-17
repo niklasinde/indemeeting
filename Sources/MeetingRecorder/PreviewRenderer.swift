@@ -31,7 +31,8 @@ enum PreviewRenderer {
             FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
-        let (library, window) = makeWindow(store: store, folder: folder)
+        try? SampleActivity.write(to: store, now: Date())
+        let (library, activity, window) = makeWindow(store: store, folder: folder)
         if let standup = library.recordings.first {
             try? store.saveTranscript(standup.fileName, segments: SampleLibrary.labelledTranscript, language: .swedish,
                                       engine: "DictationTranscriber", speakers: [SpeakerProfile(speaker: .numbered(2), name: "Elin")])
@@ -53,10 +54,21 @@ enum PreviewRenderer {
                     save(window, to: output.appendingPathComponent("\(shot.name)-\(mode).png"))
                 }
             }
+            library.showsActivity = true
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                let mode = appearance == .aqua ? "light" : "dark"
+                activity.mode = .day
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                save(window, to: output.appendingPathComponent("activity-day-\(mode).png"))
+                activity.mode = .week
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                save(window, to: output.appendingPathComponent("activity-week-\(mode).png"))
+            }
             window.orderOut(nil)
-            await renderSettings(to: output)
+            await renderSettings(to: output, store: store)
             let unavailable = MeetingStore.openDefault(at: URL(fileURLWithPath: "/dev/null/meetings.sqlite"))
-            let (brokenLibrary, brokenWindow) = makeWindow(store: unavailable, folder: folder)
+            let (brokenLibrary, _, brokenWindow) = makeWindow(store: unavailable, folder: folder)
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             brokenLibrary.selection = brokenLibrary.recordings.first?.id
             brokenLibrary.tab = .notes
@@ -69,20 +81,31 @@ enum PreviewRenderer {
     }
 
     @MainActor
-    private static func makeWindow(store: MeetingStore, folder: URL) -> (RecordingLibrary, NSWindow) {
+    private static func makeWindow(store: MeetingStore, folder: URL) -> (RecordingLibrary, ActivityModel, NSWindow) {
         let library = RecordingLibrary(store: store, folder: folder)
         library.start()
+        let activity = ActivityModel(store: store, tracker: ActivityTracker(store: store))
         let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
-                                                    library: library, playback: AudioPlayback()))
+                                                    library: library, activity: activity, playback: AudioPlayback()))
         window.appearance = NSAppearance(named: .aqua)
         window.setContentSize(NSSize(width: 1040, height: 760))
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
-        return (library, window)
+        return (library, activity, window)
     }
 
     @MainActor
-    private static func renderSettings(to output: URL) async {
+    private static func renderSettings(to output: URL, store: MeetingStore) async {
+        let projects = ActivityProjectsModel()
+        projects.store = store
+        projects.refresh()
+        let tracker = ActivityTracker(store: store)
+        UserDefaults.standard.set(SettingsTab.activity.rawValue, forKey: SettingsTab.storageKey)
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            await saveSettings(SpeechModels(), WhisperModels(), SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
+                               to: output.appendingPathComponent("settings-activity-\(appearance == .aqua ? "light" : "dark").png"))
+        }
+        UserDefaults.standard.set(SettingsTab.meetings.rawValue, forKey: SettingsTab.storageKey)
         let models = SpeechModels()
         models.refresh()
         let whisper = WhisperModels()
@@ -93,7 +116,7 @@ enum PreviewRenderer {
             KnownVoice(id: Int64($0.offset), name: $0.element, embedding: [], updated: Date(timeIntervalSinceNow: -86_400 * Double($0.offset)))
         }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            await saveSettings(models, whisper, speakers, appearance: appearance, to: output.appendingPathComponent(
+            await saveSettings(models, whisper, speakers, projects, tracker, appearance: appearance, to: output.appendingPathComponent(
                 "settings-\(appearance == .aqua ? "light" : "dark").png"))
         }
         let downloading = SpeechModels()
@@ -103,14 +126,15 @@ enum PreviewRenderer {
         whisperDownloading.statuses = [tiny: .installed, small: .downloading(0.42), large: .failed("The network connection was lost.")]
         let speakersDownloading = SpeakerRecognitionModels()
         speakersDownloading.status = .downloading(0.6)
-        await saveSettings(downloading, whisperDownloading, speakersDownloading, appearance: .aqua,
+        await saveSettings(downloading, whisperDownloading, speakersDownloading, projects, tracker, appearance: .aqua,
                            to: output.appendingPathComponent("settings-downloading-light.png"))
     }
 
     @MainActor
     private static func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, _ speakers: SpeakerRecognitionModels,
+                                     _ projects: ActivityProjectsModel, _ tracker: ActivityTracker,
                                      appearance: NSAppearance.Name, to url: URL) async {
-        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers))
+        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers, projects: projects, tracker: tracker))
         window.appearance = NSAppearance(named: appearance)
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)

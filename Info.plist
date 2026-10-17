@@ -16,6 +16,8 @@
     <string>Meeting Recorder records your microphone together with system audio.</string>
     <key>NSAudioCaptureUsageDescription</key>
     <string>Meeting Recorder records system audio so the other meeting participants are in the recording.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Meeting Recorder asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Meeting Recorder transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>

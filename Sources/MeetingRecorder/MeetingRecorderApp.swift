@@ -18,6 +18,12 @@ enum Main {
                                                store: store)
         }
         if CommandLine.arguments.contains("--download-speaker-model") { downloadSpeakerModel() }
+        if let hours = ActivityLogic.contextArguments(CommandLine.arguments) { printContext(hours: hours) }
+        #if DEBUG
+        if let index = CommandLine.arguments.firstIndex(of: "--simulate-activity"), index + 1 < CommandLine.arguments.count {
+            MainActor.assumeIsolated { ActivitySimulation.run(URL(fileURLWithPath: CommandLine.arguments[index + 1])) }
+        }
+        #endif
         if let job = RecordingLogic.recordArguments(CommandLine.arguments) {
             recordFromCommandLine(job)
         }
@@ -36,6 +42,24 @@ enum Main {
             }
         }
         dispatchMain()
+    }
+
+    /// `--context [hours]`: prints a Markdown summary of the last hours of activity and meetings, then exits.
+    private static func printContext(hours: Double) -> Never {
+        let store = MeetingStore.openDefault()
+        if let error = store.openError {
+            FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
+        let range = Date().addingTimeInterval(-hours * 3600)..<Date()
+        do {
+            print(ActivityLogic.contextMarkdown(blocks: try store.blocks(in: range), meetings: try store.meetingLines(in: range), range: range,
+                                                rules: try store.rules(), projects: try store.projects()), terminator: "")
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
+            exit(1)
+        }
     }
 
     private static func recordFromCommandLine(_ job: RecordJob) -> Never {
@@ -84,7 +108,8 @@ struct MeetingRecorderApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuContent(recorder: delegate.recorder, processor: delegate.processor, databaseError: delegate.databaseError) {
+            MenuContent(recorder: delegate.recorder, processor: delegate.processor, tracker: delegate.tracker,
+                        databaseError: delegate.databaseError, openActivity: { delegate.mainWindow.showActivity() }) {
                 delegate.mainWindow.show(selecting: $0)
             }
         } label: {
@@ -101,6 +126,8 @@ struct MeetingRecorderApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let recorder = Recorder()
     private let store = MeetingStore.openDefault()
+    lazy var tracker = ActivityTracker(store: store)
+    private lazy var classifier = ActivityClassifier(store: store)
     private lazy var notifier: Notifier = Notifier(onRecord: { [recorder] in await recorder.start() },
                                          onOpen: { [weak self] in self?.mainWindow.show(selecting: $0) },
                                          onStop: { [weak self] in await self?.stopRecording() },
@@ -109,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var meetingWatcher = MeetingWatcher(recorder: recorder, notifier: notifier) { [weak self] in
         await self?.stopRecording()
     }
-    lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store)
+    lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store, tracker: tracker)
 
     var databaseError: DatabaseUnavailable? { store.openError }
     private var hotKey: GlobalHotKey?
@@ -124,9 +151,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.toggleRecording()
         }
         OnboardingWindow.shared.recorder = recorder
+        OnboardingWindow.shared.tracker = tracker
         SettingsWindow.shared.speakers.store = store
+        SettingsWindow.shared.projects.store = store
+        SettingsWindow.shared.tracker = tracker
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.summariseWhenModelReady()
+        tracker.start()
+        classifier.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        tracker.flush()
     }
 
     private func stopRecording() async {
@@ -166,7 +202,9 @@ struct MenuLabel: View {
 struct MenuContent: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
+    @ObservedObject var tracker: ActivityTracker
     let databaseError: DatabaseUnavailable?
+    let openActivity: () -> Void
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
@@ -216,6 +254,12 @@ struct MenuContent: View {
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
         Picker("Meeting language", selection: $language) {
             ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
+        }
+        Divider()
+        if let status = tracker.statusText {
+            Text(status)
+            Toggle("Pause activity tracking", isOn: Binding(get: { tracker.settings.paused }, set: { tracker.setPaused($0) }))
+            Button("Open Activity") { openActivity() }
         }
         Divider()
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)

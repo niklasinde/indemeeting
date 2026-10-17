@@ -10,9 +10,10 @@ final class OnboardingWindow {
     private static let seenKey = "onboardingShown"
 
     var recorder: Recorder?
+    var tracker: ActivityTracker?
     private lazy var window: AppWindow = AppWindow { [unowned self] in
         let window = NSWindow(contentViewController: NSHostingController(
-            rootView: OnboardingView(recorder: recorder!) { [weak self] in self?.window.close() }))
+            rootView: OnboardingView(recorder: recorder!, tracker: tracker!) { [weak self] in self?.window.close() }))
         window.title = "Meeting Recorder Setup"
         window.styleMask = [.titled, .closable]
         return window
@@ -25,7 +26,7 @@ final class OnboardingWindow {
     }
 
     func show() {
-        guard recorder != nil else { return }
+        guard recorder != nil, tracker != nil else { return }
         window.show()
     }
 }
@@ -71,6 +72,7 @@ final class OnboardingModel: ObservableObject {
 
 struct OnboardingView: View {
     @ObservedObject var recorder: Recorder
+    @ObservedObject var tracker: ActivityTracker
     let close: () -> Void
 
     @StateObject private var model = OnboardingModel()
@@ -128,6 +130,14 @@ struct OnboardingView: View {
                 }
             }
 
+            step("5. Activity tracking (Optional)", done: tracker.settings.enabled && tracker.accessibilityGranted, detail: activityDetail) {
+                if !tracker.settings.enabled {
+                    Button("Turn On Activity Tracking") { tracker.setEnabled(true) }
+                } else if !tracker.accessibilityGranted {
+                    Button("Open Accessibility Settings") { Permissions.openAccessibilitySettings() }
+                }
+            }
+
             Label("Look for the waveform icon at the top right of the menu bar. If the menu bar is full (or hidden behind the notch) it may not show. Quit a few menu-bar apps or use Setup & Help… from here to reopen this window.",
                   systemImage: "menubar.arrow.up.rectangle")
                 .font(.callout)
@@ -169,6 +179,15 @@ struct OnboardingView: View {
         if model.testFailed { return recorder.errorMessage ?? "The test recording failed." }
         if let testFile { return "Saved \(testFile.lastPathComponent)." }
         return systemAudio ? "Confirms that both microphone and system audio work." : "Confirms that the microphone works."
+    }
+
+    private var activityDetail: String {
+        if !tracker.settings.enabled {
+            return "Keeps a local log of the apps, windows, websites, repositories and Claude sessions you work in, for time reports "
+                + "and for giving Claude your recent context. Off until you turn it on; nothing is uploaded."
+        }
+        return tracker.accessibilityGranted ? "On. Pause it any time from the menu bar; browsers ask once for Automation access."
+            : "Allow Meeting Recorder under Privacy & Security \u{203A} Accessibility so it can read window titles."
     }
 
     private var systemAudioDetail: String {

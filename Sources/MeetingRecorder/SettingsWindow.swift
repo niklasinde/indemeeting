@@ -10,19 +10,26 @@ final class SettingsWindow {
     private let models = SpeechModels()
     private let whisper = WhisperModels()
     let speakers = SpeakerRecognitionModels()
-    private lazy var window = AppWindow { [models, whisper, speakers] in
-        Self.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers))
+    let projects = ActivityProjectsModel()
+    var tracker: ActivityTracker?
+    private lazy var window = AppWindow { [unowned self] in
+        Self.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers, projects: projects, tracker: tracker!))
     }
 
-    func show() {
+    func show(tab: SettingsTab? = nil) {
+        guard tracker != nil else { return }
         models.refresh()
         whisper.refresh()
         speakers.refresh()
+        projects.refresh()
+        if let tab { UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.storageKey) }
         window.show()
     }
 
     static func makeWindow(_ view: SettingsView) -> NSWindow {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        let controller = NSHostingController(rootView: view)
+        controller.sizingOptions = .preferredContentSize
+        let window = NSWindow(contentViewController: controller)
         window.title = "Settings"
         window.styleMask = [.titled, .closable]
         return window
@@ -203,15 +210,56 @@ final class SpeakerRecognitionModels: ObservableObject {
     }
 }
 
+enum SettingsTab: String, CaseIterable {
+    case meetings = "Meetings"
+    case activity = "Activity"
+
+    static let storageKey = "settingsTab"
+}
+
 struct SettingsView: View {
     @ObservedObject var models: SpeechModels
     @ObservedObject var whisper: WhisperModels
     @ObservedObject var speakers: SpeakerRecognitionModels
+    @ObservedObject var projects: ActivityProjectsModel
+    @ObservedObject var tracker: ActivityTracker
     @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
+    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+    /// Longer content scrolls, so the window fits a laptop screen.
+    static let maxContentHeight: CGFloat = 760
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            Picker("Settings", selection: $tab) {
+                ForEach(SettingsTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            ScrollView {
+                switch tab {
+                case .meetings: meetings
+                case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(maxHeight: Self.maxContentHeight)
+        }
+        .padding(24)
+        .frame(width: 520)
+        .fixedSize(horizontal: false, vertical: true)
+        .onReceive(poll) { _ in
+            models.refresh()
+            whisper.refresh()
+            speakers.refresh()
+            projects.refresh()
+        }
+        .onChange(of: language) { models.refresh() }
+    }
+
+    private var meetings: some View {
         VStack(alignment: .leading, spacing: 22) {
             section("Meeting language", footer: "New recordings are transcribed and summarised in this language.") {
                 row("Default language") {
@@ -275,15 +323,6 @@ struct SettingsView: View {
                 }
             }
         }
-        .padding(24)
-        .frame(width: 520)
-        .fixedSize(horizontal: false, vertical: true)
-        .onReceive(poll) { _ in
-            models.refresh()
-            whisper.refresh()
-            speakers.refresh()
-        }
-        .onChange(of: language) { models.refresh() }
     }
 
     private func speechRow(_ language: MeetingLanguage) -> some View {
@@ -330,12 +369,33 @@ struct SettingsView: View {
     }
 
     private func section<Content: View>(_ title: String, footer: String?, @ViewBuilder content: () -> Content) -> some View {
+        SettingsSection(title, footer: footer, content: content)
+    }
+
+    private func row<Trailing: View>(_ title: String, detail: String? = nil, @ViewBuilder trailing: () -> Trailing) -> some View {
+        SettingsRow(title, detail: detail, trailing: trailing)
+    }
+}
+
+/// A titled group of rows with an optional footer, as in System Settings.
+struct SettingsSection<Content: View>: View {
+    let title: String
+    let footer: String?
+    let content: Content
+
+    init(_ title: String, footer: String?, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.footer = footer
+        self.content = content()
+    }
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 4)
-            VStack(spacing: 0) { content() }
+            VStack(spacing: 0) { content }
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
                 .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.primary.opacity(0.08)))
             if let footer {
@@ -348,8 +408,20 @@ struct SettingsView: View {
         }
     }
 
-    private func row<Trailing: View>(_ title: String, detail: String? = nil,
-                                     @ViewBuilder trailing: () -> Trailing) -> some View {
+}
+
+struct SettingsRow<Trailing: View>: View {
+    let title: String
+    let detail: String?
+    let trailing: Trailing
+
+    init(_ title: String, detail: String? = nil, @ViewBuilder trailing: () -> Trailing) {
+        self.title = title
+        self.detail = detail
+        self.trailing = trailing()
+    }
+
+    var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -361,7 +433,7 @@ struct SettingsView: View {
                 }
             }
             Spacer(minLength: 12)
-            trailing()
+            trailing
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)

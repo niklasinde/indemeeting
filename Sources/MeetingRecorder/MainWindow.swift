@@ -6,12 +6,14 @@ import UniformTypeIdentifiers
 @MainActor
 final class MainWindow {
     let library: RecordingLibrary
+    let activity: ActivityModel
     private let playback = AudioPlayback()
     private let window: AppWindow
 
-    init(recorder: Recorder, processor: MeetingProcessor, store: MeetingStore) {
+    init(recorder: Recorder, processor: MeetingProcessor, store: MeetingStore, tracker: ActivityTracker) {
         library = RecordingLibrary(store: store)
-        let view = MainView(recorder: recorder, processor: processor, library: library, playback: playback)
+        activity = ActivityModel(store: store, tracker: tracker)
+        let view = MainView(recorder: recorder, processor: processor, library: library, activity: activity, playback: playback)
         window = AppWindow(onClose: { [playback] in playback.pause() }) { Self.makeWindow(view) }
     }
 
@@ -22,6 +24,12 @@ final class MainWindow {
             library.selection = meeting
             library.tab = .summary
         }
+        window.show()
+    }
+
+    func showActivity() {
+        library.start()
+        library.showsActivity = true
         window.show()
     }
 
@@ -51,6 +59,8 @@ final class RecordingLibrary: ObservableObject {
     @Published var query = "" { didSet { if oldValue != query { search() } } }
     @Published var tab = DetailTab.summary
     @Published var confirmingDelete = false
+    /// The Activity page is shown instead of the selected meeting.
+    @Published var showsActivity = false
     /// The meeting being recorded, listed before its file exists.
     @Published var recording: URL? { didSet { if oldValue != recording { rebuild() } } }
     @Published private var meetings: [String: Meeting] = [:]
@@ -69,7 +79,12 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var selected: RecordingEntry? { recordings.first { $0.id == selection } }
+    var selected: RecordingEntry? { showsActivity ? nil : recordings.first { $0.id == selection } }
+
+    func select(_ entry: RecordingEntry) {
+        showsActivity = false
+        selection = entry.id
+    }
 
     var databaseError: DatabaseUnavailable? { store.openError }
 
@@ -268,6 +283,7 @@ struct MainView: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
+    @ObservedObject var activity: ActivityModel
     let playback: AudioPlayback
 
     var body: some View {
@@ -277,7 +293,9 @@ struct MainView: View {
         } detail: {
             VStack(spacing: 0) {
                 if let error = library.databaseError { DatabaseErrorBanner(error: error) }
-                if let entry = library.selected {
+                if library.showsActivity {
+                    ActivityView(model: activity, tracker: activity.tracker)
+                } else if let entry = library.selected {
                     RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
                         .id(entry.id)
                 } else {
@@ -415,6 +433,7 @@ struct Sidebar: View {
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
+            activityRow
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
@@ -438,8 +457,23 @@ struct Sidebar: View {
         }
     }
 
+    private var activityRow: some View {
+        Button { library.showsActivity = true } label: {
+            Label("Activity", systemImage: "clock")
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(library.showsActivity ? Color.primary.opacity(0.08) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .help("What you worked on, by day and week")
+    }
+
     private func row(_ entry: RecordingEntry, group: DateGroup) -> some View {
-        Button { library.selection = entry.id } label: {
+        Button { library.select(entry) } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(library.title(of: entry))
                     .lineLimit(1)
@@ -460,7 +494,7 @@ struct Sidebar: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(RoundedRectangle(cornerRadius: 6)
-                .fill(library.selection == entry.id ? Color.primary.opacity(0.08) : .clear))
+                .fill(library.selected?.id == entry.id ? Color.primary.opacity(0.08) : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

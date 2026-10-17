@@ -187,8 +187,8 @@ To check the window's layout without a screen, a debug build can render it offsc
 
 It writes the sample library to `/tmp/previews/library` as audio and old-style sidecar files, imports it into
 `/tmp/previews/library.sqlite` and saves PNGs of the Summary, Notes and Transcript tabs (the transcript with speakers),
-an older summary and a missing summary, each in light and dark appearance, plus the window with an unavailable
-database.
+an older summary and a missing summary, the Activity day and week views with a sample week, each in light and dark
+appearance, the Settings tabs, plus the window with an unavailable database.
 
 ## Transcripts and summaries
 
@@ -339,6 +339,71 @@ RMS 0.003), counted from when the meeting ended; a paused recording is never sto
 the other app takes the microphone again the notification is withdrawn. Turn it off with "Stop automatically when the
 meeting ends" in the menu (on by default).
 
+## Activity tracking
+
+Off by default. Turned on in Setup (step 5) or Settings > Activity, the app keeps a local log of what you work in, for
+time reports and for giving Claude your recent context. Nothing leaves the Mac; the only way out is the exports below.
+
+Every 5 seconds while the Mac is awake, unlocked and you have touched the keyboard or mouse in the last 2 minutes
+("Away after" in Settings), it samples:
+
+- The frontmost app and the title of its focused window, through Accessibility (`AXUIElement`). Tracking does not start
+  until this permission is granted; the step in Setup and Settings open System Settings > Privacy & Security >
+  Accessibility.
+- The address of the front tab in Safari, Chrome, Brave, Edge and Arc, asked through Apple Events (System Settings >
+  Privacy & Security > Automation; macOS asks once per browser). Only host and path are kept, never the query string or
+  fragment; incognito windows are skipped where the browser reports them; Firefox has no scripting dictionary, so only
+  its title is captured.
+- The git repository and branch: the folders under `~/git/*` and `~/git/*/*` that have a `.git` entry are matched by
+  name, as a whole word, against the titles of terminals and editors (Terminal, iTerm2, Warp, Ghostty, JetBrains IDEs,
+  VS Code, Cursor, Xcode, Claude, Sublime, Tower, …). The branch is read from `.git/HEAD`, following a worktree's
+  `gitdir:` file; no process is spawned. Ticket keys like `QDLY-8296` are picked out of the branch, title or address.
+- Claude Code sessions: `~/.claude/projects/<folder>/<session>.jsonl` files written to in the last 10 seconds. The
+  session's working folder comes from the `cwd` of its first user message and its title from the custom title you gave
+  it (`<session>/custom-title.json` or a `custom-title` line), else the first line you typed. These form a parallel
+  lane: a block can have a Claude session running while you are in another app.
+- Optionally ("Text you're writing", off by default) up to 300 characters around the insertion point of the focused
+  text field or area, kept once the text has not changed for 5 seconds. Secure text fields are never read and nothing
+  is read while secure keyboard entry is on (a password prompt) or in an excluded app. No keystrokes are counted or
+  stored.
+
+Consecutive samples with the same app, title, address, repository, branch, ticket and Claude sessions collapse into one
+block; a lock, sleep, or idle period becomes an "Away" block. Apps on the exclusion list (1Password, Keychain Access and
+Passwords by default; editable in Settings) keep only their name and time. Blocks older than the retention setting
+(90 days by default) are deleted once a day. "Pause activity tracking" in the menu bar stops sampling; the menu shows
+what is being tracked.
+
+Projects (name and colour) and rules map blocks to projects automatically: a rule matches a repository name, a website
+(host or any subdomain of it), an app, or a ticket prefix such as `QDLY`; the first matching rule wins. Clicking a block
+in the Activity view sets its project by hand (which beats every rule) and offers "Always map … to <project>", which
+adds the rule.
+
+With "Categorise with Apple Intelligence" on (default) and Apple Intelligence available, finished blocks are labelled
+on this Mac by `SystemLanguageModel(useCase: .contentTagging)` with a category (coding, code review, meeting, email,
+chat, writing/docs, planning/tickets, research/browsing, design, admin, entertainment, other), a description of at most
+eight words and a project guess from your own projects. It runs in the background shortly after blocks close, in
+batches, and caches the answer per app, normalised title and address, so repeats cost nothing. The guess is shown with
+a small sparkle and only applies when no rule or manual choice does; the block popover accepts it with one click.
+
+The Activity entry at the top of the sidebar opens the day view: active time, totals per project and per category, the
+time per app, and the timeline of blocks (app icon, title, chips for address, repository · branch, ticket, category and
+Claude session, the written excerpt, and the project). Week shows hours per project and per day, the per-day totals
+and hours per category: the time report. Export CSV… (`date,project,hours,details`) and Export Markdown… (per day and
+project, with the main repositories, tickets and websites) save the week through a save panel; both are also in the
+"…" menu with Copy Context, which puts a Markdown summary of the shown day or week on the pasteboard: active time,
+projects, apps, repositories with branches, tickets, websites, Claude sessions, window titles, categories, what you
+wrote and the meetings in the window. The same summary prints headlessly:
+
+    MeetingRecorder.app/Contents/MacOS/MeetingRecorder --context 4     # the last 4 hours (8 without a number)
+
+Debug builds also take `--simulate-activity <samples.json>` (an array of `{"offset", "app", "bundle", "title", "url",
+"repo", "branch", "claude": [...], "idle"}`), which feeds the samples through the tracker into the data directory's
+database and prints the resulting blocks, so the pipeline can be checked without Accessibility access.
+
+The data lives in the meeting database: `activity_blocks` (start, end, app, title, address, repository, branch,
+ticket, Claude sessions, idle, manual project, typed excerpt, category, AI description and AI project guess),
+`projects`, `project_rules` and `activity_ai_cache`. Deleting a project clears the blocks that pointed at it.
+
 ## Permissions
 
 - Microphone (required): records you.
@@ -346,6 +411,10 @@ meeting ends" in the menu (on by default).
   macOS asks the first time recording starts or when you press Allow System Audio in Setup. It is listed in System
   Settings > Privacy & Security > Screen & System Audio Recording, under "System Audio Recording Only". Screen Recording is
   not needed and no relaunch is required.
+- Accessibility (only for activity tracking): reads window titles and, when turned on, the text around the cursor.
+  Turning tracking on shows the system prompt; grant it under Privacy & Security > Accessibility.
+- Automation (only for browser addresses in activity tracking): macOS asks the first time each browser is in front.
+  The app has the `com.apple.security.automation.apple-events` entitlement for this.
 
 If system audio is denied the app still records the microphone and the menu shows "Microphone only — system audio
 off". If the microphone is denied the menu shows a message and an "Open Privacy Settings" button. Build with the stable
