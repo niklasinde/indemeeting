@@ -136,14 +136,32 @@ final class ActivityTracker: ObservableObject {
             sample.repo = repo.lastPathComponent
             sample.branch = ActivityLogic.branch(ofRepository: repo)
         }
-        sample.ticket = ActivityLogic.ticket(in: sample.branch, sample.windowTitle, sample.url)
-        if settings.claude { sample.claude = claude.active(since: now.addingTimeInterval(-2 * ActivitySettings.interval)) }
+        if settings.claude { addClaude(to: &sample, now: now) }
+        sample.ticket = ActivityLogic.ticket(in: sample.branch, sample.claudeFocus.flatMap { id in sample.claude.first { $0.id == id }?.title },
+                                             sample.windowTitle, sample.url)
         ingest(sample)
         let excerpt = settings.typing && !settings.excludes(appName: sample.appName, bundle: sample.appBundle) && !IsSecureEventInputEnabled()
             ? Self.focusedTextExcerpt(of: app.processIdentifier) : nil
         if let kept = typing.update(excerpt, now: now), current != nil {
             current?.typedExcerpt = kept
             save(current!)
+        }
+    }
+
+    /// The sessions working lately, and while Claude is frontmost the one the user is in, with its repository and branch.
+    private func addClaude(to sample: inout ActivitySample, now: Date) {
+        let activity = claude.active(since: now.addingTimeInterval(-ActivitySettings.claudeLookback))
+        sample.claude = activity.map(\.session)
+        guard ActivityLogic.isClaudeWindow(bundle: sample.appBundle, title: sample.windowTitle) else { return }
+        let open = current?.key.appBundle == sample.appBundle ? current : nil
+        guard let id = ActivityLogic.focusedSession(activity, now: now, window: ActivitySettings.claudeLookback, sticky: open?.key.claudeFocus),
+              let session = activity.first(where: { $0.session.id == id })?.session ?? open?.key.claude.first(where: { $0.id == id }) else { return }
+        sample.claudeFocus = id
+        if !sample.claude.contains(session) { sample.claude.append(session) }
+        sample.claudePrompt = activity.first { $0.session.id == id }?.lastPrompt
+        if settings.git, let checkout = ActivityLogic.claudeCheckout(cwd: session.folder) {
+            sample.repo = checkout.repo
+            sample.branch = ActivityLogic.branch(ofRepository: checkout.checkout)
         }
     }
 
@@ -216,17 +234,6 @@ final class ActivityTracker: ObservableObject {
     }
 }
 
-/// Apps whose window titles name the repository being worked on.
-enum DeveloperApps {
-    static let bundlePrefixes = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp", "com.mitchellh.ghostty", "com.jetbrains.",
-                                 "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.apple.dt.Xcode", "com.anthropic.claudefordesktop",
-                                 "com.sublimetext.", "com.github.GitHubClient", "com.fournova.Tower", "co.zeit.hyper", "org.alacritty"]
-
-    static func contains(_ bundle: String?) -> Bool {
-        bundle.map { id in bundlePrefixes.contains { id.hasPrefix($0) } } ?? false
-    }
-}
-
 /// The URL of the front tab of the frontmost browser, through Apple Events (Automation permission). Firefox has no
 /// scripting dictionary, so only its title is captured. Private windows are skipped where the browser says so.
 enum Browsers {
@@ -278,25 +285,44 @@ enum Browsers {
 final class ClaudeSessionScanner {
     private let root: URL
     private var cache: [String: ClaudeSession] = [:]
+    private var tails: [String: (modified: Date, user: (time: Date?, text: String)?)] = [:]
+    private static let tailBytes: UInt64 = 256_000
 
     init(root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)) {
         self.root = root
     }
 
-    func active(since: Date) -> [ClaudeSession] {
+    func active(since: Date) -> [ClaudeActivity] {
         let fileManager = FileManager.default
         let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
         let projects = (try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil, options: .skipsHiddenFiles)) ?? []
-        var sessions: [ClaudeSession] = []
+        var sessions: [ClaudeActivity] = []
         for project in projects {
             let files = (try? fileManager.contentsOfDirectory(at: project, includingPropertiesForKeys: Array(keys), options: .skipsHiddenFiles)) ?? []
             for file in files where file.pathExtension == "jsonl" {
                 guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true,
                       let modified = values.contentModificationDate, modified >= since else { continue }
-                if let session = session(file, project: project) { sessions.append(session) }
+                if let session = session(file, project: project) {
+                    let user = lastUser(file, modified: modified)
+                    sessions.append(ClaudeActivity(session: session, lastUser: user?.time, lastPrompt: user?.text))
+                }
             }
         }
-        return sessions.sorted { $0.id < $1.id }
+        return sessions.sorted { $0.session.id < $1.session.id }
+    }
+
+    /// The last message the user typed, from the end of the transcript; re-read only when the file changed.
+    private func lastUser(_ file: URL, modified: Date) -> (time: Date?, text: String)? {
+        if let cached = tails[file.path], cached.modified == modified { return cached.user }
+        guard let handle = try? FileHandle(forReadingFrom: file), let size = try? handle.seekToEnd() else { return nil }
+        defer { try? handle.close() }
+        let offset = size > Self.tailBytes ? size - Self.tailBytes : 0
+        guard (try? handle.seek(toOffset: offset)) != nil, let data = try? handle.readToEnd() else { return nil }
+        var text = String(decoding: data, as: UTF8.self)
+        if offset > 0, let newline = text.firstIndex(of: "\n") { text = String(text[text.index(after: newline)...]) }
+        let user = ActivityLogic.lastUserMessage(inJSONL: text)
+        tails[file.path] = (modified, user)
+        return user
     }
 
     private func session(_ file: URL, project: URL) -> ClaudeSession? {

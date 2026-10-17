@@ -7,6 +7,13 @@ struct ClaudeSession: Equatable, Hashable {
     let title: String
 }
 
+/// A session seen working, with the latest message the user typed into it.
+struct ClaudeActivity: Equatable {
+    var session: ClaudeSession
+    var lastUser: Date?
+    var lastPrompt: String?
+}
+
 /// What is captured about one moment; equal fields of consecutive samples collapse into one block.
 struct ActivitySample: Equatable {
     var time: Date
@@ -19,13 +26,17 @@ struct ActivitySample: Equatable {
     var ticket: String?
     var claude: [ClaudeSession] = []
     var idle = false
+    /// The session the user is typing into while Claude is frontmost, and the last thing they asked it.
+    var claudeFocus: String?
+    var claudePrompt: String?
 
     static func idle(at time: Date) -> ActivitySample { ActivitySample(time: time, idle: true) }
 
-    /// The fields that have to match for two samples to belong to the same block.
+    /// The fields that have to match for two samples to belong to the same block; the sessions working in the
+    /// background are gathered over the block instead.
     var key: ActivityKey {
         ActivityKey(appBundle: appBundle, appName: appName, windowTitle: windowTitle, url: url, repo: repo, branch: branch,
-                    ticket: ticket, claude: claude, idle: idle)
+                    ticket: ticket, claude: claude, idle: idle, claudeFocus: claudeFocus)
     }
 }
 
@@ -39,6 +50,14 @@ struct ActivityKey: Hashable {
     var ticket: String?
     var claude: [ClaudeSession]
     var idle: Bool
+    var claudeFocus: String?
+
+    func sameBlock(as other: ActivityKey) -> Bool {
+        var a = self, b = other
+        a.claude = []
+        b.claude = []
+        return a == b
+    }
 }
 
 struct ActivityBlock: Equatable, Identifiable {
@@ -53,8 +72,13 @@ struct ActivityBlock: Equatable, Identifiable {
     var category: ActivityCategory?
     var aiDescription: String?
     var aiProjectID: Int64?
+    var claudePrompt: String?
 
     var duration: TimeInterval { end.timeIntervalSince(start) }
+
+    var claudeFocusSession: ClaudeSession? { key.claudeFocus.flatMap { id in key.claude.first { $0.id == id } } }
+    var backgroundSessions: [ClaudeSession] { key.claude.filter { $0.id != key.claudeFocus } }
+    var title: String? { claudeFocusSession?.title ?? key.windowTitle ?? key.appName }
 
     /// The seconds of the block inside `range`.
     func seconds(in range: Range<Date>) -> TimeInterval {
@@ -153,6 +177,8 @@ struct ActivitySettings: Equatable {
     static let idleChoices: [TimeInterval] = [60, 120, 300, 600]
     static let retentionChoices = [30, 90, 180, 365]
     static let interval: TimeInterval = 5
+    /// How long a Claude session counts as working after it last wrote, so the lane does not flicker between samples.
+    static let claudeLookback: TimeInterval = 120
 
     static let defaults: [String: Any] = [
         enabledKey: false, pausedKey: false, titlesKey: true, urlsKey: true, gitKey: true, claudeKey: true,
@@ -205,17 +231,38 @@ struct ActivitySettings: Equatable {
     }
 }
 
+/// Apps whose window titles name the repository being worked on.
+enum DeveloperApps {
+    static let terminals: Set<String> = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp-Stable", "dev.warp.Warp",
+                                         "com.mitchellh.ghostty", "co.zeit.hyper", "org.alacritty"]
+    static let bundlePrefixes = ["com.apple.Terminal", "com.googlecode.iterm2", "dev.warp.Warp", "com.mitchellh.ghostty", "com.jetbrains.",
+                                 "com.microsoft.VSCode", "com.todesktop.230313mzl4w4u92", "com.apple.dt.Xcode", "com.anthropic.claudefordesktop",
+                                 "com.sublimetext.", "com.github.GitHubClient", "com.fournova.Tower", "co.zeit.hyper", "org.alacritty"]
+
+    static func contains(_ bundle: String?) -> Bool {
+        bundle.map { id in bundlePrefixes.contains { id.hasPrefix($0) } } ?? false
+    }
+}
+
 enum ActivityLogic {
     /// Extends the open block when the sample has the same key and follows closely; otherwise returns the block to
     /// close (if any) and the new open block. Block ends cover the sample's whole interval.
     static func collapse(_ open: ActivityBlock?, with sample: ActivitySample, interval: TimeInterval = ActivitySettings.interval)
         -> (closed: ActivityBlock?, open: ActivityBlock) {
         let end = sample.time.addingTimeInterval(interval)
-        if var open, open.key == sample.key, sample.time.timeIntervalSince(open.end) <= interval {
+        if var open, open.key.sameBlock(as: sample.key), sample.time.timeIntervalSince(open.end) <= interval {
             open.end = max(open.end, end)
+            for session in sample.claude {
+                if let index = open.key.claude.firstIndex(where: { $0.id == session.id }) {
+                    open.key.claude[index] = session
+                } else {
+                    open.key.claude.append(session)
+                }
+            }
+            open.claudePrompt = sample.claudePrompt ?? open.claudePrompt
             return (nil, open)
         }
-        return (open, ActivityBlock(id: 0, start: sample.time, end: end, key: sample.key, projectID: nil))
+        return (open, ActivityBlock(id: 0, start: sample.time, end: end, key: sample.key, projectID: nil, claudePrompt: sample.claudePrompt))
     }
 
     /// Applies the capture settings: excluded apps lose their title and URL, and switched-off captures are dropped.
@@ -229,7 +276,11 @@ enum ActivityLogic {
             sample.branch = nil
         }
         if excluded { sample.ticket = nil }
-        if !settings.claude { sample.claude = [] }
+        if excluded || !settings.claude { sample.claudePrompt = nil }
+        if !settings.claude {
+            sample.claude = []
+            sample.claudeFocus = nil
+        }
         return sample
     }
 
@@ -365,6 +416,16 @@ enum ActivityLogic {
 
     /// The first line of what the user typed, leaving out `<system-reminder>` blocks and other tags.
     static func firstLine(of text: String) -> String? {
+        typedLines(text).first
+    }
+
+    /// What the user typed, on one line without reminders and tags, cut to `limit`.
+    static func promptExcerpt(_ text: String, limit: Int = 120) -> String? {
+        let line = typedLines(text).joined(separator: " ").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return line.isEmpty ? nil : truncate(line, to: limit)
+    }
+
+    private static func typedLines(_ text: String) -> [String] {
         var text = text
         while let open = text.range(of: "<system-reminder>") {
             guard let close = text.range(of: "</system-reminder>", range: open.upperBound..<text.endIndex) else {
@@ -374,7 +435,53 @@ enum ActivityLogic {
             text.removeSubrange(open.lowerBound..<close.upperBound)
         }
         return text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty && !$0.hasPrefix("<") && !$0.hasPrefix("[Request interrupted") }
+            .filter { !$0.isEmpty && !$0.hasPrefix("<") && !$0.hasPrefix("[Request interrupted") }
+    }
+
+    /// The time and text of the last message the user typed in a transcript (or its tail); tool results, meta
+    /// entries and subagent turns are not typed by the user.
+    static func lastUserMessage(inJSONL jsonl: String) -> (time: Date?, text: String)? {
+        for line in jsonl.split(whereSeparator: \.isNewline).reversed() {
+            guard let data = line.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["type"] as? String == "user", object["isMeta"] as? Bool != true, object["isSidechain"] as? Bool != true,
+                  let message = object["message"] as? [String: Any],
+                  let text = userText(message["content"]).flatMap({ promptExcerpt($0) }) else { continue }
+            let time = (object["timestamp"] as? String).flatMap { try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse($0) }
+            return (time, text)
+        }
+        return nil
+    }
+
+    /// The session the user is in: the one they last typed into within `window`, else the block's session so far.
+    static func focusedSession(_ activity: [ClaudeActivity], now: Date, window: TimeInterval = 120, sticky: String?) -> String? {
+        activity.filter { ($0.lastUser.map { now.timeIntervalSince($0) <= window }) ?? false }
+            .max { $0.lastUser! < $1.lastUser! }?.session.id ?? sticky
+    }
+
+    /// The Claude app, or a terminal whose title shows Claude Code running in it.
+    static func isClaudeWindow(bundle: String?, title: String?) -> Bool {
+        guard let bundle else { return false }
+        if bundle.hasPrefix("com.anthropic.claude") { return true }
+        let title = title?.lowercased() ?? ""
+        return DeveloperApps.terminals.contains(bundle) && (title.contains("claude") || title.hasPrefix("\u{2733}"))
+    }
+
+    /// The repository a session works in: for `<repo>/.claude/worktrees/<name>` the parent repository and the
+    /// worktree's checkout, otherwise the nearest folder with a `.git` entry. Claude's scratch workspaces have none.
+    static func claudeCheckout(cwd: String, fileManager: FileManager = .default) -> (repo: String, checkout: URL)? {
+        guard !cwd.isEmpty, !cwd.contains("/scratch-workspaces/") else { return nil }
+        if let marker = cwd.range(of: "/.claude/worktrees/") {
+            let parent = URL(fileURLWithPath: String(cwd[..<marker.lowerBound]))
+            guard let name = cwd[marker.upperBound...].split(separator: "/").first else { return nil }
+            return (parent.lastPathComponent, parent.appendingPathComponent(".claude/worktrees/\(name)"))
+        }
+        var folder = URL(fileURLWithPath: cwd)
+        while folder.path != "/" {
+            if fileManager.fileExists(atPath: folder.appendingPathComponent(".git").path) { return (folder.lastPathComponent, folder) }
+            folder.deleteLastPathComponent()
+        }
+        return nil
     }
 
     static func truncate(_ text: String, to limit: Int) -> String {
@@ -564,9 +671,12 @@ enum ActivityLogic {
             block.key.repo == nil && block.key.url == nil ? block.key.windowTitle : nil
         })
         section("Categories", categoryTotals(active, in: range).map { ($0.name, $0.seconds) })
-        let excerpts = active.filter { $0.typedExcerpt != nil }.sorted { $0.end > $1.end }.prefix(5)
+        let excerpts = active.compactMap { block in (block.claudePrompt ?? block.typedExcerpt).map { (block, $0) } }
+            .sorted { $0.0.end > $1.0.end }.prefix(5)
         if !excerpts.isEmpty {
-            lines += ["", "## Writing"] + excerpts.map { "- \($0.key.appName ?? "") \u{00B7} \u{201C}\(truncate($0.typedExcerpt!, to: 200))\u{201D}" }
+            lines += ["", "## Writing"] + excerpts.map { block, text in
+                "- \(block.claudeFocusSession?.title ?? block.key.appName ?? "") \u{00B7} \u{201C}\(truncate(text, to: 200))\u{201D}"
+            }
         }
         if !meetings.isEmpty {
             lines += ["", "## Meetings"] + meetings.map { meeting in
@@ -649,7 +759,8 @@ enum ActivityAI {
             .replacingOccurrences(of: "[0-9]+", with: "#", options: .regularExpression)
             .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
-        return [key.appBundle ?? key.appName ?? "", title, key.url ?? "", key.repo ?? ""].joined(separator: "|")
+        let session = key.claudeFocus.flatMap { id in key.claude.first { $0.id == id } }.map { [$0.title.lowercased()] } ?? []
+        return ([key.appBundle ?? key.appName ?? "", title, key.url ?? "", key.repo ?? ""] + session).joined(separator: "|")
     }
 
     static func prompt(for block: ActivityBlock, projects: [Project]) -> String {
@@ -659,6 +770,8 @@ enum ActivityAI {
         if let url = key.url { lines.append("Address: \(url)") }
         if let repo = key.repo { lines.append("Repository: \(repo)" + (key.branch.map { " on branch \($0)" } ?? "")) }
         if let ticket = key.ticket { lines.append("Ticket: \(ticket)") }
+        if let session = block.claudeFocusSession { lines.append("Claude Code session: \(session.title)") }
+        if let prompt = block.claudePrompt { lines.append("Last request to Claude: \(prompt)") }
         if let excerpt = block.typedExcerpt { lines.append("Text being written: \(ActivityLogic.truncate(excerpt, to: 200))") }
         lines.append("Projects: " + (projects.isEmpty ? "none" : projects.map(\.name).joined(separator: ", ")))
         return lines.joined(separator: "\n")

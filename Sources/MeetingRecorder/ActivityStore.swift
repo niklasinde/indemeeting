@@ -4,13 +4,13 @@ import Foundation
 extension MeetingStore {
     private static let detailColumns = """
         app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session, claude_title, idle, project_id,
-        typed_excerpt, category, ai_description, ai_project_id
+        typed_excerpt, category, ai_description, ai_project_id, claude_focus, claude_prompt
         """
     private static let blockColumns = "id, start, end, " + detailColumns
     /// What a private block loses: everything but the app, the times and the category.
     private static let privateFields = """
         window_title = NULL, url = NULL, repo = NULL, branch = NULL, ticket = NULL, claude_session = NULL, claude_title = NULL,
-        typed_excerpt = NULL, ai_description = NULL
+        typed_excerpt = NULL, ai_description = NULL, claude_focus = NULL, claude_prompt = NULL
         """
 
     func blocks(in range: Range<Date>) throws -> [ActivityBlock] {
@@ -30,19 +30,20 @@ extension MeetingStore {
                                        key.claude.isEmpty ? nil : key.claude.map(\.id).joined(separator: "\n"),
                                        key.claude.isEmpty ? nil : key.claude.map { "\($0.folder)\t\($0.title)" }.joined(separator: "\n"),
                                        key.idle, block.projectID, block.typedExcerpt, block.category?.rawValue, block.aiDescription,
-                                       block.aiProjectID]
+                                       block.aiProjectID, key.claudeFocus, block.claudePrompt]
             if block.id > 0 {
                 try db.run("""
                     UPDATE activity_blocks SET start = ?, end = ?, app_bundle = ?, app_name = ?, window_title = ?, url = ?, repo = ?,
                         branch = ?, ticket = ?, claude_session = ?, claude_title = ?, idle = ?, project_id = ?, typed_excerpt = ?,
-                        category = ?, ai_description = ?, ai_project_id = ? WHERE id = ?
+                        category = ?, ai_description = ?, ai_project_id = ?, claude_focus = ?, claude_prompt = ? WHERE id = ?
                     """, values + [block.id])
                 return block.id
             }
             try db.run("""
                 INSERT INTO activity_blocks (start, end, app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session,
-                                             claude_title, idle, project_id, typed_excerpt, category, ai_description, ai_project_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                             claude_title, idle, project_id, typed_excerpt, category, ai_description, ai_project_id,
+                                             claude_focus, claude_prompt)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, values)
             return try db.lastInsertID
         }
@@ -124,7 +125,7 @@ extension MeetingStore {
         try write(notify: Self.activityDidChange) {
             try db.run("""
                 INSERT INTO activity_blocks (start, end, \(Self.detailColumns))
-                SELECT ?, end, \(Self.detailColumns.replacingOccurrences(of: "typed_excerpt", with: "NULL")) FROM activity_blocks
+                SELECT ?, end, \(Self.detailColumns.replacingOccurrences(of: "typed_excerpt", with: "NULL").replacingOccurrences(of: "claude_prompt", with: "NULL")) FROM activity_blocks
                 WHERE start < ? AND end > ?
                 """, [to, from, to])
             try db.run("UPDATE activity_blocks SET end = ?, typed_excerpt = NULL WHERE start < ? AND end > ?", [from, from, from])
@@ -223,10 +224,10 @@ extension MeetingStore {
         }
         let key = ActivityKey(appBundle: row.optionalString(3), appName: row.optionalString(4), windowTitle: row.optionalString(5),
                               url: row.optionalString(6), repo: row.optionalString(7), branch: row.optionalString(8),
-                              ticket: row.optionalString(9), claude: claude, idle: row.bool(12))
+                              ticket: row.optionalString(9), claude: claude, idle: row.bool(12), claudeFocus: row.optionalString(18))
         return ActivityBlock(id: row.int64(0), start: Date(timeIntervalSince1970: row.double(1)), end: Date(timeIntervalSince1970: row.double(2)),
                              key: key, projectID: row.isNull(13) ? nil : row.int64(13), typedExcerpt: row.optionalString(14),
                              category: row.optionalString(15).flatMap(ActivityCategory.init), aiDescription: row.optionalString(16),
-                             aiProjectID: row.isNull(17) ? nil : row.int64(17))
+                             aiProjectID: row.isNull(17) ? nil : row.int64(17), claudePrompt: row.optionalString(19))
     }
 }

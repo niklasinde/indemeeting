@@ -340,6 +340,92 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(try store.applyExcluded(categories: [], remove: true) == 0, "nothing excluded")
     }),
 
+    ("the claude session the user is in comes from their newest message and sticks to the block", {
+        let a = ClaudeSession(id: "a", folder: "/f", title: "Strawberry kfm tickets"), b = ClaudeSession(id: "b", folder: "/g", title: "Other")
+        let now = t0.addingTimeInterval(1000)
+        let activity = [ClaudeActivity(session: a, lastUser: now.addingTimeInterval(-30), lastPrompt: "fix it"),
+                        ClaudeActivity(session: b, lastUser: now.addingTimeInterval(-10), lastPrompt: nil)]
+        check(ActivityLogic.focusedSession(activity, now: now, sticky: "a") == "b", "the newest typed-into session wins")
+        let old = [ClaudeActivity(session: a, lastUser: now.addingTimeInterval(-300)), ClaudeActivity(session: b, lastUser: nil)]
+        check(ActivityLogic.focusedSession(old, now: now, sticky: "a") == "a", "nothing new: the block keeps its session")
+        check(ActivityLogic.focusedSession(old, now: now, sticky: nil) == nil, "nothing to stick to")
+
+        check(ActivityLogic.isClaudeWindow(bundle: "com.anthropic.claudefordesktop", title: "Claude"), "desktop app")
+        check(ActivityLogic.isClaudeWindow(bundle: "com.apple.Terminal", title: "\u{2733} Strawberry kfm tickets"), "terminal running claude")
+        check(!ActivityLogic.isClaudeWindow(bundle: "com.apple.Terminal", title: "zsh") && !ActivityLogic.isClaudeWindow(bundle: "com.apple.Safari", title: "Claude"), "not claude")
+
+        var focused = sample(0, app: "Claude", title: "Claude", claude: [a, b])
+        focused.claudeFocus = "a"
+        focused.claudePrompt = "fix it"
+        var open = ActivityLogic.collapse(nil, with: focused).open
+        var next = sample(5, app: "Claude", title: "Claude", claude: [a])
+        next.claudeFocus = "a"
+        var result = ActivityLogic.collapse(open, with: next)
+        check(result.closed == nil && result.open.key.claude.map(\.id) == ["a", "b"] && result.open.claudePrompt == "fix it",
+              "the lane changing does not split the block, its sessions and prompt are kept")
+        open = result.open
+        next.claudeFocus = "b"
+        next.claude = [a, b]
+        result = ActivityLogic.collapse(open, with: next)
+        check(result.closed != nil && result.open.claudeFocusSession == b, "another session starts a new block")
+        check(open.title == "Strawberry kfm tickets" && open.backgroundSessions == [b], "titled by the session, the rest is the lane")
+        var withRepo = open
+        withRepo.key.repo = "finq.api"
+        check(ActivityAI.prompt(for: withRepo, projects: []).contains("Claude Code session: Strawberry kfm tickets\nLast request to Claude: fix it"),
+              "prompt names the session")
+        check(ActivityAI.cacheKey(open.key).hasSuffix("|strawberry kfm tickets"), "sessions are cached apart")
+        var settings = ActivitySettings()
+        settings.claude = false
+        let off = ActivityLogic.filtered(focused, settings: settings)
+        check(off.claude.isEmpty && off.claudeFocus == nil && off.claudePrompt == nil, "claude off drops the session and prompt")
+
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        open.id = try store.saveBlock(open)
+        let read = try store.blocks(in: t0..<t0.addingTimeInterval(100)).first
+        check(read?.key.claudeFocus == "a" && read?.claudePrompt == "fix it" && read?.key.claude.count == 2, "focus and prompt round-trip")
+    }),
+
+    ("the last prompt of a transcript skips tool results, meta entries and reminders", {
+        let jsonl = """
+        {"type":"user","timestamp":"2026-10-17T10:51:53.123Z","message":{"content":[{"type":"text","text":"<system-reminder>\\nctx\\n</system-reminder>\\nAdd   deleting\\nactivity <b>now</b>"}]}}
+        {"type":"assistant","message":{"content":[{"type":"text","text":"ok"}]}}
+        {"type":"user","timestamp":"2026-10-17T10:52:00.000Z","message":{"content":[{"type":"tool_result","content":"x"}]}}
+        {"type":"user","isMeta":true,"timestamp":"2026-10-17T10:52:01.000Z","message":{"content":[{"type":"text","text":"meta"}]}}
+        {"type":"user","isSidechain":true,"timestamp":"2026-10-17T10:52:02.000Z","message":{"content":"agent prompt"}}
+        {"type":"user","timestamp":"2026-10-17T10:52:03.000Z","message":{"content":"<command-name>/clear</command-name>"}}
+        """
+        let last = ActivityLogic.lastUserMessage(inJSONL: jsonl)
+        check(last?.text == "Add deleting activity <b>now</b>", "cleaned '\(last?.text ?? "")'")
+        check(abs((last?.time?.timeIntervalSince1970 ?? 0) - 1_792_234_313.123) < 0.001, "timestamp \(String(describing: last?.time?.timeIntervalSince1970))")
+        check(ActivityLogic.lastUserMessage(inJSONL: "{\"type\":\"summary\"}") == nil, "none")
+        let long = ActivityLogic.promptExcerpt(String(repeating: "word ", count: 60))!
+        check(long.count <= 120 && long.hasSuffix("\u{2026}"), "cut to 120")
+        check(ActivityLogic.promptExcerpt("<system-reminder>only</system-reminder>") == nil, "only a reminder")
+    }),
+
+    ("a session's folder maps to its repository, a worktree to its parent and own branch", {
+        let root = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = root.appendingPathComponent("git/quiddly/finq.api")
+        let worktree = repo.appendingPathComponent(".claude/worktrees/strawberry-tickets-518556")
+        let gitdir = repo.appendingPathComponent(".git/worktrees/strawberry-tickets-518556")
+        try FileManager.default.createDirectory(at: gitdir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: worktree.appendingPathComponent("src"), withIntermediateDirectories: true)
+        try "ref: refs/heads/main\n".write(to: repo.appendingPathComponent(".git/HEAD"), atomically: true, encoding: .utf8)
+        try "ref: refs/heads/NI/QDLY-8700\n".write(to: gitdir.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+        try "gitdir: \(gitdir.path)\n".write(to: worktree.appendingPathComponent(".git"), atomically: true, encoding: .utf8)
+
+        let fromWorktree = ActivityLogic.claudeCheckout(cwd: worktree.appendingPathComponent("src").path)
+        check(fromWorktree?.repo == "finq.api" && fromWorktree?.checkout.path == worktree.path, "worktree \(String(describing: fromWorktree))")
+        check(fromWorktree.flatMap { ActivityLogic.branch(ofRepository: $0.checkout) } == "NI/QDLY-8700", "the worktree's branch")
+        let nested = ActivityLogic.claudeCheckout(cwd: repo.appendingPathComponent("docs/deep").path)
+        check(nested?.repo == "finq.api" && nested.flatMap { ActivityLogic.branch(ofRepository: $0.checkout) } == "main", "nearest repository")
+        check(ActivityLogic.claudeCheckout(cwd: "/Users/me/Library/Application Support/Claude/scratch-workspaces/x/scratch") == nil, "scratch")
+        check(ActivityLogic.claudeCheckout(cwd: root.appendingPathComponent("plain").path) == nil, "no repository")
+    }),
+
     ("the text around the cursor is excerpted and kept once it has settled", {
         let text = (1...50).map { "word\($0)" }.joined(separator: " ")
         let middle = ActivityLogic.excerpt(value: text, cursor: 150, limit: 60)!

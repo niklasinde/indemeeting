@@ -195,6 +195,7 @@ final class MeetingStore: @unchecked Sendable {
         );
         """,
         "ALTER TABLE meetings ADD COLUMN language_detected INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE activity_blocks ADD COLUMN claude_focus TEXT; ALTER TABLE activity_blocks ADD COLUMN claude_prompt TEXT",
     ]
 
     private static let meetingColumns = """

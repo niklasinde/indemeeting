@@ -365,8 +365,8 @@ struct BlockRow: View {
                     }
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            Text(block.key.windowTitle ?? block.key.appName ?? "Unknown").lineLimit(1)
-                            if block.key.windowTitle != nil, let app = block.key.appName {
+                            Text(block.title ?? "Unknown").lineLimit(1)
+                            if block.title != block.key.appName, let app = block.key.appName {
                                 Text(app).foregroundStyle(.secondary)
                             }
                             if let description = block.aiDescription {
@@ -379,7 +379,7 @@ struct BlockRow: View {
                         }
                         let chips = chips
                         if !chips.isEmpty { FlowChips(chips) }
-                        if let excerpt = block.typedExcerpt {
+                        if let excerpt = block.claudePrompt ?? block.typedExcerpt {
                             Text("\u{201C}\(excerpt)\u{201D}")
                                 .font(.caption)
                                 .italic()
@@ -426,7 +426,11 @@ struct BlockRow: View {
         if let repo = block.key.repo { chips.append(Chip(text: [repo, block.key.branch].compactMap { $0 }.joined(separator: " \u{00B7} "), icon: "arrow.triangle.branch")) }
         if let ticket = block.key.ticket { chips.append(Chip(text: ticket, icon: "tag")) }
         if let category = block.category { chips.append(Chip(text: category.label, icon: "square.grid.2x2")) }
-        for session in block.key.claude { chips.append(Chip(text: session.title, icon: "sparkles", tint: .purple)) }
+        let lane = block.backgroundSessions
+        if !lane.isEmpty {
+            chips.append(Chip(text: lane.count == 1 ? lane[0].title : "\(lane.count) Claude sessions working", icon: "sparkles", tint: .purple,
+                              help: lane.map(\.title).joined(separator: "\n")))
+        }
         return chips
     }
 }
@@ -455,7 +459,7 @@ struct ProjectPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(block.key.windowTitle ?? block.key.appName ?? "Block").font(.headline).lineLimit(2)
+            Text(block.title ?? "Block").font(.headline).lineLimit(2)
             Picker("Project", selection: Binding(get: { block.projectID ?? 0 }, set: { model.setProject($0 == 0 ? nil : $0, of: block) })) {
                 Text(automaticLabel).tag(Int64(0))
                 ForEach(model.projects) { Text($0.name).tag($0.id) }
@@ -602,6 +606,7 @@ struct Chip: Hashable {
     var icon: String?
     var color: Color?
     var tint: Color?
+    var help: String?
 }
 
 /// Small labels that wrap onto new lines.
@@ -623,6 +628,7 @@ struct FlowChips: View {
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(Capsule().fill((chip.tint ?? Color.primary).opacity(0.07)))
+                .help(chip.help ?? "")
             }
         }
     }

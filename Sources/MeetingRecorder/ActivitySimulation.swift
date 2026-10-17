@@ -68,13 +68,14 @@ enum SampleActivity {
         let api = ClaudeSession(id: "a92d893c", folder: "/Users/niklasinde/git/quiddly/finq.api", title: "Fix the ISD-13089 reminder fee rounding")
         func block(_ dayOffset: Int, _ from: Double, _ to: Double, app: (String, String), title: String? = nil, url: String? = nil,
                    repo: String? = nil, branch: String? = nil, claude: [ClaudeSession] = [], idle: Bool = false,
-                   category: ActivityCategory? = nil, description: String? = nil, excerpt: String? = nil, guess: Int64? = nil) throws {
+                   category: ActivityCategory? = nil, description: String? = nil, excerpt: String? = nil, guess: Int64? = nil,
+                   focus: ClaudeSession? = nil, prompt: String? = nil) throws {
             let day = calendar.startOfDay(for: calendar.date(byAdding: .day, value: dayOffset, to: now)!)
             let key = ActivityKey(appBundle: idle ? nil : app.0, appName: idle ? nil : app.1, windowTitle: title, url: url, repo: repo, branch: branch,
-                                  ticket: ActivityLogic.ticket(in: branch, title, url), claude: claude, idle: idle)
+                                  ticket: ActivityLogic.ticket(in: branch, title, url), claude: claude, idle: idle, claudeFocus: focus?.id)
             try store.saveBlock(ActivityBlock(id: 0, start: day.addingTimeInterval(from * 3600), end: day.addingTimeInterval(to * 3600),
                                               key: key, projectID: nil, typedExcerpt: excerpt, category: category, aiDescription: description,
-                                              aiProjectID: guess))
+                                              aiProjectID: guess, claudePrompt: prompt))
         }
         let xcode = ("com.apple.dt.Xcode", "Xcode")
         let pycharm = ("com.jetbrains.pycharm", "PyCharm")
@@ -95,7 +96,8 @@ enum SampleActivity {
             try block(dayOffset, 12.0, 12.75, app: slack, idle: true)
             try block(dayOffset, 12.75, 15.5, app: xcode, title: "ActivityView.swift \u{2014} indemeeting", repo: "indemeeting", branch: "main",
                       claude: [claude], category: .coding, description: "Building the activity day view")
-            try block(dayOffset, 15.5, 16.0, app: claudeApp, title: "indemeeting \u{2014} Claude", repo: "indemeeting", branch: "main", claude: [claude])
+            try block(dayOffset, 15.5, 16.0, app: claudeApp, title: "Claude", repo: "indemeeting", branch: "main", claude: [claude, api],
+                      focus: claude, prompt: "Add deleting activity: a Delete item in the block popover and a context menu on each row")
             if dayOffset.isMultiple(of: 2) { try block(dayOffset, 16.0, 16.5, app: safari, url: "developer.apple.com/documentation/swiftui/layout") }
         }
         try block(0, 16.5, 17.0, app: slack, title: "niklas \u{2014} Slack")
