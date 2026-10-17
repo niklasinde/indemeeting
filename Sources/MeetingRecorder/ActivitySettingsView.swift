@@ -20,6 +20,17 @@ final class ActivityProjectsModel: ObservableObject {
     }
     func deleteRule(_ rule: ProjectRule) { perform { try store?.deleteRule(rule.id) } }
 
+    func deleteAllActivity(_ tracker: ActivityTracker) {
+        tracker.discard { _ in true }
+        perform { try store?.deleteAll() }
+    }
+
+    func applyExcludedCategories(_ settings: ActivitySettings) -> Int {
+        var count = 0
+        perform { count = try store?.applyExcluded(categories: settings.excludedCategories, remove: settings.removeExcluded) ?? 0 }
+        return count
+    }
+
     func setColor(_ color: String, of project: Project) {
         var project = project
         project.color = color
@@ -45,8 +56,12 @@ struct ActivitySettingsView: View {
     @AppStorage(ActivitySettings.classifyKey) private var classify = true
     @AppStorage(ActivitySettings.idleKey) private var idleSeconds = 120.0
     @AppStorage(ActivitySettings.retentionKey) private var retentionDays = 90
+    @AppStorage(ActivitySettings.removeExcludedKey) private var removeExcluded = false
     @State private var newExcluded = ""
     @State private var newProject = ""
+    @State private var categoriesChanged = false
+    @State private var applied: Int?
+    @State private var confirmingDeleteAll = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -95,6 +110,16 @@ struct ActivitySettingsView: View {
                     }
                     .labelsHidden().fixedSize()
                 }
+                Divider().padding(.leading, 14)
+                SettingsRow("Delete all activity", detail: "Removes every block and the Apple Intelligence cache.") {
+                    Button("Delete All Activity\u{2026}") { confirmingDeleteAll = true }
+                }
+            }
+            .alert("Delete all activity?", isPresented: $confirmingDeleteAll) {
+                Button("Delete", role: .destructive) { projects.deleteAllActivity(tracker) }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every tracked block is removed from the database. Projects and rules stay.")
             }
             SettingsSection("Excluded apps", footer: "Only the app name and time are kept for these; titles, addresses and repositories are not.") {
                 ForEach(tracker.settings.excludedApps, id: \.self) { app in
@@ -110,6 +135,41 @@ struct ActivitySettingsView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+            }
+            SettingsSection("Excluded categories", footer: "Blocks Apple Intelligence puts in these categories keep only the app, "
+                            + "the times and the category, and show as Private in the timeline.") {
+                FlowLayout(spacing: 4) {
+                    ForEach(ActivityCategory.allCases, id: \.self) { category in
+                        let excluded = tracker.settings.excludedCategories.contains(category)
+                        Button { toggle(category) } label: {
+                            Label(category.label, systemImage: excluded ? "eye.slash" : "eye").labelStyle(.titleAndIcon)
+                        }
+                        .buttonStyle(PillButtonStyle(selected: excluded))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 10)
+                Divider().padding(.leading, 14)
+                SettingsRow("Remove these blocks completely", detail: "Deletes them instead of keeping them as private.") {
+                    Toggle("Remove these blocks completely", isOn: Binding(get: { removeExcluded }, set: {
+                        removeExcluded = $0
+                        categoriesChanged = true
+                        applied = nil
+                    }))
+                    .labelsHidden().toggleStyle(.switch)
+                }
+                if categoriesChanged || applied != nil {
+                    Divider().padding(.leading, 14)
+                    SettingsRow("Existing activity", detail: applied.map { "\($0) block\($0 == 1 ? "" : "s") updated." }
+                                ?? "Blocks already categorised are unchanged until you apply.") {
+                        Button("Apply to Existing Activity") {
+                            applied = projects.applyExcludedCategories(ActivitySettings(.standard))
+                            categoriesChanged = false
+                        }
+                        .disabled(!categoriesChanged || tracker.settings.excludedCategories.isEmpty)
+                    }
+                }
             }
             SettingsSection("Projects", footer: "A block takes the project of the first rule that matches its repository, website, app or "
                             + "ticket prefix. Click a block in the Activity view to choose a project by hand or add a rule.") {
@@ -143,7 +203,15 @@ struct ActivitySettingsView: View {
     }
 
     private func setExcluded(_ apps: [String]) {
-        UserDefaults.standard.set(apps, forKey: ActivitySettings.excludedKey)
+        tracker.setExcludedApps(apps)
+    }
+
+    private func toggle(_ category: ActivityCategory) {
+        let excluded = tracker.settings.excludedCategories
+        tracker.setExcludedCategories(excluded.contains(category) ? excluded.filter { $0 != category }
+                                      : ActivityCategory.allCases.filter { excluded.contains($0) || $0 == category })
+        categoriesChanged = true
+        applied = nil
     }
 
     private func addExcluded() {

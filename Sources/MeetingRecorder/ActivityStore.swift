@@ -2,9 +2,15 @@ import Foundation
 
 /// Activity blocks, projects and rules, in the meeting database.
 extension MeetingStore {
-    private static let blockColumns = """
-        id, start, end, app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session, claude_title, idle, project_id,
+    private static let detailColumns = """
+        app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session, claude_title, idle, project_id,
         typed_excerpt, category, ai_description, ai_project_id
+        """
+    private static let blockColumns = "id, start, end, " + detailColumns
+    /// What a private block loses: everything but the app, the times and the category.
+    private static let privateFields = """
+        window_title = NULL, url = NULL, repo = NULL, branch = NULL, ticket = NULL, claude_session = NULL, claude_title = NULL,
+        typed_excerpt = NULL, ai_description = NULL
         """
 
     func blocks(in range: Range<Date>) throws -> [ActivityBlock] {
@@ -56,10 +62,23 @@ extension MeetingStore {
         }
     }
 
-    func setClassification(ofBlock id: Int64, _ classification: ActivityAI.Classification) throws {
+    /// Saves the classification; a private block also loses its details.
+    func setClassification(ofBlock id: Int64, _ classification: ActivityAI.Classification, private isPrivate: Bool = false) throws {
         try write(notify: Self.activityDidChange) {
-            try db.run("UPDATE activity_blocks SET category = ?, ai_description = ?, ai_project_id = ? WHERE id = ?",
+            try db.run("UPDATE activity_blocks SET category = ?, ai_description = ?, ai_project_id = ?\(isPrivate ? ", " + Self.privateFields : "") WHERE id = ?",
                        [classification.category.rawValue, classification.description, classification.projectID, id])
+        }
+    }
+
+    /// Strips or deletes the blocks with one of `categories`; returns how many.
+    @discardableResult
+    func applyExcluded(categories: [ActivityCategory], remove: Bool) throws -> Int {
+        guard !categories.isEmpty else { return 0 }
+        let match = "category IN (\(Self.placeholders(categories.count)))"
+        return try write(notify: Self.activityDidChange) {
+            try db.run(remove ? "DELETE FROM activity_blocks WHERE \(match)" : "UPDATE activity_blocks SET \(Self.privateFields) WHERE \(match)",
+                       categories.map { $0.rawValue })
+            return try changes()
         }
     }
 
@@ -87,8 +106,56 @@ extension MeetingStore {
     func deleteBlocks(before date: Date) throws -> Int {
         try write(notify: Self.activityDidChange) {
             try db.run("DELETE FROM activity_blocks WHERE end < ?", [date.timeIntervalSince1970])
-            return try db.query("SELECT changes()") { Int($0.int64(0)) }.first ?? 0
+            return try changes()
         }
+    }
+
+    func delete(blockIDs: [Int64]) throws {
+        guard !blockIDs.isEmpty else { return }
+        try write(notify: Self.activityDidChange) {
+            try db.run("DELETE FROM activity_blocks WHERE id IN (\(Self.placeholders(blockIDs.count)))", blockIDs)
+        }
+    }
+
+    /// Removes the activity between `from` and `to`: blocks inside go, blocks reaching into it are cut at its edges
+    /// (and lose their typed excerpt), and a block spanning it is split in two.
+    func delete(from: Date, to: Date) throws {
+        let from = from.timeIntervalSince1970, to = to.timeIntervalSince1970
+        try write(notify: Self.activityDidChange) {
+            try db.run("""
+                INSERT INTO activity_blocks (start, end, \(Self.detailColumns))
+                SELECT ?, end, \(Self.detailColumns.replacingOccurrences(of: "typed_excerpt", with: "NULL")) FROM activity_blocks
+                WHERE start < ? AND end > ?
+                """, [to, from, to])
+            try db.run("UPDATE activity_blocks SET end = ?, typed_excerpt = NULL WHERE start < ? AND end > ?", [from, from, from])
+            try db.run("UPDATE activity_blocks SET start = ?, typed_excerpt = NULL WHERE start >= ? AND start < ? AND end > ?", [to, from, to, to])
+            try db.run("DELETE FROM activity_blocks WHERE start >= ? AND end <= ?", [from, to])
+        }
+    }
+
+    /// Removes the blocks on the day containing `day` whose address is on `host`.
+    func deleteMatching(host: String, on day: Date) throws {
+        let range = ActivityLogic.day(containing: day)
+        try write(notify: Self.activityDidChange) {
+            try db.run("DELETE FROM activity_blocks WHERE end > ? AND start < ? AND (url = ? OR substr(url, 1, ?) = ?)",
+                       [range.lowerBound.timeIntervalSince1970, range.upperBound.timeIntervalSince1970, host, host.count + 1, host + "/"])
+        }
+    }
+
+    /// Removes every block and the classification cache.
+    func deleteAll() throws {
+        try write(notify: Self.activityDidChange) {
+            try db.run("DELETE FROM activity_blocks")
+            try db.run("DELETE FROM activity_ai_cache")
+        }
+    }
+
+    private static func placeholders(_ count: Int) -> String {
+        Array(repeating: "?", count: count).joined(separator: ", ")
+    }
+
+    private func changes() throws -> Int {
+        try db.query("SELECT changes()") { Int($0.int64(0)) }.first ?? 0
     }
 
     func projects() throws -> [Project] {

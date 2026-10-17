@@ -253,6 +253,93 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(try store.blocks(in: t0.addingTimeInterval(-10)..<t0).isEmpty, "outside")
     }),
 
+    ("blocks are deleted by id, by range, by host on a day and all at once", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        func add(_ start: TimeInterval, _ end: TimeInterval, url: String? = nil) throws -> Int64 {
+            var b = block(start, end, url: url)
+            b.id = 0
+            b.typedExcerpt = "typed"
+            return try store.saveBlock(b)
+        }
+        func spans() throws -> [String] {
+            try store.blocks(in: t0.addingTimeInterval(-100_000)..<t0.addingTimeInterval(100_000)).map {
+                "\(Int($0.start.timeIntervalSince(t0)))-\(Int($0.end.timeIntervalSince(t0)))\($0.typedExcerpt == nil ? "" : "t")"
+            }
+        }
+        let a = try add(0, 100)
+        let b = try add(100, 200)
+        _ = try add(200, 300)
+        try store.delete(blockIDs: [a, b])
+        check(try spans() == ["200-300t"], "by id \(try spans())")
+        try store.delete(blockIDs: [])
+
+        _ = try add(0, 100)
+        _ = try add(400, 600)
+        try store.delete(from: t0.addingTimeInterval(50), to: t0.addingTimeInterval(250))
+        check(try spans() == ["0-50", "250-300", "400-600t"], "cut at the edges, typed text dropped \(try spans())")
+        try store.delete(from: t0.addingTimeInterval(450), to: t0.addingTimeInterval(500))
+        check(try spans() == ["0-50", "250-300", "400-450", "500-600"], "a spanning block is split \(try spans())")
+
+        try store.deleteAll()
+        _ = try add(0, 10, url: "github.com/quiddly-com/finq.api")
+        _ = try add(10, 20, url: "github.com")
+        _ = try add(20, 30, url: "github.community/x")
+        _ = try add(30, 40, url: "docs.github.com/y")
+        _ = try add(200_000, 200_010, url: "github.com/z")
+        try store.deleteMatching(host: "github.com", on: t0)
+        check(try store.blocks(in: t0..<t0.addingTimeInterval(100)).compactMap(\.key.url) == ["github.community/x", "docs.github.com/y"],
+              "only the host on that day")
+        check(try store.blocks(in: t0.addingTimeInterval(200_000)..<t0.addingTimeInterval(200_100)).count == 1, "other days stay")
+
+        try store.cacheClassification("k", category: "coding", description: nil, project: nil)
+        try store.deleteAll()
+        check(try store.blocks(in: t0.addingTimeInterval(-1e6)..<t0.addingTimeInterval(1e6)).isEmpty, "all blocks gone")
+        check(try store.cachedClassification("k") == nil, "cache cleared")
+    }),
+
+    ("excluded categories make blocks private or remove them", {
+        var settings = ActivitySettings()
+        check(settings.action(for: .entertainment) == .keep && settings.action(for: nil) == .keep, "nothing excluded by default")
+        settings.excludedCategories = [.entertainment, .chat]
+        check(settings.action(for: .entertainment) == .strip && settings.action(for: .coding) == .keep && settings.action(for: nil) == .keep, "strip")
+        settings.removeExcluded = true
+        check(settings.action(for: .chat) == .remove, "remove")
+        let defaults = UserDefaults(suiteName: "activity-\(UUID().uuidString)")!
+        defaults.register(defaults: ActivitySettings.defaults)
+        check(ActivitySettings(defaults).excludedCategories.isEmpty && !ActivitySettings(defaults).removeExcluded, "defaults")
+        defaults.set(["entertainment", "bogus", "code review"], forKey: ActivitySettings.excludedCategoriesKey)
+        check(ActivitySettings(defaults).excludedCategories == [.entertainment, .codeReview], "read back, unknown dropped")
+
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        func add(_ start: TimeInterval) throws -> Int64 {
+            var b = block(start, start + 10, title: "Secret", url: "example.com/a", repo: "r", branch: "b", ticket: "AB-1",
+                          claude: [ClaudeSession(id: "s", folder: "/f", title: "t")])
+            b.id = 0
+            b.typedExcerpt = "typed"
+            return try store.saveBlock(b)
+        }
+        let kept = try add(0), stripped = try add(10), other = try add(20)
+        try store.setClassification(ofBlock: kept, ActivityAI.Classification(category: .coding, description: "Coding"))
+        try store.setClassification(ofBlock: stripped, ActivityAI.Classification(category: .entertainment, description: "Video"), private: true)
+        try store.setClassification(ofBlock: other, ActivityAI.Classification(category: .chat, description: "Chat"))
+        var blocks = try store.blocks(in: t0..<t0.addingTimeInterval(100))
+        check(blocks[0].key.windowTitle == "Secret" && blocks[0].aiDescription == "Coding", "kept")
+        let s = blocks[1]
+        check(s.key.windowTitle == nil && s.key.url == nil && s.key.repo == nil && s.key.branch == nil && s.key.ticket == nil
+              && s.key.claude.isEmpty && s.typedExcerpt == nil && s.aiDescription == nil, "stripped \(s)")
+        check(s.key.appName == "Xcode" && s.category == .entertainment && s.duration == 10, "app, times and category stay")
+        check(try store.applyExcluded(categories: [.chat], remove: false) == 1, "existing chat block stripped")
+        check(try store.blocks(in: t0..<t0.addingTimeInterval(100))[2].key.windowTitle == nil, "chat stripped")
+        check(try store.applyExcluded(categories: [.entertainment, .chat], remove: true) == 2, "removed")
+        blocks = try store.blocks(in: t0..<t0.addingTimeInterval(100))
+        check(blocks.map(\.id) == [kept], "only the kept block remains")
+        check(try store.applyExcluded(categories: [], remove: true) == 0, "nothing excluded")
+    }),
+
     ("the text around the cursor is excerpted and kept once it has settled", {
         let text = (1...50).map { "word\($0)" }.joined(separator: " ")
         let middle = ActivityLogic.excerpt(value: text, cursor: 150, limit: 60)!

@@ -72,10 +72,25 @@ final class ActivityTracker: ObservableObject {
         UserDefaults.standard.set(paused, forKey: ActivitySettings.pausedKey)
     }
 
+    func setExcludedApps(_ apps: [String]) {
+        UserDefaults.standard.set(apps, forKey: ActivitySettings.excludedKey)
+    }
+
+    func setExcludedCategories(_ categories: [ActivityCategory]) {
+        UserDefaults.standard.set(categories.map(\.rawValue), forKey: ActivitySettings.excludedCategoriesKey)
+    }
+
     /// Writes the open block and forgets it, so what follows starts a new one.
     func flush() {
         guard let current else { return }
         save(current)
+        self.current = nil
+    }
+
+    /// Forgets the open block without writing it when it is about to be deleted, so the next sample starts a new one.
+    /// The typed text already kept is not stored again for that block.
+    func discard(where matches: (ActivityBlock) -> Bool) {
+        guard let current, matches(current) else { return }
         self.current = nil
     }
 

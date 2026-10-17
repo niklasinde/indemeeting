@@ -51,7 +51,8 @@ final class ActivityClassifier {
     }
 
     func run() async {
-        guard !running, ActivitySettings(.standard).classify, Self.isAvailable else { return }
+        let settings = ActivitySettings(.standard)
+        guard !running, settings.classify, Self.isAvailable else { return }
         running = true
         defer { running = false }
         do {
@@ -67,8 +68,13 @@ final class ActivityClassifier {
                     answer = fresh
                     try store.cacheClassification(key, category: fresh.category, description: fresh.description, project: fresh.project)
                 }
-                try store.setClassification(ofBlock: block.id, ActivityAI.classification(
-                    category: answer.category, description: answer.description, project: answer.project, projects: projects))
+                let classification = ActivityAI.classification(category: answer.category, description: answer.description,
+                                                               project: answer.project, projects: projects)
+                switch settings.action(for: classification.category) {
+                case .keep: try store.setClassification(ofBlock: block.id, classification)
+                case .strip: try store.setClassification(ofBlock: block.id, classification, private: true)
+                case .remove: try store.delete(blockIDs: [block.id])
+                }
             }
         } catch {
             FileHandle.standardError.write(Data("Activity classification failed: \(error.localizedDescription)\n".utf8))

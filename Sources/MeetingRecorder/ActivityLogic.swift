@@ -146,6 +146,8 @@ struct ActivitySettings: Equatable {
     static let excludedKey = "activityExcludedApps"
     static let typingKey = "activityCaptureTyping"
     static let classifyKey = "activityClassify"
+    static let excludedCategoriesKey = "activityExcludedCategories"
+    static let removeExcludedKey = "activityRemoveExcludedCategories"
 
     static let defaultExcluded = ["1Password", "Keychain Access", "Passwords"]
     static let idleChoices: [TimeInterval] = [60, 120, 300, 600]
@@ -155,6 +157,7 @@ struct ActivitySettings: Equatable {
     static let defaults: [String: Any] = [
         enabledKey: false, pausedKey: false, titlesKey: true, urlsKey: true, gitKey: true, claudeKey: true,
         idleKey: 120, retentionKey: 90, excludedKey: defaultExcluded, typingKey: false, classifyKey: true,
+        excludedCategoriesKey: [String](), removeExcludedKey: false,
     ]
 
     var enabled = false
@@ -168,6 +171,8 @@ struct ActivitySettings: Equatable {
     var excludedApps = defaultExcluded
     var typing = false
     var classify = true
+    var excludedCategories: [ActivityCategory] = []
+    var removeExcluded = false
 
     init() {}
 
@@ -183,10 +188,20 @@ struct ActivitySettings: Equatable {
         excludedApps = defaults.stringArray(forKey: Self.excludedKey) ?? Self.defaultExcluded
         typing = defaults.bool(forKey: Self.typingKey)
         classify = defaults.bool(forKey: Self.classifyKey)
+        excludedCategories = (defaults.stringArray(forKey: Self.excludedCategoriesKey) ?? []).compactMap(ActivityCategory.init)
+        removeExcluded = defaults.bool(forKey: Self.removeExcludedKey)
     }
 
     func excludes(appName: String?, bundle: String?) -> Bool {
         excludedApps.contains { name in [appName, bundle].contains { $0?.caseInsensitiveCompare(name) == .orderedSame } }
+    }
+
+    enum CategoryAction { case keep, strip, remove }
+
+    /// What happens to a block once it has been given `category`: excluded categories are made private or removed.
+    func action(for category: ActivityCategory?) -> CategoryAction {
+        guard let category, excludedCategories.contains(category) else { return .keep }
+        return removeExcluded ? .remove : .strip
     }
 }
 

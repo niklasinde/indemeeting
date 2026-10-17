@@ -16,6 +16,7 @@ final class ActivityModel: ObservableObject {
     @Published private(set) var projects: [Project] = []
     @Published private(set) var rules: [ProjectRule] = []
     @Published var editing: ActivityBlock?
+    @Published var selected: Int64?
     @Published var copied = false
 
     let store: MeetingStore
@@ -59,6 +60,39 @@ final class ActivityModel: ObservableObject {
 
     func addRule(_ field: RuleField, pattern: String, project: Int64) {
         perform { try store.addRule(project: project, field: field, pattern: pattern) }
+    }
+
+    func isPrivate(_ block: ActivityBlock) -> Bool { tracker.settings.action(for: block.category) != .keep }
+
+    func delete(_ block: ActivityBlock) {
+        tracker.discard { $0.id == block.id }
+        perform { try store.delete(blockIDs: [block.id]) }
+    }
+
+    func deleteAndStopTracking(_ block: ActivityBlock) {
+        if let app = block.key.appName, !tracker.settings.excludes(appName: app, bundle: block.key.appBundle) {
+            tracker.setExcludedApps(tracker.settings.excludedApps + [app])
+        }
+        delete(block)
+    }
+
+    func deleteHost(of block: ActivityBlock) {
+        guard let host = block.host else { return }
+        let day = ActivityLogic.day(containing: block.start)
+        tracker.discard { $0.host == host && $0.seconds(in: day) > 0 }
+        perform { try store.deleteMatching(host: host, on: block.start) }
+    }
+
+    /// Deletes everything since `seconds` ago, including the open block.
+    func deleteLast(_ seconds: TimeInterval) {
+        delete(Date().addingTimeInterval(-seconds)..<Date.distantFuture)
+    }
+
+    func deleteDay() { delete(day) }
+
+    private func delete(_ range: Range<Date>) {
+        tracker.discard { $0.seconds(in: range) > 0 }
+        perform { try store.delete(from: range.lowerBound, to: range.upperBound) }
     }
 
     func addProject(_ name: String) -> Project? {
@@ -114,6 +148,7 @@ final class ActivityModel: ObservableObject {
 struct ActivityView: View {
     @ObservedObject var model: ActivityModel
     @ObservedObject var tracker: ActivityTracker
+    @State private var confirmingDayDelete = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -146,6 +181,7 @@ struct ActivityView: View {
                     Label(model.copied ? "Copied" : "Copy Context", systemImage: model.copied ? "checkmark" : "doc.on.doc")
                 }
                 .help("Copies a Markdown summary of this \(model.mode.rawValue.lowercased()) for pasting into Claude")
+                if model.mode == .day { deleteMenu }
             }
             HStack(spacing: 8) {
                 Text(subtitle)
@@ -177,6 +213,25 @@ struct ActivityView: View {
         .padding(.horizontal, RecordingDetail.gutter)
         .padding(.top, 20)
         .padding(.bottom, 14)
+    }
+
+    private var deleteMenu: some View {
+        Menu {
+            Button("Delete Last 15 Minutes") { model.deleteLast(15 * 60) }.disabled(!model.isToday)
+            Button("Delete Last Hour") { model.deleteLast(3600) }.disabled(!model.isToday)
+            Divider()
+            Button("Delete This Day\u{2026}") { confirmingDayDelete = true }.disabled(model.blocks.isEmpty)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Delete activity")
+        .alert("Delete all activity on \(model.date.formatted(.dateTime.weekday(.wide).day().month(.wide)))?", isPresented: $confirmingDayDelete) {
+            Button("Delete", role: .destructive) { model.deleteDay() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every block of the day is removed from the database.")
+        }
     }
 
     private var subtitle: String {
@@ -251,6 +306,14 @@ struct DayView: View {
                         BlockRow(block: block, model: model)
                     }
                 }
+                .focusable()
+                .focusEffectDisabled()
+                .onKeyPress(keys: [.delete, .deleteForward]) { _ in
+                    guard let block = model.blocks.first(where: { $0.id == model.selected }) else { return .ignored }
+                    model.delete(block)
+                    model.selected = nil
+                    return .handled
+                }
             }
         }
     }
@@ -262,18 +325,37 @@ struct BlockRow: View {
     @State private var showingProject = false
 
     var body: some View {
-        if block.key.idle {
+        row
+            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(showingProject || model.selected == block.id ? 0.06 : 0)))
+            .contentShape(Rectangle())
+            .contextMenu { BlockMenu(block: block, model: model) }
+    }
+
+    @ViewBuilder private var row: some View {
+        if block.key.idle || model.isPrivate(block) {
             HStack(spacing: 10) {
                 timeColumn
-                Image(systemName: "moon.zzz").frame(width: 20)
-                Text("Away \u{00B7} \(ActivityLogic.hoursText(block.duration))")
+                if block.key.idle {
+                    Image(systemName: "moon.zzz").frame(width: 20)
+                    Text("Away \u{00B7} \(ActivityLogic.hoursText(block.duration))")
+                } else {
+                    Image(systemName: "eye.slash").frame(width: 20)
+                    Text("Private \u{00B7} \(block.category?.label ?? "")")
+                    if let app = block.key.appName { Text(app) }
+                    Spacer(minLength: 8)
+                    Text(ActivityLogic.hoursText(block.duration)).monospacedDigit()
+                }
             }
             .font(.callout)
             .foregroundStyle(.tertiary)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
+            .onTapGesture { model.selected = block.id }
         } else {
-            Button { showingProject = true } label: {
+            Button {
+                model.selected = block.id
+                showingProject = true
+            } label: {
                 HStack(alignment: .top, spacing: 10) {
                     timeColumn.padding(.top, 1)
                     if let icon = model.icon(for: block) {
@@ -324,7 +406,6 @@ struct BlockRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 7)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(showingProject ? 0.06 : 0)))
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -347,6 +428,22 @@ struct BlockRow: View {
         if let category = block.category { chips.append(Chip(text: category.label, icon: "square.grid.2x2")) }
         for session in block.key.claude { chips.append(Chip(text: session.title, icon: "sparkles", tint: .purple)) }
         return chips
+    }
+}
+
+/// The delete actions of a block, in its context menu.
+struct BlockMenu: View {
+    let block: ActivityBlock
+    let model: ActivityModel
+
+    var body: some View {
+        Button("Delete") { model.delete(block) }
+        if !block.key.idle, let app = block.key.appName {
+            Button("Delete and Stop Tracking \(app)") { model.deleteAndStopTracking(block) }
+        }
+        if let host = block.host {
+            Button("Delete All from \(host) \(Calendar.current.isDateInToday(block.start) ? "Today" : "This Day")") { model.deleteHost(of: block) }
+        }
     }
 }
 
@@ -377,6 +474,8 @@ struct ProjectPicker: View {
                 TextField("New project", text: $newName).textFieldStyle(.roundedBorder).onSubmit(create)
                 Button("Create", action: create).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+            Divider()
+            Button(role: .destructive) { model.delete(block) } label: { Label("Delete", systemImage: "trash") }
         }
         .padding(16)
         .frame(width: 320)
