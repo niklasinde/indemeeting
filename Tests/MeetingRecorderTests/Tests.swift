@@ -539,6 +539,15 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(SpeechModelStatus.failed("No network").text == "Download failed \u{2014} No network", "failed")
     }),
 
+    ("the model overview shows the least ready model of a step", {
+        check(ModelState(.installed) == .ready && ModelState(.failed("x")) == .notDownloaded && ModelState(.unsupported) == .unavailable, "one")
+        check(ModelState(all: [.installed, .downloading(0.3)]) == .downloading && ModelState(all: [.installed, .installed]) == .ready, "all")
+        check(ModelState(all: [.downloading(nil), .notDownloaded, .checking]) == .notDownloaded && ModelState(all: []) == .unavailable, "least")
+        check(ModelState(summary: nil) == .ready && ModelState(summary: .modelNotReady) == .downloading
+              && ModelState(summary: .appleIntelligenceOff) == .unavailable, "summaries")
+        check(ModelState.downloading.text == "Still downloading" && ModelState.notDownloaded.text == "Not downloaded", "text")
+    }),
+
     ("KB-Whisper models name their files and engines", {
         check(WhisperModel.all.map(\.id) == ["kb-whisper-tiny", "kb-whisper-base", "kb-whisper-small",
                                               "kb-whisper-medium-q5_0", "kb-whisper-large-q5_0"], "engines")

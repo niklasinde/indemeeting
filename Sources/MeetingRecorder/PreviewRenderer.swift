@@ -105,6 +105,15 @@ enum PreviewRenderer {
             await saveSettings(SpeechModels(), WhisperModels(), SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
                                to: output.appendingPathComponent("settings-activity-\(appearance == .aqua ? "light" : "dark").png"))
         }
+        UserDefaults.standard.set(SettingsTab.models.rawValue, forKey: SettingsTab.storageKey)
+        let overview = SpeechModels()
+        overview.refresh()
+        let overviewWhisper = WhisperModels()
+        overviewWhisper.statuses = [WhisperModel.all[2]: .installed]
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            await saveSettings(overview, overviewWhisper, SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
+                               to: output.appendingPathComponent("settings-models-\(appearance == .aqua ? "light" : "dark").png"))
+        }
         UserDefaults.standard.set(SettingsTab.meetings.rawValue, forKey: SettingsTab.storageKey)
         let models = SpeechModels()
         models.refresh()

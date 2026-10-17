@@ -235,6 +235,7 @@ final class SpeakerRecognitionModels: ObservableObject {
 enum SettingsTab: String, CaseIterable {
     case meetings = "Meetings"
     case activity = "Activity"
+    case models = "Models"
 
     static let storageKey = "settingsTab"
 }
@@ -260,14 +261,21 @@ struct SettingsView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .frame(maxWidth: .infinity)
-            ScrollView {
-                switch tab {
-                case .meetings: meetings
-                case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    switch tab {
+                    case .meetings: meetings
+                    case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
+                    case .models:
+                        ModelOverview(models: models, whisper: whisper, speakers: speakers, tracker: tracker) { anchor in
+                            tab = .meetings
+                            DispatchQueue.main.async { withAnimation { proxy.scrollTo(anchor, anchor: .top) } }
+                        }
+                    }
                 }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(maxHeight: Self.maxContentHeight)
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: Self.maxContentHeight)
         }
         .padding(24)
         .frame(width: 520)
@@ -317,6 +325,7 @@ struct SettingsView: View {
                         whisperRow(model)
                     }
                 }
+                .id(family == WhisperModel.families.first ? SettingsAnchor.whisper : nil)
             }
             section(SpeakerModel.name, footer: "Tells the other participants apart as Speaker 1, Speaker 2, \u{2026} on this Mac "
                     + "with FluidAudio\u{2019}s pyannote models, downloaded once from Hugging Face. Click a speaker in a "
@@ -324,6 +333,7 @@ struct SettingsView: View {
                 modelRow("Speaker models", size: SpeakerModel.sizeText, status: speakers.status, download: speakers.startDownload,
                          cancel: speakers.cancel, remove: speakers.remove)
             }
+            .id(SettingsAnchor.speakers)
             section("Known voices", footer: nil) {
                 if speakers.voices.isEmpty {
                     row("No voices yet", detail: "Name a speaker in a transcript to remember their voice") {}
