@@ -29,6 +29,7 @@ struct ActivitySample: Equatable {
     /// The session the user is typing into while Claude is frontmost, and the last thing they asked it.
     var claudeFocus: String?
     var claudePrompt: String?
+    var redaction: ActivityRedaction?
 
     static func idle(at time: Date) -> ActivitySample { ActivitySample(time: time, idle: true) }
 
@@ -36,8 +37,16 @@ struct ActivitySample: Equatable {
     /// background are gathered over the block instead.
     var key: ActivityKey {
         ActivityKey(appBundle: appBundle, appName: appName, windowTitle: windowTitle, url: url, repo: repo, branch: branch,
-                    ticket: ticket, claude: claude, idle: idle, claudeFocus: claudeFocus)
+                    ticket: ticket, claude: claude, idle: idle, claudeFocus: claudeFocus, redaction: redaction)
     }
+}
+
+/// What the tracking rules left of a block: a blocked app or website keeps its app (`private`), an app outside the
+/// allowlist keeps only its times (`other`), and a browser on a website outside the allowlist keeps its app (`otherSite`).
+enum ActivityRedaction: String {
+    case `private`
+    case other
+    case otherSite = "other site"
 }
 
 struct ActivityKey: Hashable {
@@ -51,6 +60,9 @@ struct ActivityKey: Hashable {
     var claude: [ClaudeSession]
     var idle: Bool
     var claudeFocus: String?
+    var redaction: ActivityRedaction?
+
+    var host: String? { url.flatMap { $0.split(separator: "/", maxSplits: 1).first }.map(String.init) }
 
     func sameBlock(as other: ActivityKey) -> Bool {
         var a = self, b = other
@@ -73,6 +85,8 @@ struct ActivityBlock: Equatable, Identifiable {
     var aiDescription: String?
     var aiProjectID: Int64?
     var claudePrompt: String?
+    /// Whether Apple Intelligence thought the block was work; nil before classification or for old answers.
+    var aiWork: Bool?
 
     var duration: TimeInterval { end.timeIntervalSince(start) }
 
@@ -85,7 +99,7 @@ struct ActivityBlock: Equatable, Identifiable {
         max(0, min(end, range.upperBound).timeIntervalSince(max(start, range.lowerBound)))
     }
 
-    var host: String? { key.url.flatMap { $0.split(separator: "/", maxSplits: 1).first }.map(String.init) }
+    var host: String? { key.host }
 }
 
 /// What a block was for, as guessed by Apple Intelligence from the app, title, address and text.
@@ -148,9 +162,7 @@ struct ProjectRule: Equatable, Identifiable {
         let pattern = pattern.lowercased()
         switch field {
         case .repo: return key.repo?.lowercased() == pattern
-        case .host:
-            guard let host = key.url?.split(separator: "/", maxSplits: 1).first?.lowercased() else { return false }
-            return host == pattern || host.hasSuffix("." + pattern)
+        case .host: return key.host.map { HostPattern.matches(pattern, host: $0) } ?? false
         case .app: return [key.appBundle, key.appName].contains { $0?.lowercased() == pattern }
         case .ticket: return key.ticket?.lowercased().hasPrefix(pattern + "-") == true
         }
@@ -167,11 +179,23 @@ struct ActivitySettings: Equatable {
     static let claudeKey = "activityCaptureClaude"
     static let idleKey = "activityIdleSeconds"
     static let retentionKey = "activityRetentionDays"
+    /// The blocked apps; the key predates the allowlist.
     static let excludedKey = "activityExcludedApps"
+    static let allowedAppsKey = "activityAllowedApps"
+    static let blockedSitesKey = "activityBlockedWebsites"
+    static let allowedSitesKey = "activityAllowedWebsites"
+    static let appModeKey = "activityAppMode"
+    static let workAppsKey = "activityWorkApps"
+    static let workSitesKey = "activityWorkWebsites"
+    static let nonWorkAppsKey = "activityNonWorkApps"
+    static let nonWorkSitesKey = "activityNonWorkWebsites"
+    static let nonWorkKey = "activityNonWork"
+    static let siteModeKey = "activityWebsiteMode"
     static let typingKey = "activityCaptureTyping"
     static let classifyKey = "activityClassify"
     static let excludedCategoriesKey = "activityExcludedCategories"
-    static let removeExcludedKey = "activityRemoveExcludedCategories"
+    /// Removes blocked activity instead of keeping it private; the key predates blocked apps and websites.
+    static let removeBlockedKey = "activityRemoveExcludedCategories"
 
     static let defaultExcluded = ["1Password", "Keychain Access", "Passwords"]
     static let idleChoices: [TimeInterval] = [60, 120, 300, 600]
@@ -183,8 +207,30 @@ struct ActivitySettings: Equatable {
     static let defaults: [String: Any] = [
         enabledKey: false, pausedKey: false, titlesKey: true, urlsKey: true, gitKey: true, claudeKey: true,
         idleKey: 120, retentionKey: 90, excludedKey: defaultExcluded, typingKey: false, classifyKey: true,
-        excludedCategoriesKey: [String](), removeExcludedKey: false,
+        excludedCategoriesKey: [String](), removeBlockedKey: false, allowedAppsKey: [String](), blockedSitesKey: [String](),
+        allowedSitesKey: [String](), appModeKey: ListMode.allExceptBlocked.rawValue, siteModeKey: ListMode.allExceptBlocked.rawValue,
+        workAppsKey: [String](), workSitesKey: [String](), nonWorkAppsKey: [String](), nonWorkSitesKey: [String](),
+        nonWorkKey: NonWork.keep.rawValue,
     ]
+
+    enum NonWork: String, CaseIterable {
+        case keep
+        case fold
+        case remove
+
+        var label: String {
+            switch self {
+            case .keep: return "Keep"
+            case .fold: return "Fold into Other"
+            case .remove: return "Remove"
+            }
+        }
+    }
+
+    enum ListMode: String, CaseIterable {
+        case allExceptBlocked = "blocked"
+        case onlyAllowed = "allowed"
+    }
 
     var enabled = false
     var paused = false
@@ -194,11 +240,21 @@ struct ActivitySettings: Equatable {
     var claude = true
     var idleSeconds: TimeInterval = 120
     var retentionDays = 90
-    var excludedApps = defaultExcluded
+    var blockedApps = defaultExcluded
+    var allowedApps: [String] = []
+    var blockedSites: [String] = []
+    var allowedSites: [String] = []
+    var appMode = ListMode.allExceptBlocked
+    var siteMode = ListMode.allExceptBlocked
+    var workApps: [String] = []
+    var workSites: [String] = []
+    var nonWorkApps: [String] = []
+    var nonWorkSites: [String] = []
+    var nonWork = NonWork.keep
     var typing = false
     var classify = true
     var excludedCategories: [ActivityCategory] = []
-    var removeExcluded = false
+    var removeBlocked = false
 
     init() {}
 
@@ -211,15 +267,91 @@ struct ActivitySettings: Equatable {
         claude = defaults.bool(forKey: Self.claudeKey)
         idleSeconds = defaults.double(forKey: Self.idleKey)
         retentionDays = defaults.integer(forKey: Self.retentionKey)
-        excludedApps = defaults.stringArray(forKey: Self.excludedKey) ?? Self.defaultExcluded
+        blockedApps = defaults.stringArray(forKey: Self.excludedKey) ?? Self.defaultExcluded
+        allowedApps = defaults.stringArray(forKey: Self.allowedAppsKey) ?? []
+        blockedSites = defaults.stringArray(forKey: Self.blockedSitesKey) ?? []
+        allowedSites = defaults.stringArray(forKey: Self.allowedSitesKey) ?? []
+        appMode = defaults.string(forKey: Self.appModeKey).flatMap(ListMode.init) ?? .allExceptBlocked
+        siteMode = defaults.string(forKey: Self.siteModeKey).flatMap(ListMode.init) ?? .allExceptBlocked
+        workApps = defaults.stringArray(forKey: Self.workAppsKey) ?? []
+        workSites = defaults.stringArray(forKey: Self.workSitesKey) ?? []
+        nonWorkApps = defaults.stringArray(forKey: Self.nonWorkAppsKey) ?? []
+        nonWorkSites = defaults.stringArray(forKey: Self.nonWorkSitesKey) ?? []
+        nonWork = defaults.string(forKey: Self.nonWorkKey).flatMap(NonWork.init) ?? .keep
         typing = defaults.bool(forKey: Self.typingKey)
         classify = defaults.bool(forKey: Self.classifyKey)
         excludedCategories = (defaults.stringArray(forKey: Self.excludedCategoriesKey) ?? []).compactMap(ActivityCategory.init)
-        removeExcluded = defaults.bool(forKey: Self.removeExcludedKey)
+        removeBlocked = defaults.bool(forKey: Self.removeBlockedKey)
     }
 
-    func excludes(appName: String?, bundle: String?) -> Bool {
-        excludedApps.contains { name in [appName, bundle].contains { $0?.caseInsensitiveCompare(name) == .orderedSame } }
+    func blocks(appName: String?, bundle: String?) -> Bool { Self.lists(blockedApps, appName: appName, bundle: bundle) }
+    func allows(appName: String?, bundle: String?) -> Bool { Self.lists(allowedApps, appName: appName, bundle: bundle) }
+    func blocks(host: String?) -> Bool { Self.lists(blockedSites, host: host) }
+    func allows(host: String?) -> Bool { Self.lists(allowedSites, host: host) }
+
+    /// What the user said about the block's website, else its app; nil when they said nothing.
+    func workRule(_ key: ActivityKey) -> Bool? {
+        if Self.lists(nonWorkSites, host: key.host) { return false }
+        if Self.lists(workSites, host: key.host) { return true }
+        if Self.lists(nonWorkApps, appName: key.appName, bundle: key.appBundle) { return false }
+        if Self.lists(workApps, appName: key.appName, bundle: key.appBundle) { return true }
+        return nil
+    }
+
+    /// The user's own rule first, then an allowed app or website counts as work, then Apple Intelligence: entertainment
+    /// and blocks it says are not work are not work. Blocks not yet categorised count as work.
+    func isWork(_ block: ActivityBlock) -> Bool {
+        if let rule = workRule(block.key) { return rule }
+        if allows(appName: block.key.appName, bundle: block.key.appBundle) || allows(host: block.key.host) { return true }
+        return block.category != .entertainment && block.aiWork != false
+    }
+
+    /// Whether the browser's address has to be read even when addresses are not kept, to apply the website rules.
+    var needsHost: Bool { siteMode == .onlyAllowed || !blockedSites.isEmpty || (appMode == .onlyAllowed && !allowedSites.isEmpty) }
+
+    private static func lists(_ list: [String], host: String?) -> Bool {
+        host.map { host in list.contains { HostPattern.matches($0, host: host) } } ?? false
+    }
+
+    private static func lists(_ list: [String], appName: String?, bundle: String?) -> Bool {
+        list.contains { name in [appName, bundle].contains { $0?.caseInsensitiveCompare(name) == .orderedSame } }
+    }
+
+    enum Capture: Equatable {
+        case keep
+        case redact(ActivityRedaction)
+        case remove
+    }
+
+    /// What the app and website rules do with a moment, in this order: a blocked app, then a blocked website (both
+    /// private, or removed), then an app or website the user said is not work (other, or removed, unless non-work
+    /// activity is kept), then an app outside the app allowlist (other; a browser on an allowed website counts as
+    /// allowed), then a browser on a website outside the website allowlist (other site, or removed). Idle time and
+    /// blocks that are already other are left alone.
+    func capture(_ key: ActivityKey) -> Capture {
+        guard !key.idle, key.redaction != .other, key.appName != nil || key.appBundle != nil else { return .keep }
+        let blocked: Capture = removeBlocked ? .remove : .redact(.private)
+        if blocks(appName: key.appName, bundle: key.appBundle) || blocks(host: key.host) { return blocked }
+        if nonWork != .keep, workRule(key) == false { return foldedNonWork }
+        let browser = WebBrowsers.contains(key.appBundle)
+        if appMode == .onlyAllowed, !allows(appName: key.appName, bundle: key.appBundle), !(browser && allows(host: key.host)) {
+            return .redact(.other)
+        }
+        if browser, siteMode == .onlyAllowed, !allows(host: key.host) { return removeBlocked ? .remove : .redact(.otherSite) }
+        return .keep
+    }
+
+    private var foldedNonWork: Capture { nonWork == .remove ? .remove : .redact(.other) }
+
+    /// What the rules do with a stored block: the capture rules, and once it is categorised, an excluded category
+    /// (private, or removed) and non-work (other, or removed). The stronger outcome wins.
+    func review(_ block: ActivityBlock) -> Capture {
+        let captured = capture(block.key)
+        if captured == .remove || captured == .redact(.other) || block.key.idle || block.key.redaction == .other { return captured }
+        let category = action(for: block.category)
+        if category == .remove { return .remove }
+        if nonWork != .keep, !isWork(block) { return foldedNonWork }
+        return category == .strip ? .redact(.private) : captured
     }
 
     enum CategoryAction { case keep, strip, remove }
@@ -227,8 +359,50 @@ struct ActivitySettings: Equatable {
     /// What happens to a block once it has been given `category`: excluded categories are made private or removed.
     func action(for category: ActivityCategory?) -> CategoryAction {
         guard let category, excludedCategories.contains(category) else { return .keep }
-        return removeExcluded ? .remove : .strip
+        return removeBlocked ? .remove : .strip
     }
+}
+
+/// Website rules: `bank.se` covers the host and every subdomain, `*.bank.se` only the subdomains.
+enum HostPattern {
+    /// A pattern from what the user typed: scheme, credentials, port, path and query are dropped and it is lowercased;
+    /// nil when what is left is not a host name.
+    static func normalized(_ text: String) -> String? {
+        var text = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if let scheme = text.range(of: "://") { text = String(text[scheme.upperBound...]) }
+        if let end = text.firstIndex(where: { "/?#".contains($0) }) { text = String(text[..<end]) }
+        if let at = text.lastIndex(of: "@") { text = String(text[text.index(after: at)...]) }
+        if let colon = text.firstIndex(of: ":") { text = String(text[..<colon]) }
+        while text.hasSuffix(".") { text.removeLast() }
+        let wildcard = text.hasPrefix("*.")
+        if wildcard { text.removeFirst(2) }
+        let labels = text.split(separator: ".", omittingEmptySubsequences: false)
+        let valid = !text.isEmpty && labels.allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && !label.hasPrefix("-") && !label.hasSuffix("-")
+                && label.allSatisfy { ($0.isASCII && ($0.isLetter || $0.isNumber)) || $0 == "-" }
+        }
+        return valid ? (wildcard ? "*." : "") + text : nil
+    }
+
+    static func matches(_ pattern: String, host: String) -> Bool {
+        let pattern = pattern.lowercased(), host = host.lowercased()
+        if pattern.hasPrefix("*.") { return host.hasSuffix(pattern.dropFirst()) }
+        return host == pattern || host.hasSuffix("." + pattern)
+    }
+
+    static let presets: [(name: String, pattern: String)] = [
+        ("Jira", "*.atlassian.net"), ("GitHub", "github.com"), ("Confluence", "atlassian.net"), ("Google Docs", "docs.google.com"),
+    ]
+}
+
+/// Browsers whose blocks follow the website rules; the address is read from the ones `Browsers` scripts.
+enum WebBrowsers {
+    static let bundles: Set<String> = ["com.apple.Safari", "com.apple.SafariTechnologyPreview", "com.google.Chrome", "com.google.Chrome.canary",
+                                       "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser", "org.mozilla.firefox",
+                                       "com.operasoftware.Opera", "com.vivaldi.Vivaldi", "com.kagi.kagimacOS", "app.zen-browser.zen",
+                                       "org.chromium.Chromium"]
+
+    static func contains(_ bundle: String?) -> Bool { bundle.map(bundles.contains) ?? false }
 }
 
 /// Apps whose window titles name the repository being worked on.
@@ -265,23 +439,36 @@ enum ActivityLogic {
         return (open, ActivityBlock(id: 0, start: sample.time, end: end, key: sample.key, projectID: nil, claudePrompt: sample.claudePrompt))
     }
 
-    /// Applies the capture settings: excluded apps lose their title and URL, and switched-off captures are dropped.
-    static func filtered(_ sample: ActivitySample, settings: ActivitySettings) -> ActivitySample {
+    /// Applies the app and website rules and then the capture settings; nil when the moment is not to be stored.
+    static func filtered(_ sample: ActivitySample, settings: ActivitySettings) -> ActivitySample? {
         var sample = sample
-        let excluded = settings.excludes(appName: sample.appName, bundle: sample.appBundle)
-        if excluded || !settings.titles { sample.windowTitle = nil }
-        if excluded || !settings.urls { sample.url = nil }
-        if excluded || !settings.git {
+        switch settings.capture(sample.key) {
+        case .remove: return nil
+        case .redact(let redaction): return redacted(sample, as: redaction)
+        case .keep: break
+        }
+        if !settings.titles { sample.windowTitle = nil }
+        if !settings.urls { sample.url = nil }
+        if !settings.git {
             sample.repo = nil
             sample.branch = nil
         }
-        if excluded { sample.ticket = nil }
-        if excluded || !settings.claude { sample.claudePrompt = nil }
         if !settings.claude {
+            sample.claudePrompt = nil
             sample.claude = []
             sample.claudeFocus = nil
         }
         return sample
+    }
+
+    /// Only the time, and for anything but `other` the app, are kept.
+    static func redacted(_ sample: ActivitySample, as redaction: ActivityRedaction) -> ActivitySample {
+        var kept = ActivitySample(time: sample.time, redaction: redaction)
+        if redaction != .other {
+            kept.appBundle = sample.appBundle
+            kept.appName = sample.appName
+        }
+        return kept
     }
 
     // MARK: Detection
@@ -493,6 +680,19 @@ enum ActivityLogic {
         name.replacingOccurrences(of: "-", with: "/")
     }
 
+    /// Merges consecutive other blocks less than `gap` apart into one row of the timeline.
+    static func timelineRows(_ blocks: [ActivityBlock], gap: TimeInterval = 60) -> [ActivityBlock] {
+        var rows: [ActivityBlock] = []
+        for block in blocks {
+            if block.key.redaction == .other, let last = rows.last, last.key.redaction == .other, block.start.timeIntervalSince(last.end) <= gap {
+                rows[rows.count - 1].end = max(last.end, block.end)
+            } else {
+                rows.append(block)
+            }
+        }
+        return rows
+    }
+
     // MARK: Projects
 
     /// The block's own choice, else the first matching rule, else the AI guess.
@@ -519,7 +719,7 @@ enum ActivityLogic {
     }
 
     static func appTotals(_ blocks: [ActivityBlock], in range: Range<Date>) -> [Total] {
-        totals(blocks, in: range) { $0.key.appName ?? $0.key.appBundle ?? "Unknown" }
+        totals(blocks, in: range) { $0.key.redaction == .other ? "Other" : $0.key.appName ?? $0.key.appBundle ?? "Unknown" }
     }
 
     /// Seconds per category; blocks not yet categorised are left out.
@@ -744,13 +944,18 @@ enum ActivityAI {
         var category: ActivityCategory
         var description: String?
         var projectID: Int64?
+        var work: Bool?
     }
+
+    typealias Answer = (category: String, description: String?, project: String?, work: Bool?)
 
     static let instructions = """
         You label short records of what someone was doing on their Mac. Use only the given app, window title, address, \
         repository and text. category: the single best match from the list. description: at most eight words saying what \
         was being done, e.g. "Reviewing the reminder fee pull request", in English. project: exactly one of the listed project \
-        names when the record clearly belongs to it, otherwise "none".
+        names when the record clearly belongs to it, otherwise "none". work: true when it is part of someone's job (code, \
+        tickets, documents, meetings, work email or chat, anything for the listed projects), false for entertainment, \
+        shopping, social media, news and private errands.
         """
 
     /// Equal for repeats of the same work: counters, sizes and numbers in titles do not matter.
@@ -779,10 +984,10 @@ enum ActivityAI {
 
     static var projectChoices: (_ projects: [Project]) -> [String] { { ["none"] + $0.map(\.name) } }
 
-    static func classification(category: String?, description: String?, project: String?, projects: [Project]) -> Classification {
+    static func classification(category: String?, description: String?, project: String?, work: Bool? = nil, projects: [Project]) -> Classification {
         let category = category.flatMap { raw in ActivityCategory.allCases.first { $0.rawValue.caseInsensitiveCompare(raw) == .orderedSame } } ?? .other
         let words = description?.split(whereSeparator: \.isWhitespace).prefix(8).joined(separator: " ")
         let project = project.flatMap { name in projects.first { $0.name.caseInsensitiveCompare(name) == .orderedSame } }
-        return Classification(category: category, description: words.flatMap { $0.isEmpty ? nil : $0 }, projectID: project?.id)
+        return Classification(category: category, description: words.flatMap { $0.isEmpty ? nil : $0 }, projectID: project?.id, work: work)
     }
 }

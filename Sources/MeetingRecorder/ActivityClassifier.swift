@@ -60,19 +60,25 @@ final class ActivityClassifier {
             let blocks = try store.unclassifiedBlocks(endedBefore: Date().addingTimeInterval(-Self.settle), limit: Self.batchSize)
             for block in blocks {
                 let key = ActivityAI.cacheKey(block.key)
-                let answer: (category: String, description: String?, project: String?)
+                let answer: ActivityAI.Answer
                 if let cached = try store.cachedClassification(key) {
                     answer = cached
                 } else {
                     guard let fresh = try await classify(block, projects: projects) else { continue }
                     answer = fresh
-                    try store.cacheClassification(key, category: fresh.category, description: fresh.description, project: fresh.project)
+                    try store.cacheClassification(key, category: fresh.category, description: fresh.description, project: fresh.project,
+                                                  work: fresh.work)
                 }
                 let classification = ActivityAI.classification(category: answer.category, description: answer.description,
-                                                               project: answer.project, projects: projects)
-                switch settings.action(for: classification.category) {
+                                                               project: answer.project, work: answer.work, projects: projects)
+                var classified = block
+                classified.category = classification.category
+                classified.aiWork = classification.work
+                switch settings.review(classified) {
                 case .keep: try store.setClassification(ofBlock: block.id, classification)
-                case .strip: try store.setClassification(ofBlock: block.id, classification, private: true)
+                case .redact(let redaction):
+                    try store.setClassification(ofBlock: block.id, classification)
+                    try store.redact(blockIDs: [block.id], as: redaction)
                 case .remove: try store.delete(blockIDs: [block.id])
                 }
             }
@@ -81,7 +87,7 @@ final class ActivityClassifier {
         }
     }
 
-    private func classify(_ block: ActivityBlock, projects: [Project]) async throws -> (category: String, description: String?, project: String?)? {
+    private func classify(_ block: ActivityBlock, projects: [Project]) async throws -> ActivityAI.Answer? {
         #if canImport(FoundationModels)
         let session = LanguageModelSession(model: SystemLanguageModel(useCase: .contentTagging), instructions: ActivityAI.instructions)
         let response = try await session.respond(to: ActivityAI.prompt(for: block, projects: projects), schema: try Self.schema(projects),
@@ -89,7 +95,8 @@ final class ActivityClassifier {
         let content = response.content
         return (try content.value(String.self, forProperty: "category"),
                 try content.value(String?.self, forProperty: "description"),
-                try content.value(String?.self, forProperty: "project"))
+                try content.value(String?.self, forProperty: "project"),
+                try content.value(Bool?.self, forProperty: "work"))
         #else
         return nil
         #endif
@@ -101,6 +108,7 @@ final class ActivityClassifier {
             .init(name: "category", schema: DynamicGenerationSchema(name: "Category", anyOf: ActivityCategory.allCases.map(\.rawValue))),
             .init(name: "description", description: "At most eight words", schema: DynamicGenerationSchema(type: String.self)),
             .init(name: "project", schema: DynamicGenerationSchema(name: "Project", anyOf: ActivityAI.projectChoices(projects))),
+            .init(name: "work", description: "Whether this is work", schema: DynamicGenerationSchema(type: Bool.self)),
         ])
         return try GenerationSchema(root: root, dependencies: [])
     }

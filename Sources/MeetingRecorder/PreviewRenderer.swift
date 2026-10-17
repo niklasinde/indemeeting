@@ -105,6 +105,17 @@ enum PreviewRenderer {
             await saveSettings(SpeechModels(), WhisperModels(), SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
                                to: output.appendingPathComponent("settings-activity-\(appearance == .aqua ? "light" : "dark").png"))
         }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let controller = NSHostingController(rootView: ActivitySettingsView(tracker: tracker, projects: projects).padding(24).frame(width: 520))
+            controller.sizingOptions = .preferredContentSize
+            let window = NSWindow(contentViewController: controller)
+            window.appearance = NSAppearance(named: appearance)
+            window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+            window.orderBack(nil)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            save(window, to: output.appendingPathComponent("settings-activity-full-\(appearance == .aqua ? "light" : "dark").png"))
+            window.orderOut(nil)
+        }
         UserDefaults.standard.set(SettingsTab.models.rawValue, forKey: SettingsTab.storageKey)
         let overview = SpeechModels()
         overview.refresh()

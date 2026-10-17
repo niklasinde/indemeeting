@@ -69,10 +69,12 @@ enum SampleActivity {
         func block(_ dayOffset: Int, _ from: Double, _ to: Double, app: (String, String), title: String? = nil, url: String? = nil,
                    repo: String? = nil, branch: String? = nil, claude: [ClaudeSession] = [], idle: Bool = false,
                    category: ActivityCategory? = nil, description: String? = nil, excerpt: String? = nil, guess: Int64? = nil,
-                   focus: ClaudeSession? = nil, prompt: String? = nil) throws {
+                   focus: ClaudeSession? = nil, prompt: String? = nil, redaction: ActivityRedaction? = nil) throws {
             let day = calendar.startOfDay(for: calendar.date(byAdding: .day, value: dayOffset, to: now)!)
-            let key = ActivityKey(appBundle: idle ? nil : app.0, appName: idle ? nil : app.1, windowTitle: title, url: url, repo: repo, branch: branch,
-                                  ticket: ActivityLogic.ticket(in: branch, title, url), claude: claude, idle: idle, claudeFocus: focus?.id)
+            let anonymous = idle || redaction == .other
+            let key = ActivityKey(appBundle: anonymous ? nil : app.0, appName: anonymous ? nil : app.1, windowTitle: title, url: url, repo: repo,
+                                  branch: branch, ticket: ActivityLogic.ticket(in: branch, title, url), claude: claude, idle: idle,
+                                  claudeFocus: focus?.id, redaction: redaction)
             try store.saveBlock(ActivityBlock(id: 0, start: day.addingTimeInterval(from * 3600), end: day.addingTimeInterval(to * 3600),
                                               key: key, projectID: nil, typedExcerpt: excerpt, category: category, aiDescription: description,
                                               aiProjectID: guess, claudePrompt: prompt))
@@ -101,6 +103,9 @@ enum SampleActivity {
             if dayOffset.isMultiple(of: 2) { try block(dayOffset, 16.0, 16.5, app: safari, url: "developer.apple.com/documentation/swiftui/layout") }
         }
         try block(0, 16.5, 17.0, app: slack, title: "niklas \u{2014} Slack")
+        try block(0, 17.0, 17.25, app: safari, redaction: .other)
+        try block(0, 17.25, 17.5, app: slack, redaction: .other)
+        try block(0, 17.5, 17.75, app: safari, redaction: .otherSite)
     }
 }
 #endif

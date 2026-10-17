@@ -62,19 +62,48 @@ final class ActivityModel: ObservableObject {
         perform { try store.addRule(project: project, field: field, pattern: pattern) }
     }
 
-    func isPrivate(_ block: ActivityBlock) -> Bool { tracker.settings.action(for: block.category) != .keep }
+    func isPrivate(_ block: ActivityBlock) -> Bool {
+        block.key.redaction != nil || tracker.settings.action(for: block.category) != .keep
+    }
 
+    /// The timeline, with consecutive other blocks merged into one row.
+    var rows: [ActivityBlock] { ActivityLogic.timelineRows(blocks) }
+
+    /// Deletes the block, or every block of a merged other row.
     func delete(_ block: ActivityBlock) {
-        tracker.discard { $0.id == block.id }
-        perform { try store.delete(blockIDs: [block.id]) }
+        var ids = [block.id]
+        if block.key.redaction == .other, let row = rows.first(where: { $0.id == block.id }) {
+            ids = blocks.filter { $0.key.redaction == .other && $0.start >= row.start && $0.end <= row.end }.map(\.id)
+        }
+        tracker.discard { ids.contains($0.id) }
+        perform { try store.delete(blockIDs: ids) }
+    }
+
+    /// Remembers that the block's website (else its app) is or is not work, and folds or removes the day's blocks the
+    /// rule now makes non-work.
+    func markWork(_ block: ActivityBlock, _ work: Bool) {
+        let host = block.host.map { $0.hasPrefix("www.") ? String($0.dropFirst(4)) : $0 }
+        guard let entry = host ?? block.key.appName else { return }
+        let keys = host == nil ? (ActivitySettings.workAppsKey, ActivitySettings.nonWorkAppsKey)
+            : (ActivitySettings.workSitesKey, ActivitySettings.nonWorkSitesKey)
+        tracker.remove(entry, fromListAt: work ? keys.1 : keys.0)
+        tracker.add(entry, toListAt: work ? keys.0 : keys.1)
+        let settings = ActivitySettings(.standard)
+        guard !work, settings.nonWork != .keep else { return }
+        let ids = blocks.filter { settings.workRule($0.key) == false }.map(\.id)
+        tracker.flush()
+        perform { try store.applyRules(settings, to: ids) }
     }
 
     func deleteAndStopTracking(_ block: ActivityBlock) {
-        if let app = block.key.appName, !tracker.settings.excludes(appName: app, bundle: block.key.appBundle) {
-            tracker.setExcludedApps(tracker.settings.excludedApps + [app])
-        }
+        block.key.appName.map(blockApp)
         delete(block)
     }
+
+    func blockApp(_ app: String) { tracker.add(app, toListAt: ActivitySettings.excludedKey) }
+    func allowApp(_ app: String) { tracker.add(app, toListAt: ActivitySettings.allowedAppsKey) }
+    func blockHost(_ host: String) { tracker.add(host, toListAt: ActivitySettings.blockedSitesKey) }
+    func allowHost(_ host: String) { tracker.add(host, toListAt: ActivitySettings.allowedSitesKey) }
 
     func deleteHost(of block: ActivityBlock) {
         guard let host = block.host else { return }
@@ -302,14 +331,14 @@ struct DayView: View {
                     .foregroundStyle(.secondary)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(model.blocks.filter { $0.duration >= Self.minimumShown }) { block in
+                    ForEach(model.rows.filter { $0.duration >= Self.minimumShown }) { block in
                         BlockRow(block: block, model: model)
                     }
                 }
                 .focusable()
                 .focusEffectDisabled()
                 .onKeyPress(keys: [.delete, .deleteForward]) { _ in
-                    guard let block = model.blocks.first(where: { $0.id == model.selected }) else { return .ignored }
+                    guard let block = model.rows.first(where: { $0.id == model.selected }) else { return .ignored }
                     model.delete(block)
                     model.selected = nil
                     return .handled
@@ -339,9 +368,14 @@ struct BlockRow: View {
                     Image(systemName: "moon.zzz").frame(width: 20)
                     Text("Away \u{00B7} \(ActivityLogic.hoursText(block.duration))")
                 } else {
-                    Image(systemName: "eye.slash").frame(width: 20)
-                    Text("Private \u{00B7} \(block.category?.label ?? "")")
-                    if let app = block.key.appName { Text(app) }
+                    Image(systemName: block.key.redaction == .other ? "circle.dashed" : "eye.slash").frame(width: 20)
+                    switch block.key.redaction {
+                    case .other: Text("Other")
+                    case .otherSite: Text("\(block.key.appName ?? "Browser") \u{00B7} other site")
+                    default:
+                        Text(["Private", block.category?.label].compactMap { $0 }.joined(separator: " \u{00B7} "))
+                        if let app = block.key.appName { Text(app) }
+                    }
                     Spacer(minLength: 8)
                     Text(ActivityLogic.hoursText(block.duration)).monospacedDigit()
                 }
@@ -441,12 +475,33 @@ struct BlockMenu: View {
     let model: ActivityModel
 
     var body: some View {
+        let settings = model.tracker.settings
+        let app = block.key.idle ? nil : block.key.appName
         Button("Delete") { model.delete(block) }
-        if !block.key.idle, let app = block.key.appName {
+        if let app, !settings.blocks(appName: app, bundle: block.key.appBundle) {
             Button("Delete and Stop Tracking \(app)") { model.deleteAndStopTracking(block) }
         }
         if let host = block.host {
             Button("Delete All from \(host) \(Calendar.current.isDateInToday(block.start) ? "Today" : "This Day")") { model.deleteHost(of: block) }
+        }
+        Divider()
+        if let app {
+            if !settings.blocks(appName: app, bundle: block.key.appBundle) { Button("Block \(app)") { model.blockApp(app) } }
+            if settings.appMode == .onlyAllowed, !settings.allows(appName: app, bundle: block.key.appBundle) {
+                Button("Allow \(app)") { model.allowApp(app) }
+            }
+        }
+        if let host = block.host {
+            if !settings.blocks(host: host) { Button("Block \(host)") { model.blockHost(host) } }
+            if settings.siteMode == .onlyAllowed || settings.appMode == .onlyAllowed, !settings.allows(host: host) {
+                Button("Allow \(host)") { model.allowHost(host) }
+            }
+        }
+        if app != nil {
+            Divider()
+            let rule = settings.workRule(block.key)
+            if rule != true { Button("This Is Work") { model.markWork(block, true) } }
+            if rule != false { Button("This Isn\u{2019}t Work") { model.markWork(block, false) } }
         }
     }
 }

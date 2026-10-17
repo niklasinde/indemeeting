@@ -72,8 +72,20 @@ final class ActivityTracker: ObservableObject {
         UserDefaults.standard.set(paused, forKey: ActivitySettings.pausedKey)
     }
 
-    func setExcludedApps(_ apps: [String]) {
-        UserDefaults.standard.set(apps, forKey: ActivitySettings.excludedKey)
+    func setList(_ list: [String], forKey key: String) {
+        UserDefaults.standard.set(list, forKey: key)
+    }
+
+    /// Adds `entry` to the list under `key` unless it is there already (apps compare without case).
+    func add(_ entry: String, toListAt key: String) {
+        let list = UserDefaults.standard.stringArray(forKey: key) ?? []
+        guard !list.contains(where: { $0.caseInsensitiveCompare(entry) == .orderedSame }) else { return }
+        setList(list + [entry], forKey: key)
+    }
+
+    func remove(_ entry: String, fromListAt key: String) {
+        let list = UserDefaults.standard.stringArray(forKey: key) ?? []
+        setList(list.filter { $0.caseInsensitiveCompare(entry) != .orderedSame }, forKey: key)
     }
 
     func setExcludedCategories(_ categories: [ActivityCategory]) {
@@ -96,7 +108,7 @@ final class ActivityTracker: ObservableObject {
 
     /// Feeds one sample through the same path as the timer, for tests and `--simulate-activity`.
     func ingest(_ sample: ActivitySample, now: Date? = nil) {
-        let filtered = ActivityLogic.filtered(sample, settings: settings)
+        guard let filtered = ActivityLogic.filtered(sample, settings: settings) else { return flush() }
         let result = ActivityLogic.collapse(current, with: filtered)
         if let closed = result.closed {
             save(closed)
@@ -129,7 +141,7 @@ final class ActivityTracker: ObservableObject {
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return ingest(.idle(at: now)) }
         var sample = ActivitySample(time: now, appBundle: app.bundleIdentifier, appName: app.localizedName)
         sample.windowTitle = Self.focusedWindowTitle(of: app.processIdentifier)
-        if settings.urls, let bundle = app.bundleIdentifier, Browsers.supports(bundle) {
+        if settings.urls || settings.needsHost, let bundle = app.bundleIdentifier, Browsers.supports(bundle) {
             sample.url = ActivityLogic.cleanURL(Browsers.frontURL(of: bundle))
         }
         if settings.git, DeveloperApps.contains(app.bundleIdentifier), let repo = ActivityLogic.repository(inTitle: sample.windowTitle, repositories: repositories(now)) {
@@ -140,7 +152,7 @@ final class ActivityTracker: ObservableObject {
         sample.ticket = ActivityLogic.ticket(in: sample.branch, sample.claudeFocus.flatMap { id in sample.claude.first { $0.id == id }?.title },
                                              sample.windowTitle, sample.url)
         ingest(sample)
-        let excerpt = settings.typing && !settings.excludes(appName: sample.appName, bundle: sample.appBundle) && !IsSecureEventInputEnabled()
+        let excerpt = settings.typing && current != nil && current?.key.redaction == nil && !IsSecureEventInputEnabled()
             ? Self.focusedTextExcerpt(of: app.processIdentifier) : nil
         if let kept = typing.update(excerpt, now: now), current != nil {
             current?.typedExcerpt = kept

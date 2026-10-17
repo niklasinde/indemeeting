@@ -4,7 +4,7 @@ import Foundation
 extension MeetingStore {
     private static let detailColumns = """
         app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session, claude_title, idle, project_id,
-        typed_excerpt, category, ai_description, ai_project_id, claude_focus, claude_prompt
+        typed_excerpt, category, ai_description, ai_project_id, claude_focus, claude_prompt, redaction, ai_work
         """
     private static let blockColumns = "id, start, end, " + detailColumns
     /// What a private block loses: everything but the app, the times and the category.
@@ -30,20 +30,20 @@ extension MeetingStore {
                                        key.claude.isEmpty ? nil : key.claude.map(\.id).joined(separator: "\n"),
                                        key.claude.isEmpty ? nil : key.claude.map { "\($0.folder)\t\($0.title)" }.joined(separator: "\n"),
                                        key.idle, block.projectID, block.typedExcerpt, block.category?.rawValue, block.aiDescription,
-                                       block.aiProjectID, key.claudeFocus, block.claudePrompt]
+                                       block.aiProjectID, key.claudeFocus, block.claudePrompt, key.redaction?.rawValue, block.aiWork]
             if block.id > 0 {
                 try db.run("""
                     UPDATE activity_blocks SET start = ?, end = ?, app_bundle = ?, app_name = ?, window_title = ?, url = ?, repo = ?,
                         branch = ?, ticket = ?, claude_session = ?, claude_title = ?, idle = ?, project_id = ?, typed_excerpt = ?,
-                        category = ?, ai_description = ?, ai_project_id = ?, claude_focus = ?, claude_prompt = ? WHERE id = ?
+                        category = ?, ai_description = ?, ai_project_id = ?, claude_focus = ?, claude_prompt = ?, redaction = ?, ai_work = ? WHERE id = ?
                     """, values + [block.id])
                 return block.id
             }
             try db.run("""
                 INSERT INTO activity_blocks (start, end, app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session,
                                              claude_title, idle, project_id, typed_excerpt, category, ai_description, ai_project_id,
-                                             claude_focus, claude_prompt)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                             claude_focus, claude_prompt, redaction, ai_work)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, values)
             return try db.lastInsertID
         }
@@ -63,42 +63,65 @@ extension MeetingStore {
         }
     }
 
-    /// Saves the classification; a private block also loses its details.
-    func setClassification(ofBlock id: Int64, _ classification: ActivityAI.Classification, private isPrivate: Bool = false) throws {
+    func setClassification(ofBlock id: Int64, _ classification: ActivityAI.Classification) throws {
         try write(notify: Self.activityDidChange) {
-            try db.run("UPDATE activity_blocks SET category = ?, ai_description = ?, ai_project_id = ?\(isPrivate ? ", " + Self.privateFields : "") WHERE id = ?",
-                       [classification.category.rawValue, classification.description, classification.projectID, id])
+            try db.run("UPDATE activity_blocks SET category = ?, ai_description = ?, ai_project_id = ?, ai_work = ? WHERE id = ?",
+                       [classification.category.rawValue, classification.description, classification.projectID, classification.work, id])
         }
     }
 
-    /// Strips or deletes the blocks with one of `categories`; returns how many.
+    /// Applies the rules to the blocks already stored (see `ActivitySettings.review`): blocks outside them are made
+    /// private, other or other site, or removed. What a block has already lost is not brought back. Returns how many changed.
     @discardableResult
-    func applyExcluded(categories: [ActivityCategory], remove: Bool) throws -> Int {
-        guard !categories.isEmpty else { return 0 }
-        let match = "category IN (\(Self.placeholders(categories.count)))"
+    func applyRules(_ settings: ActivitySettings, to ids: [Int64]? = nil) throws -> Int {
+        if ids?.isEmpty == true { return 0 }
+        let only = ids.map { " AND id IN (\(Self.placeholders($0.count)))" } ?? ""
+        let blocks = try read {
+            try db.query("SELECT \(Self.blockColumns) FROM activity_blocks WHERE idle = 0 AND (redaction IS NULL OR redaction <> ?)\(only)",
+                         [ActivityRedaction.other.rawValue as SQLValue] + (ids ?? []).map { $0 as SQLValue }, Self.block)
+        }
+        var removed: [Int64] = []
+        var redacted: [ActivityRedaction: [Int64]] = [:]
+        for block in blocks {
+            switch settings.review(block) {
+            case .keep: break
+            case .remove: removed.append(block.id)
+            case .redact(let redaction): redacted[redaction, default: []].append(block.id)
+            }
+        }
+        try delete(blockIDs: removed)
+        return try redacted.reduce(removed.count) { try $0 + redact(blockIDs: $1.value, as: $1.key) }
+    }
+
+    /// Strips the blocks to what `redaction` keeps, unless they already keep less; returns how many changed.
+    @discardableResult
+    func redact(blockIDs: [Int64], as redaction: ActivityRedaction) throws -> Int {
+        guard !blockIDs.isEmpty else { return 0 }
+        let other = redaction == .other ? ", app_bundle = NULL, app_name = NULL, category = NULL, ai_project_id = NULL, project_id = NULL" : ""
+        let unless = redaction == .other ? "(redaction IS NULL OR redaction <> 'other')" : "redaction IS NULL"
         return try write(notify: Self.activityDidChange) {
-            try db.run(remove ? "DELETE FROM activity_blocks WHERE \(match)" : "UPDATE activity_blocks SET \(Self.privateFields) WHERE \(match)",
-                       categories.map { $0.rawValue })
+            try db.run("UPDATE activity_blocks SET \(Self.privateFields)\(other), redaction = ? WHERE \(unless) AND id IN (\(Self.placeholders(blockIDs.count)))",
+                       [redaction.rawValue as SQLValue] + blockIDs.map { $0 as SQLValue })
             return try changes()
         }
     }
 
     /// The cached answer for a cache key, with the project name as the model gave it.
-    func cachedClassification(_ key: String) throws -> (category: String, description: String?, project: String?)? {
+    func cachedClassification(_ key: String) throws -> ActivityAI.Answer? {
         try read {
-            try db.query("SELECT category, description, project FROM activity_ai_cache WHERE key = ?", [key]) {
-                ($0.string(0), $0.optionalString(1), $0.optionalString(2))
+            try db.query("SELECT category, description, project, work FROM activity_ai_cache WHERE key = ?", [key]) {
+                ($0.string(0), $0.optionalString(1), $0.optionalString(2), $0.isNull(3) ? nil : $0.bool(3))
             }.first
         }
     }
 
-    func cacheClassification(_ key: String, category: String, description: String?, project: String?) throws {
+    func cacheClassification(_ key: String, category: String, description: String?, project: String?, work: Bool? = nil) throws {
         try write(notify: Self.activityDidChange) {
             try db.run("""
-                INSERT INTO activity_ai_cache (key, category, description, project, updated) VALUES (?, ?, ?, ?, ?)
+                INSERT INTO activity_ai_cache (key, category, description, project, work, updated) VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT (key) DO UPDATE SET category = excluded.category, description = excluded.description,
-                    project = excluded.project, updated = excluded.updated
-                """, [key, category, description, project, Date().timeIntervalSince1970])
+                    project = excluded.project, work = excluded.work, updated = excluded.updated
+                """, [key, category, description, project, work, Date().timeIntervalSince1970])
         }
     }
 
@@ -224,10 +247,12 @@ extension MeetingStore {
         }
         let key = ActivityKey(appBundle: row.optionalString(3), appName: row.optionalString(4), windowTitle: row.optionalString(5),
                               url: row.optionalString(6), repo: row.optionalString(7), branch: row.optionalString(8),
-                              ticket: row.optionalString(9), claude: claude, idle: row.bool(12), claudeFocus: row.optionalString(18))
+                              ticket: row.optionalString(9), claude: claude, idle: row.bool(12), claudeFocus: row.optionalString(18),
+                              redaction: row.optionalString(20).flatMap(ActivityRedaction.init))
         return ActivityBlock(id: row.int64(0), start: Date(timeIntervalSince1970: row.double(1)), end: Date(timeIntervalSince1970: row.double(2)),
                              key: key, projectID: row.isNull(13) ? nil : row.int64(13), typedExcerpt: row.optionalString(14),
                              category: row.optionalString(15).flatMap(ActivityCategory.init), aiDescription: row.optionalString(16),
-                             aiProjectID: row.isNull(17) ? nil : row.int64(17), claudePrompt: row.optionalString(19))
+                             aiProjectID: row.isNull(17) ? nil : row.int64(17), claudePrompt: row.optionalString(19),
+                             aiWork: row.isNull(21) ? nil : row.bool(21))
     }
 }

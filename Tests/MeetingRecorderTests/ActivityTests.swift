@@ -58,19 +58,285 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(touching.closed == nil && touching.open.end == t0.addingTimeInterval(15), "a sample right at the end extends")
     }),
 
-    ("capture settings and excluded apps strip fields", {
+    ("capture settings and blocked apps strip fields", {
         var settings = ActivitySettings()
-        let s = sample(0, app: "1Password", title: "Login for bank", url: "bank.se/login", repo: "x", ticket: "QDLY-1")
-        let filtered = ActivityLogic.filtered(s, settings: settings)
-        check(filtered.appName == "1Password" && filtered.windowTitle == nil && filtered.url == nil && filtered.repo == nil && filtered.ticket == nil,
-              "excluded app keeps only the app \(filtered)")
-        check(settings.excludes(appName: "keychain access", bundle: nil), "case-insensitive")
+        var s = sample(0, app: "1Password", title: "Login for bank", url: "bank.se/login", repo: "x", ticket: "QDLY-1")
+        s.claudePrompt = "secret"
+        let filtered = ActivityLogic.filtered(s, settings: settings)!
+        check(filtered.appName == "1Password" && filtered.appBundle == "com.1Password" && filtered.windowTitle == nil && filtered.url == nil
+              && filtered.repo == nil && filtered.ticket == nil && filtered.claudePrompt == nil && filtered.redaction == .private,
+              "blocked app keeps only the app \(filtered)")
+        check(settings.blocks(appName: "keychain access", bundle: nil), "case-insensitive")
+        check(settings.blockedApps == ["1Password", "Keychain Access", "Passwords"], "default blocked apps")
         settings.titles = false
         settings.git = false
-        let partial = ActivityLogic.filtered(sample(0, title: "t", url: "a.se", repo: "r", branch: "b"), settings: settings)
-        check(partial.windowTitle == nil && partial.url == "a.se" && partial.repo == nil && partial.branch == nil, "toggles \(partial)")
+        let partial = ActivityLogic.filtered(sample(0, title: "t", url: "a.se", repo: "r", branch: "b"), settings: settings)!
+        check(partial.windowTitle == nil && partial.url == "a.se" && partial.repo == nil && partial.branch == nil && partial.redaction == nil,
+              "toggles \(partial)")
         settings.claude = false
-        check(ActivityLogic.filtered(sample(0, claude: [ClaudeSession(id: "a", folder: "/x", title: "t")]), settings: settings).claude.isEmpty, "claude off")
+        check(ActivityLogic.filtered(sample(0, claude: [ClaudeSession(id: "a", folder: "/x", title: "t")]), settings: settings)!.claude.isEmpty, "claude off")
+    }),
+
+    ("website patterns are normalised and match the host and its subdomains", {
+        check(HostPattern.normalized("https://Www.Bank.SE/login?x=1") == "www.bank.se", "scheme, path and query dropped")
+        check(HostPattern.normalized("  github.com/quiddly-com ") == "github.com", "path")
+        check(HostPattern.normalized("*.Atlassian.net") == "*.atlassian.net", "wildcard kept")
+        check(HostPattern.normalized("user@localhost:8080") == "localhost", "credentials and port")
+        check(HostPattern.normalized("bank.se.") == "bank.se", "trailing dot")
+        for bad in ["", "   ", "https://", "bad host.se", "-x.se", "a..b", "*.", "ex*ample.com", "*.*.x.se"] {
+            check(HostPattern.normalized(bad) == nil, "invalid: \(bad)")
+        }
+        check(HostPattern.matches("bank.se", host: "bank.se") && HostPattern.matches("bank.se", host: "www.bank.se"), "suffix")
+        check(!HostPattern.matches("bank.se", host: "mybank.se") && !HostPattern.matches("bank.se", host: "bank.se.evil.com"), "whole labels only")
+        check(HostPattern.matches("*.atlassian.net", host: "quiddly.atlassian.net") && !HostPattern.matches("*.atlassian.net", host: "atlassian.net"),
+              "wildcard covers only subdomains")
+        check(HostPattern.matches("GitHub.com", host: "GITHUB.COM"), "case")
+        check(HostPattern.presets.allSatisfy { HostPattern.normalized($0.pattern) == $0.pattern }, "presets are normalised")
+        let rule = ProjectRule(id: 1, projectID: 1, field: .host, pattern: "*.atlassian.net")
+        check(rule.matches(block(0, 1, url: "quiddly.atlassian.net/browse/QDLY-1").key), "project rules take wildcards too")
+    }),
+
+    ("app and website modes are independent and the blocklist wins", {
+        func key(_ app: String, _ bundle: String, url: String? = nil) -> ActivityKey {
+            ActivitySample(time: t0, appBundle: bundle, appName: app, windowTitle: "t", url: url).key
+        }
+        let chrome = "com.google.Chrome"
+        var settings = ActivitySettings()
+        check(settings.capture(key("Xcode", "com.apple.dt.Xcode")) == .keep, "everything is tracked by default")
+        check(settings.capture(key("Chrome", chrome, url: "news.se/a")) == .keep, "any website by default")
+
+        settings.siteMode = .onlyAllowed
+        settings.allowedSites = ["*.atlassian.net", "github.com"]
+        check(settings.capture(key("Chrome", chrome, url: "quiddly.atlassian.net/browse/X-1")) == .keep, "allowed site keeps detail")
+        check(settings.capture(key("Chrome", chrome, url: "gist.github.com/x")) == .keep, "subdomain of an allowed site")
+        check(settings.capture(key("Chrome", chrome, url: "news.se/a")) == .redact(.otherSite), "other site")
+        check(settings.capture(key("Chrome", chrome)) == .redact(.otherSite), "a browser without an address is another site")
+        check(settings.capture(key("Firefox", "org.mozilla.firefox")) == .redact(.otherSite), "firefox has no address")
+        check(settings.capture(key("Xcode", "com.apple.dt.Xcode")) == .keep, "other apps are not affected by the website mode")
+
+        settings.blockedSites = ["github.com"]
+        check(settings.capture(key("Chrome", chrome, url: "github.com/x")) == .redact(.private), "a blocked site beats the allowlist")
+
+        settings.appMode = .onlyAllowed
+        settings.allowedApps = ["Xcode", "com.apple.Terminal"]
+        check(settings.capture(key("Xcode", "com.apple.dt.Xcode")) == .keep, "allowed by name")
+        check(settings.capture(key("Terminal", "com.apple.Terminal")) == .keep, "allowed by bundle id")
+        check(settings.capture(key("Slack", "com.tinyspeck.slackmacgap")) == .redact(.other), "not allowed: other")
+        check(settings.capture(key("Chrome", chrome, url: "quiddly.atlassian.net/x")) == .keep, "a browser counts as allowed on an allowed site")
+        check(settings.capture(key("Chrome", chrome, url: "news.se")) == .redact(.other), "a browser off the allowed sites is other")
+        settings.allowedApps.append("Google Chrome")
+        check(settings.capture(key("Google Chrome", chrome, url: "news.se")) == .redact(.otherSite), "an allowed browser still follows the website list")
+        settings.siteMode = .allExceptBlocked
+        check(settings.capture(key("Google Chrome", chrome, url: "news.se")) == .keep, "allowed browser, all websites")
+
+        settings.blockedApps.append("Xcode")
+        check(settings.capture(key("Xcode", "com.apple.dt.Xcode")) == .redact(.private), "a blocked app beats the allowlist")
+        settings.removeBlocked = true
+        check(settings.capture(key("Xcode", "com.apple.dt.Xcode")) == .remove, "blocked apps removed")
+        check(settings.capture(key("Google Chrome", chrome, url: "github.com/x")) == .remove, "blocked sites removed")
+        check(settings.capture(key("Slack", "com.tinyspeck.slackmacgap")) == .redact(.other), "apps outside the allowlist stay as other")
+        settings.siteMode = .onlyAllowed
+        check(settings.capture(key("Google Chrome", chrome, url: "news.se")) == .remove, "other sites removed")
+        check(settings.capture(ActivitySample.idle(at: t0).key) == .keep, "idle is left alone")
+        check(settings.action(for: .coding) == .keep, "category exclusion still applies after classification")
+        settings.excludedCategories = [.coding]
+        check(settings.action(for: .coding) == .remove, "and follows the remove toggle")
+    }),
+
+    ("app and website lists round-trip through the settings, keeping the old excluded apps", {
+        let defaults = UserDefaults(suiteName: "activity-\(UUID().uuidString)")!
+        defaults.register(defaults: ActivitySettings.defaults)
+        var settings = ActivitySettings(defaults)
+        check(settings.blockedApps == ActivitySettings.defaultExcluded && settings.allowedApps.isEmpty && settings.blockedSites.isEmpty
+              && settings.allowedSites.isEmpty && settings.appMode == .allExceptBlocked && settings.siteMode == .allExceptBlocked
+              && !settings.removeBlocked && !settings.needsHost, "defaults")
+        defaults.set(["Slack"], forKey: "activityExcludedApps")
+        defaults.set(["Xcode"], forKey: ActivitySettings.allowedAppsKey)
+        defaults.set(["bank.se"], forKey: ActivitySettings.blockedSitesKey)
+        defaults.set(["github.com", "*.atlassian.net"], forKey: ActivitySettings.allowedSitesKey)
+        defaults.set("allowed", forKey: ActivitySettings.appModeKey)
+        defaults.set("allowed", forKey: ActivitySettings.siteModeKey)
+        defaults.set(true, forKey: "activityRemoveExcludedCategories")
+        settings = ActivitySettings(defaults)
+        check(settings.blockedApps == ["Slack"] && settings.allowedApps == ["Xcode"] && settings.blockedSites == ["bank.se"]
+              && settings.allowedSites == ["github.com", "*.atlassian.net"] && settings.appMode == .onlyAllowed
+              && settings.siteMode == .onlyAllowed && settings.removeBlocked && settings.needsHost, "read back \(settings)")
+        defaults.set("bogus", forKey: ActivitySettings.appModeKey)
+        check(ActivitySettings(defaults).appMode == .allExceptBlocked, "unknown mode falls back")
+    }),
+
+    ("the store keeps the redaction and applies the rules to existing activity", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        func add(_ start: TimeInterval, app: String, bundle: String? = nil, url: String? = nil, redaction: ActivityRedaction? = nil) throws -> Int64 {
+            var b = block(start, start + 10, app: app, title: "Secret", url: url, repo: "r", ticket: "AB-1")
+            b.id = 0
+            b.key.appBundle = bundle ?? b.key.appBundle
+            b.key.redaction = redaction
+            b.typedExcerpt = "typed"
+            b.aiDescription = "desc"
+            return try store.saveBlock(b)
+        }
+        let chrome = "com.google.Chrome"
+        let xcode = try add(0, app: "Xcode")
+        _ = try add(10, app: "Slack")
+        _ = try add(20, app: "Google Chrome", bundle: chrome, url: "news.se/a")
+        _ = try add(30, app: "Google Chrome", bundle: chrome, url: "quiddly.atlassian.net/browse/X-1")
+        _ = try add(40, app: "Google Chrome", bundle: chrome, url: "online.bank.se/login")
+        _ = try add(50, app: "1Password", redaction: .private)
+        var idle = block(60, 70, idle: true)
+        idle.id = 0
+        try store.saveBlock(idle)
+        let range = t0..<t0.addingTimeInterval(100)
+        check(try store.blocks(in: range)[5].key.redaction == .private, "redaction round-trips")
+
+        var settings = ActivitySettings()
+        settings.appMode = .onlyAllowed
+        settings.allowedApps = ["Xcode", "Google Chrome"]
+        settings.siteMode = .onlyAllowed
+        settings.allowedSites = ["*.atlassian.net"]
+        settings.blockedSites = ["bank.se"]
+        check(try store.applyRules(settings) == 3, "slack, news.se and the bank changed")
+        let blocks = try store.blocks(in: range)
+        check(blocks[0].id == xcode && blocks[0].key.windowTitle == "Secret" && blocks[0].typedExcerpt == "typed", "allowed app kept")
+        let other = blocks[1]
+        check(other.key.redaction == .other && other.key.appName == nil && other.key.appBundle == nil && other.key.windowTitle == nil
+              && other.typedExcerpt == nil && other.aiDescription == nil && other.duration == 10, "other keeps only times \(other)")
+        check(blocks[2].key.redaction == .otherSite && blocks[2].key.appName == "Google Chrome" && blocks[2].key.url == nil, "other site")
+        check(blocks[3].key.redaction == nil && blocks[3].key.url == "quiddly.atlassian.net/browse/X-1", "allowed site kept")
+        check(blocks[4].key.redaction == .private && blocks[4].key.url == nil && blocks[4].key.appName == "Google Chrome", "blocked site private")
+        check(blocks[6].key.idle, "idle untouched")
+        check(try store.applyRules(settings) == 0, "applying again changes nothing")
+
+        settings.removeBlocked = true
+        check(try store.applyRules(settings) == 3, "private and other-site blocks removed, other kept")
+        check(try store.blocks(in: range).map { $0.key.redaction?.rawValue ?? ($0.key.idle ? "idle" : "kept") } == ["kept", "other", "kept", "idle"],
+              "what is left")
+    }),
+
+    ("non-work follows the user's rules, then the allowlist, then apple intelligence", {
+        func classified(_ app: String, url: String? = nil, category: ActivityCategory?, work: Bool?) -> ActivityBlock {
+            var b = block(0, 60, app: app, title: "t", url: url)
+            b.category = category
+            b.aiWork = work
+            return b
+        }
+        var settings = ActivitySettings()
+        check(settings.isWork(classified("Xcode", category: .coding, work: true)), "work")
+        check(!settings.isWork(classified("Safari", category: .entertainment, work: true)), "entertainment is never work")
+        check(!settings.isWork(classified("Safari", category: .research, work: false)), "the model says not work")
+        check(settings.isWork(classified("Safari", category: .research, work: nil)), "old answers without the flag count as work")
+        check(settings.isWork(classified("Safari", category: nil, work: nil)), "not yet categorised")
+        let video = classified("Safari", url: "www.youtube.com/watch", category: .entertainment, work: false)
+        check(settings.review(video) == .keep, "non-work is kept by default")
+        settings.nonWork = .fold
+        check(settings.review(video) == .redact(.other), "folded into other")
+        settings.nonWork = .remove
+        check(settings.review(video) == .remove, "removed")
+        settings.nonWork = .fold
+        settings.allowedSites = ["youtube.com"]
+        check(settings.isWork(video) && settings.review(video) == .keep, "an allowed website beats the model")
+        settings.nonWorkSites = ["youtube.com"]
+        check(!settings.isWork(video), "the user's rule beats the allowlist")
+        settings.workSites = ["youtube.com"]
+        check(!settings.isWork(video), "not work wins when a host is on both lists")
+        settings.nonWorkSites = []
+        check(settings.isWork(video), "this is work beats the model")
+        settings.nonWorkApps = ["Safari"]
+        check(settings.isWork(video), "a website rule beats an app rule")
+        check(!settings.isWork(classified("Safari", url: "news.se", category: .research, work: true)), "the app rule applies elsewhere")
+        check(settings.capture(classified("Safari", url: "news.se", category: nil, work: nil).key) == .redact(.other),
+              "a not-work rule folds at capture time, before anything is stored")
+        settings.blockedApps = ["Safari"]
+        check(settings.capture(classified("Safari", url: "news.se", category: nil, work: nil).key) == .redact(.private), "blocked still wins")
+        settings = ActivitySettings()
+        settings.excludedCategories = [.chat]
+        settings.nonWork = .fold
+        check(settings.review(classified("Slack", category: .chat, work: false)) == .redact(.other), "folding beats making private")
+        check(settings.review(classified("Slack", category: .chat, work: true)) == .redact(.private), "excluded category")
+        settings.removeBlocked = true
+        check(settings.review(classified("Slack", category: .chat, work: false)) == .remove, "removing an excluded category beats folding")
+
+        var row = block(0, 10)
+        row.key.redaction = .other
+        var later = block(15, 30)
+        later.key.redaction = .other
+        var after = block(200, 210)
+        after.key.redaction = .other
+        let rows = ActivityLogic.timelineRows([row, later, block(30, 40), after, { var b = after; b.id = 300; b.start = t0.addingTimeInterval(220); b.end = t0.addingTimeInterval(230); return b }()])
+        check(rows.map(\.id) == [0, 30, 200] && rows[0].end == t0.addingTimeInterval(30) && rows[2].end == t0.addingTimeInterval(230),
+              "consecutive other blocks merge \(rows.map { ($0.id, $0.duration) })")
+        var anonymous = row
+        anonymous.key.appName = nil
+        anonymous.key.appBundle = nil
+        check(ActivityLogic.appTotals([anonymous], in: t0..<t0.addingTimeInterval(100)) == [.init(name: "Other", seconds: 10)], "other in the app totals")
+
+        let defaults = UserDefaults(suiteName: "activity-\(UUID().uuidString)")!
+        defaults.register(defaults: ActivitySettings.defaults)
+        check(ActivitySettings(defaults).nonWork == .keep && ActivitySettings(defaults).workSites.isEmpty, "defaults")
+        defaults.set("fold", forKey: ActivitySettings.nonWorkKey)
+        defaults.set(["github.com"], forKey: ActivitySettings.workSitesKey)
+        defaults.set(["Slack"], forKey: ActivitySettings.workAppsKey)
+        defaults.set(["youtube.com"], forKey: ActivitySettings.nonWorkSitesKey)
+        defaults.set(["Music"], forKey: ActivitySettings.nonWorkAppsKey)
+        let read = ActivitySettings(defaults)
+        check(read.nonWork == .fold && read.workSites == ["github.com"] && read.workApps == ["Slack"] && read.nonWorkSites == ["youtube.com"]
+              && read.nonWorkApps == ["Music"], "read back")
+    }),
+
+    ("the work flag round-trips through the schema mapping, the cache and the blocks", {
+        check(ActivityAI.classification(category: "entertainment", description: "Watching", project: "none", work: false, projects: projects).work == false,
+              "mapped")
+        check(ActivityAI.classification(category: "coding", description: nil, project: nil, projects: projects).work == nil, "absent")
+        check(ActivityAI.instructions.contains("work:"), "the model is asked")
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        try store.cacheClassification("k", category: "entertainment", description: nil, project: nil, work: false)
+        check(try store.cachedClassification("k")?.work == false, "cached")
+        try store.cacheClassification("j", category: "coding", description: nil, project: nil)
+        check(try store.cachedClassification("j")?.work == nil, "old style entry")
+        var b = block(0, 60, app: "Safari", title: "Video", url: "youtube.com/watch")
+        b.id = 0
+        let id = try store.saveBlock(b)
+        try store.setClassification(ofBlock: id, .init(category: .entertainment, description: "Watching", work: false))
+        var saved = try store.blocks(in: t0..<t0.addingTimeInterval(100))[0]
+        check(saved.aiWork == false, "stored on the block")
+        try store.saveBlock(saved)
+        check(try store.blocks(in: t0..<t0.addingTimeInterval(100))[0].aiWork == false, "kept when the block is saved again")
+
+        var settings = ActivitySettings()
+        settings.nonWork = .fold
+        check(try store.applyRules(settings, to: []) == 0, "no blocks")
+        check(try store.applyRules(settings) == 1, "folded")
+        saved = try store.blocks(in: t0..<t0.addingTimeInterval(100))[0]
+        check(saved.key.redaction == .other && saved.key.appName == nil && saved.key.url == nil && saved.category == nil && saved.duration == 60,
+              "only the times are left \(saved)")
+    }),
+
+    ("the tracker never stores what the rules leave out", {
+        var settings = ActivitySettings()
+        settings.appMode = .onlyAllowed
+        settings.allowedApps = ["Xcode", "Google Chrome"]
+        settings.siteMode = .onlyAllowed
+        settings.allowedSites = ["github.com"]
+        let other = ActivityLogic.filtered(sample(0, app: "Slack", title: "DM with Anna", repo: "r", ticket: "AB-1"), settings: settings)!
+        check(other == ActivitySample(time: t0, redaction: .other), "other keeps only the time \(other)")
+        let browser = "com.google.Chrome"
+        var site = ActivitySample(time: t0, appBundle: browser, appName: "Google Chrome", windowTitle: "News", url: "news.se/a")
+        site.claudePrompt = "x"
+        let otherSite = ActivityLogic.filtered(site, settings: settings)!
+        check(otherSite == ActivitySample(time: t0, appBundle: browser, appName: "Google Chrome", redaction: .otherSite), "other site \(otherSite)")
+        settings.removeBlocked = true
+        check(ActivityLogic.filtered(site, settings: settings) == nil, "removed sites are not stored")
+
+        var open: ActivityBlock?
+        for s in [sample(0, app: "Slack", title: "a"), sample(5, app: "Mail", title: "b"), sample(10, app: "Xcode")] {
+            open = ActivityLogic.collapse(open, with: ActivityLogic.filtered(s, settings: settings)!).open
+            if s.appName == "Mail" { check(open?.duration == 10 && open?.key.appName == nil, "other apps collapse into one block") }
+        }
+        check(open?.key.appName == "Xcode" && open?.start == t0.addingTimeInterval(10), "an allowed app starts its own block")
     }),
 
     ("tickets are found in titles, branches and urls", {
@@ -304,11 +570,11 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(settings.action(for: .entertainment) == .keep && settings.action(for: nil) == .keep, "nothing excluded by default")
         settings.excludedCategories = [.entertainment, .chat]
         check(settings.action(for: .entertainment) == .strip && settings.action(for: .coding) == .keep && settings.action(for: nil) == .keep, "strip")
-        settings.removeExcluded = true
+        settings.removeBlocked = true
         check(settings.action(for: .chat) == .remove, "remove")
         let defaults = UserDefaults(suiteName: "activity-\(UUID().uuidString)")!
         defaults.register(defaults: ActivitySettings.defaults)
-        check(ActivitySettings(defaults).excludedCategories.isEmpty && !ActivitySettings(defaults).removeExcluded, "defaults")
+        check(ActivitySettings(defaults).excludedCategories.isEmpty && !ActivitySettings(defaults).removeBlocked, "defaults")
         defaults.set(["entertainment", "bogus", "code review"], forKey: ActivitySettings.excludedCategoriesKey)
         check(ActivitySettings(defaults).excludedCategories == [.entertainment, .codeReview], "read back, unknown dropped")
 
@@ -324,7 +590,8 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         }
         let kept = try add(0), stripped = try add(10), other = try add(20)
         try store.setClassification(ofBlock: kept, ActivityAI.Classification(category: .coding, description: "Coding"))
-        try store.setClassification(ofBlock: stripped, ActivityAI.Classification(category: .entertainment, description: "Video"), private: true)
+        try store.setClassification(ofBlock: stripped, ActivityAI.Classification(category: .entertainment, description: "Video"))
+        check(try store.redact(blockIDs: [stripped], as: .private) == 1, "stripped")
         try store.setClassification(ofBlock: other, ActivityAI.Classification(category: .chat, description: "Chat"))
         var blocks = try store.blocks(in: t0..<t0.addingTimeInterval(100))
         check(blocks[0].key.windowTitle == "Secret" && blocks[0].aiDescription == "Coding", "kept")
@@ -332,12 +599,18 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(s.key.windowTitle == nil && s.key.url == nil && s.key.repo == nil && s.key.branch == nil && s.key.ticket == nil
               && s.key.claude.isEmpty && s.typedExcerpt == nil && s.aiDescription == nil, "stripped \(s)")
         check(s.key.appName == "Xcode" && s.category == .entertainment && s.duration == 10, "app, times and category stay")
-        check(try store.applyExcluded(categories: [.chat], remove: false) == 1, "existing chat block stripped")
+        var rules = ActivitySettings()
+        rules.blockedApps = []
+        check(try store.applyRules(rules) == 0, "nothing excluded")
+        rules.excludedCategories = [.chat]
+        check(try store.applyRules(rules) == 1, "existing chat block stripped")
         check(try store.blocks(in: t0..<t0.addingTimeInterval(100))[2].key.windowTitle == nil, "chat stripped")
-        check(try store.applyExcluded(categories: [.entertainment, .chat], remove: true) == 2, "removed")
+        check(try store.applyRules(rules) == 0, "a private block is not stripped again")
+        rules.excludedCategories = [.entertainment, .chat]
+        rules.removeBlocked = true
+        check(try store.applyRules(rules) == 2, "removed")
         blocks = try store.blocks(in: t0..<t0.addingTimeInterval(100))
         check(blocks.map(\.id) == [kept], "only the kept block remains")
-        check(try store.applyExcluded(categories: [], remove: true) == 0, "nothing excluded")
     }),
 
     ("the claude session the user is in comes from their newest message and sticks to the block", {
@@ -376,7 +649,7 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(ActivityAI.cacheKey(open.key).hasSuffix("|strawberry kfm tickets"), "sessions are cached apart")
         var settings = ActivitySettings()
         settings.claude = false
-        let off = ActivityLogic.filtered(focused, settings: settings)
+        let off = ActivityLogic.filtered(focused, settings: settings)!
         check(off.claude.isEmpty && off.claudeFocus == nil && off.claudePrompt == nil, "claude off drops the session and prompt")
 
         let folder = try tempFolder()
