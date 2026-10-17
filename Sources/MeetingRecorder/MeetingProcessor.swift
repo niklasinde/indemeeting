@@ -10,19 +10,45 @@ struct ProcessingResult {
 }
 
 enum MeetingPipeline {
-    /// Transcribes and summarises `audio` into the store. A failure is recorded on the meeting and rethrown.
-    static func run(_ audio: URL, language: MeetingLanguage, store: MeetingStore,
+    /// Transcribes and summarises `audio` into the store, in the one of `languages` it is in. A failure is recorded on
+    /// the meeting and rethrown.
+    static func run(_ audio: URL, languages: [MeetingLanguage], store: MeetingStore,
                     progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         try await recordingFailure(of: audio, in: store) {
+            let language = await detectLanguage(of: audio, among: languages, progress: progress)
             await progress(.transcribing())
-            let transcript = try await Transcriber.transcribeMeeting(audio, language: language) { fraction in
+            let transcript = try await Transcriber.transcribeMeeting(audio, language: language.language) { fraction in
                 Task { @MainActor in progress(.transcribing(progress: fraction)) }
             }
             let recognised = await recogniseSpeakers(transcript.segments, in: audio, store: store, progress: progress)
-            try store.saveTranscript(audio.lastPathComponent, segments: recognised.segments, language: language,
-                                     engine: transcript.engine, speakers: recognised.speakers)
-            return try await summarise(audio, segments: recognised.segments, names: recognised.names, language: language,
+            try store.saveTranscript(audio.lastPathComponent, segments: recognised.segments, language: language.language,
+                                     detected: language.detected, engine: transcript.engine, speakers: recognised.speakers)
+            return try await summarise(audio, segments: recognised.segments, names: recognised.names, language: language.language,
                                        store: store, progress: progress)
+        }
+    }
+
+    /// The languages to transcribe a meeting in again: the one chosen for it, or those listened for.
+    static func languages(for audio: URL, store: MeetingStore) -> [MeetingLanguage] {
+        guard let meeting = try? store.content(of: audio.lastPathComponent)?.meeting, let language = meeting.language,
+              !meeting.languageDetected else { return MeetingLanguage.listened() }
+        return [language]
+    }
+
+    /// The only candidate, or the one detected in a sample of the speech; a failed detection falls back to the
+    /// preferred one.
+    private static func detectLanguage(of audio: URL, among languages: [MeetingLanguage],
+                                       progress: @escaping @MainActor (ProcessingStage) -> Void) async
+    -> (language: MeetingLanguage, detected: Bool) {
+        guard languages.count > 1 else { return (languages.first ?? .current, false) }
+        await progress(.detectingLanguage)
+        do {
+            let decision = try await LanguageDetector.detect(audio, among: languages)
+            log("\(audio.lastPathComponent) language: \(decision.summary)")
+            return (decision.language, true)
+        } catch {
+            log("\(audio.lastPathComponent) language detection failed: \(ProcessingLogic.errorDetails(error))")
+            return (LanguageLogic.preferred(among: languages, preferred: Locale.preferredLanguages), true)
         }
     }
 
@@ -31,7 +57,7 @@ enum MeetingPipeline {
     static func recogniseSpeakers(_ audio: URL, store: MeetingStore,
                                   progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         guard let content = try store.content(of: audio.lastPathComponent), content.meeting.transcribed else {
-            return try await run(audio, language: .current, store: store, progress: progress)
+            return try await run(audio, languages: MeetingLanguage.listened(), store: store, progress: progress)
         }
         return try await recordingFailure(of: audio, in: store) {
             await progress(.recognisingSpeakers())
@@ -40,7 +66,8 @@ enum MeetingPipeline {
             }
             let meeting = content.meeting
             try store.saveTranscript(meeting.audioFile, segments: recognised.segments, language: meeting.language ?? .current,
-                                     engine: meeting.transcriptEngine ?? "transcription", speakers: recognised.speakers)
+                                     detected: meeting.languageDetected, engine: meeting.transcriptEngine ?? "transcription",
+                                     speakers: recognised.speakers)
             return ProcessingResult(speakers: recognised.speakers.count)
         }
     }
@@ -68,7 +95,7 @@ enum MeetingPipeline {
                             progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         let content = try store.content(of: audio.lastPathComponent)
         guard let content, content.meeting.transcribed else {
-            return try await run(audio, language: .current, store: store, progress: progress)
+            return try await run(audio, languages: MeetingLanguage.listened(), store: store, progress: progress)
         }
         return try await recordingFailure(of: audio, in: store) {
             try await summarise(audio, segments: content.segments, names: content.names,
@@ -108,14 +135,16 @@ enum MeetingPipeline {
         FileHandle.standardError.write(Data((message + "\n").utf8))
     }
 
-    static func runFromCommandLine(_ audio: URL, language: MeetingLanguage, recogniseOnly: Bool, store: MeetingStore) -> Never {
+    static func runFromCommandLine(_ audio: URL, languages: [MeetingLanguage], recogniseOnly: Bool, store: MeetingStore) -> Never {
         Task {
             do {
                 let progress: @MainActor (ProcessingStage) -> Void = { print($0.text(for: audio.lastPathComponent)) }
                 let result = recogniseOnly ? try await recogniseSpeakers(audio, store: store, progress: progress)
-                    : try await run(audio, language: language, store: store, progress: progress)
+                    : try await run(audio, languages: languages, store: store, progress: progress)
                 print("Saved to \(AppPaths.database.path)")
                 if let content = try store.content(of: audio.lastPathComponent) {
+                    let meeting = content.meeting
+                    print("Language: \(meeting.language?.displayName ?? "-")" + (meeting.languageDetected ? " (detected)" : ""))
                     let speakers = Set(content.segments.compactMap(\.speaker))
                     print("Speakers: " + speakers.map { content.names.name(of: $0, in: .english) }.sorted().joined(separator: ", "))
                 }
@@ -148,8 +177,17 @@ final class MeetingProcessor: ObservableObject {
         self.store = store
     }
 
+    /// Transcribes and summarises a meeting in the language chosen for it, or the one detected among those listened for.
     func process(_ audio: URL) {
-        enqueue(audio) { [store] in try await MeetingPipeline.run(audio, language: .current, store: store, progress: $0) }
+        enqueue(audio) { [store] in
+            try await MeetingPipeline.run(audio, languages: MeetingPipeline.languages(for: audio, store: store), store: store,
+                                          progress: $0)
+        }
+    }
+
+    /// Transcribes and summarises a meeting again in `language`.
+    func process(_ audio: URL, in language: MeetingLanguage) {
+        enqueue(audio) { [store] in try await MeetingPipeline.run(audio, languages: [language], store: store, progress: $0) }
     }
 
     /// Summarises the meeting's stored transcript, transcribing first only when it has none.

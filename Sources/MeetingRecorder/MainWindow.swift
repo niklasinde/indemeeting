@@ -171,6 +171,8 @@ final class RecordingLibrary: ObservableObject {
 
     func language(of entry: RecordingEntry) -> MeetingLanguage { meeting(of: entry)?.language ?? .current }
 
+    func languageDetected(of entry: RecordingEntry) -> Bool { meeting(of: entry)?.languageDetected ?? false }
+
     func setTitle(_ title: String, of entry: RecordingEntry) {
         let override = LibraryLogic.titleOverride(title, aiTitle: meeting(of: entry)?.aiTitle)
         perform { try store.setTitleOverride(entry.fileName, override) }
@@ -387,6 +389,13 @@ struct MainView: View {
                 Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
                 Button("Transcribe & summarise") { processor.process(entry.audio) }
                     .disabled(processor.processing == entry.audio)
+                Picker("Language", selection: Binding(get: { library.language(of: entry) },
+                                                      set: { processor.process(entry.audio, in: $0) })) {
+                    ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .disabled(processor.processing == entry.audio)
+                .help("Transcribe and summarise the meeting again in another language")
                 Button("Recognise speakers") { processor.recogniseSpeakers(entry.audio) }
                     .disabled(processor.processing == entry.audio || !Diarizer.isReady)
                     .help(Diarizer.isReady ? "Tell the speakers apart again without transcribing"

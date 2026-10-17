@@ -151,7 +151,7 @@ The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else
 `~/Library/Application Support/MeetingRecorder/meetings.sqlite` (WAL mode, foreign keys on, opened through the system
 `SQLite3` library):
 
-- `meetings`: one row per audio file name, with the date, length, language, renamed title, summary title, notes,
+- `meetings`: one row per audio file name, with the date, length, language (and whether it was detected), renamed title, summary title, notes,
   processing status (`none`, `summarised`, `unavailable`, `failed`) with its message (for example why there is no
   summary) and the transcription engine.
 - `transcript_segments` (start time, sentence and speaker: `you`, `others`, `speaker-<n>` once speakers are
@@ -209,8 +209,27 @@ The menu shows "Transcribing…", "Summarising…" and then "Open summary", whic
 does the notification when it is ready. "Transcribe & summarise a recording…" processes any existing audio file. Errors are shown in the menu and as a
 notification. The audio file is only read, never changed or deleted.
 
-"Meeting language" (Svenska / English, default Svenska) picks the transcription language and the language of the
-summary.
+Settings > Meeting languages lists the languages to listen for (Svenska and English, both on by default; the menu bar
+menu has the same choice under "Languages: …"). A recording is transcribed and summarised in the language spoken,
+detected among those; with only one on, that language is always used and nothing is detected. Upgrading from a version
+with a single default language keeps that language as the only one. The header shows the language with "(auto)" when
+it was detected, and the window's "…" menu > Language transcribes and summarises a meeting again in another language
+(which then sticks when it is transcribed again).
+
+Detection takes up to 45 seconds of speech (silent half-second chunks are skipped; recordings longer than three minutes
+give 25 seconds from the start and 25 from halfway), transcribes it with Apple's model for each candidate language, and
+scores each transcript by the recogniser's mean word confidence times how much `NLLanguageRecognizer` (constrained to
+the candidates) reads it as that language. Swedish dictation hears English as English words, so its transcript of an
+English meeting does not read as Swedish; the English model hears Swedish as low-confidence English. Dictation leaves
+the confidence out of some results, so a transcript with confidence on less than half its text counts as half sure.
+The winner needs 55% of the combined score, else the first candidate in the Mac's preferred languages (System Settings >
+General > Language & Region) is used, else Svenska. It adds about 2–3 seconds per meeting. KB-Whisper's language
+detection is not used: fine-tuned on Swedish, it rates clear English as Swedish with probability 1.0. To see the scores:
+
+    .build/debug/MeetingRecorder --detect-language /path/to/Meeting.m4a [--languages sv-SE,en-US]
+
+A language is a `MeetingLanguage` case with its locale, names and headings; Settings, the menus and detection follow
+`allCases`.
 
 - Transcription uses `SpeechAnalyzer` (macOS 26). English uses `SpeechTranscriber`. Swedish is not supported by
   `SpeechTranscriber` (checked on macOS 26.6), so it uses `DictationTranscriber`, the on-device dictation model in the same
@@ -290,15 +309,15 @@ the saved choice, pass it as an argument default:
 
     .build/debug/MeetingRecorder --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny
 
-Settings… (Cmd-, in the menu bar menu, the app menu and the window's "…" menu) holds the default meeting language, each
+Settings… (Cmd-, in the menu bar menu, the app menu and the window's "…" menu) holds the meeting languages, each
 language's speech model (installed, downloading with progress, not downloaded, or unavailable, with Download and Remove;
 Remove releases the app's reservation so macOS may delete the model) and the Apple Intelligence status for summaries.
 
 For a headless check, run the binary with a file:
 
-    .build/debug/MeetingRecorder --process /path/to/Meeting.m4a --language sv-SE   # or en-US
+    .build/debug/MeetingRecorder --process /path/to/Meeting.m4a --language sv-SE   # or en-US; leave out to detect
 
-It prints the progress, the database it saved to and the summary title (or why there is none) and exits non-zero on
+It prints the progress, the database it saved to, the language (and whether it was detected) and the summary title (or why there is none) and exits non-zero on
 failure, without starting the menu-bar app.
 
 To record headlessly through the same code path as the menu:

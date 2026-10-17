@@ -593,15 +593,82 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingLogic.isWhisperNoise(" ♪ ") && !ProcessingLogic.isWhisperNoise("Ja (typ) så"), "noise")
     }),
 
-    ("meeting language defaults to Swedish and round-trips", {
-        let defaults = UserDefaults.standard
-        let saved = defaults.string(forKey: MeetingLanguage.storageKey)
-        defer { defaults.set(saved, forKey: MeetingLanguage.storageKey) }
-        defaults.removeObject(forKey: MeetingLanguage.storageKey)
-        check(MeetingLanguage.current == .swedish, "default")
-        defaults.set(MeetingLanguage.english.rawValue, forKey: MeetingLanguage.storageKey)
-        check(MeetingLanguage.current == .english, "stored")
-        check(MeetingLanguage.allCases.map(\.displayName) == ["Svenska", "English"], "picker names")
+    ("listened languages migrate from the single default language", {
+        let all = MeetingLanguage.allCases
+        check(MeetingLanguage.listened(stored: nil, legacy: nil) == all, "unset listens for every language")
+        check(MeetingLanguage.listened(stored: nil, legacy: "en-US") == [.english], "explicit English is kept")
+        check(MeetingLanguage.listened(stored: nil, legacy: "sv-SE") == [.swedish], "explicit Swedish is kept")
+        check(MeetingLanguage.listened(stored: ["en-US", "sv-SE"], legacy: "en-US") == [.swedish, .english], "list wins, in order")
+        check(MeetingLanguage.listened(stored: [], legacy: nil) == all, "an empty list listens for every language")
+        check(MeetingLanguage.listened(stored: ["xx"], legacy: nil) == all, "unknown codes are ignored")
+        check(MeetingLanguage.allCases.map(\.displayName) == ["Svenska", "English"], "names")
+        check(MeetingLanguage.allCases.map(\.code) == ["sv", "en"], "codes")
+        let defaults = UserDefaults(suiteName: "language-test-\(UUID().uuidString)")!
+        check(MeetingLanguage.listened(in: defaults) == all, "fresh install")
+        check(MeetingLanguage.current(in: defaults, preferred: ["de-DE"]) == .swedish, "no preferred candidate: Swedish")
+        check(MeetingLanguage.current(in: defaults, preferred: ["en-US", "sv-SE"]) == .english, "Mac's preferred order")
+        defaults.set("en-US", forKey: MeetingLanguage.legacyKey)
+        check(MeetingLanguage.listened(in: defaults) == [.english], "upgrade keeps the old choice")
+        check(MeetingLanguage.current(in: defaults, preferred: ["sv-SE"]) == .english, "the only language is current")
+        MeetingLanguage.setListened([.english, .swedish], in: defaults)
+        check(defaults.stringArray(forKey: MeetingLanguage.listenedKey) == ["sv-SE", "en-US"], "stored in order")
+        check(MeetingLanguage.listened(in: defaults) == all, "stored list wins over the old choice")
+    }),
+
+    ("language decision picks the language understood best", {
+        func score(_ language: MeetingLanguage, words: Int = 80, confidence: Double?, reads: Double = 1) -> LanguageScore {
+            LanguageScore(language: language, words: words, confidence: confidence, reads: reads)
+        }
+        let all = MeetingLanguage.allCases
+        let english = LanguageDecision(scores: [score(.swedish, confidence: nil, reads: 0), score(.english, confidence: 0.96)],
+                                       among: all, preferred: ["sv-SE"])
+        check(english.language == .english && !english.isFallback && english.confidence == 1, "English that reads as English")
+        let swedish = LanguageDecision(scores: [score(.swedish, confidence: 0.6), score(.english, confidence: 0.08)],
+                                       among: all, preferred: ["en-US"])
+        check(swedish.language == .swedish && swedish.confidence > 0.85, "\(swedish)")
+        let unsure = LanguageDecision(scores: [score(.swedish, confidence: nil), score(.english, confidence: 0.29)],
+                                      among: all, preferred: ["en-US"])
+        check(unsure.language == .swedish, "dictation without confidence counts as half sure: \(unsure)")
+        let tied = LanguageDecision(scores: [score(.swedish, confidence: 0.4), score(.english, confidence: 0.38)],
+                                    among: all, preferred: ["en-GB", "sv-SE"])
+        check(tied.language == .english && tied.isFallback && tied.confidence == 0, "too close: preferred language")
+        let silent = LanguageDecision(scores: [score(.swedish, words: 0, confidence: nil), score(.english, words: 0, confidence: nil)],
+                                      among: all, preferred: ["fr-FR"])
+        check(silent.language == .swedish && silent.isFallback, "no words: Swedish")
+        check(LanguageDecision(scores: [], among: [.english, .swedish], preferred: []).language == .swedish, "no sample")
+        check(LanguageDecision(only: .english).language == .english, "only one")
+        check(score(.english, words: 0, confidence: 0.9).value == 0, "no words score nothing")
+        check(abs(score(.english, confidence: 0.8, reads: 0.5).value - 0.4) < 1e-9, "reads times confidence")
+        check(LanguageLogic.preferred(among: [.english], preferred: ["sv-SE"]) == .english, "only candidates")
+        check(LanguageLogic.preferred(among: all, preferred: ["en-SE", "sv-SE"]) == .english, "region does not matter")
+    }),
+
+    ("confidence mean covers at least half the text", {
+        var mean = ConfidenceMean()
+        check(mean.value == nil, "empty")
+        mean.add(0.9, weight: 3)
+        mean.add(0.5, weight: 1)
+        check(abs((mean.value ?? 0) - 0.8) < 1e-9, "weighted")
+        mean.add(nil, weight: 4)
+        check(mean.value != nil, "half covered")
+        mean.add(nil, weight: 1)
+        check(mean.value == nil, "less than half covered")
+        var none = ConfidenceMean()
+        none.add(nil, weight: 5)
+        check(none.value == nil, "no confidences")
+    }),
+
+    ("speech sample windows", {
+        let short = LanguageLogic.sampleWindows(duration: 120)
+        check(short.count == 1 && short[0].start == 0 && short[0].end == 120 && short[0].length == 45, "short: one window")
+        let long = LanguageLogic.sampleWindows(duration: 3600)
+        check(long.map(\.start) == [0, 1800] && long.map(\.end) == [1800, 3600] && long.map(\.length) == [25, 25],
+              "long: start and halfway")
+        check(LanguageLogic.detectArguments(["app"]) == nil, "no flag")
+        let job = LanguageLogic.detectArguments(["app", "--detect-language", "/x/a.m4a", "--languages", "en-US"])
+        check(job?.audio.path == "/x/a.m4a" && job?.candidates == [.english], "flag with languages")
+        check(LanguageLogic.detectArguments(["app", "--detect-language", "/x/a.m4a"])?.candidates == nil, "languages optional")
+        check(ProcessingStage.detectingLanguage.text(for: "a.m4a") == "Detecting the language of a.m4a\u{2026}", "stage")
     }),
 
     ("stage text and command-line flag", {

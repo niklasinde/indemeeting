@@ -36,6 +36,28 @@ final class SettingsWindow {
     }
 }
 
+/// The languages new recordings may be in, shared by Settings and the menu so both show the same choice.
+@MainActor
+final class ListenedLanguages: ObservableObject {
+    static let shared = ListenedLanguages()
+
+    @Published private(set) var languages = MeetingLanguage.listened()
+
+    var summary: String { languages.map(\.displayName).joined(separator: ", ") }
+
+    /// Whether `language` is listened for; the last one cannot be turned off.
+    func isListening(_ language: MeetingLanguage) -> Binding<Bool> {
+        Binding(get: { self.languages.contains(language) }, set: { listening in
+            let updated = listening ? self.languages + [language] : self.languages.filter { $0 != language }
+            guard !updated.isEmpty else { return }
+            MeetingLanguage.setListened(updated)
+            self.languages = MeetingLanguage.listened()
+        })
+    }
+
+    func isOnly(_ language: MeetingLanguage) -> Bool { languages == [language] }
+}
+
 /// The on-device speech model of each meeting language, and whether Apple Intelligence can summarise.
 @MainActor
 final class SpeechModels: ObservableObject {
@@ -223,7 +245,7 @@ struct SettingsView: View {
     @ObservedObject var speakers: SpeakerRecognitionModels
     @ObservedObject var projects: ActivityProjectsModel
     @ObservedObject var tracker: ActivityTracker
-    @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
+    @ObservedObject private var listened = ListenedLanguages.shared
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
@@ -256,19 +278,22 @@ struct SettingsView: View {
             speakers.refresh()
             projects.refresh()
         }
-        .onChange(of: language) { models.refresh() }
+        .onChange(of: listened.languages) { models.refresh() }
     }
 
     private var meetings: some View {
         VStack(alignment: .leading, spacing: 22) {
-            section("Meeting language", footer: "New recordings are transcribed and summarised in this language.") {
-                row("Default language") {
-                    Picker("Default language", selection: $language) {
-                        ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
+            section("Meeting languages", footer: "New recordings are transcribed and summarised in the language spoken, "
+                    + "detected among the ones listened for. With one language on, every recording is in that language.") {
+                ForEach(Array(MeetingLanguage.allCases.enumerated()), id: \.element) { index, language in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    row("Listen for \(language.displayName)") {
+                        Toggle("Listen for \(language.displayName)", isOn: listened.isListening(language))
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                            .disabled(listened.isOnly(language))
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
                 }
             }
             section("Speech models", footer: "Transcription runs on this Mac with Apple\u{2019}s speech models. Nothing is uploaded.") {

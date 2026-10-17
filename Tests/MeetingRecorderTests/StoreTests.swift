@@ -213,6 +213,11 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
             check(content?.segments == segments, "segments")
             let meeting = content?.meeting
             check(meeting?.language == .swedish && meeting?.transcriptEngine == "DictationTranscriber", "language and engine")
+            check(meeting?.languageDetected == false, "chosen language")
+            try store.saveTranscript(name, segments: segments, language: .english, detected: true, engine: "SpeechTranscriber")
+            let detected = try store.content(of: name)?.meeting
+            check(detected?.language == .english && detected?.languageDetected == true, "detected language")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "DictationTranscriber")
             check(meeting?.title == "Standup" && meeting?.aiTitle == "Daglig standup", "titles")
             check(meeting?.notes == "Fråga Johan." && meeting?.status == .summarised, "notes and status")
             check(meeting?.created == RecordingLogic.date(fromFileName: name), "created from the name")

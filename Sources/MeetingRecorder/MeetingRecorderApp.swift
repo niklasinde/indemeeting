@@ -14,8 +14,11 @@ enum Main {
                 FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
                 exit(1)
             }
-            MeetingPipeline.runFromCommandLine(job.audio, language: job.language ?? .current, recogniseOnly: job.recogniseOnly,
-                                               store: store)
+            MeetingPipeline.runFromCommandLine(job.audio, languages: job.language.map { [$0] } ?? MeetingLanguage.listened(),
+                                               recogniseOnly: job.recogniseOnly, store: store)
+        }
+        if let job = LanguageLogic.detectArguments(CommandLine.arguments) {
+            LanguageDetector.runFromCommandLine(job.audio, among: job.candidates ?? MeetingLanguage.listened())
         }
         if CommandLine.arguments.contains("--download-speaker-model") { downloadSpeakerModel() }
         if let hours = ActivityLogic.contextArguments(CommandLine.arguments) { printContext(hours: hours) }
@@ -208,7 +211,7 @@ struct MenuContent: View {
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
-    @AppStorage(MeetingLanguage.storageKey) private var language = MeetingLanguage.swedish
+    @ObservedObject private var listened = ListenedLanguages.shared
 
     var body: some View {
         Button("Open Meeting Recorder") { openApp(nil) }
@@ -252,8 +255,10 @@ struct MenuContent: View {
             Button("Open summary") { openApp(meeting) }
         }
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
-        Picker("Meeting language", selection: $language) {
-            ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
+        Menu("Languages: \(listened.summary)") {
+            ForEach(MeetingLanguage.allCases) { language in
+                Toggle(language.displayName, isOn: listened.isListening(language)).disabled(listened.isOnly(language))
+            }
         }
         Divider()
         if let status = tracker.statusText {

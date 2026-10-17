@@ -16,6 +16,10 @@ enum TranscriptionError: LocalizedError {
 struct Transcript {
     let segments: [TranscriptSegment]
     let engine: String
+    /// The recogniser's mean confidence in its words, when the engine reports one.
+    var confidence: Double? = nil
+
+    var text: String { segments.map(\.text).joined(separator: " ") }
 }
 
 typealias TranscriptionProgress = @Sendable (Double) -> Void
@@ -76,10 +80,14 @@ enum SpeechModel {
         let locale = language.locale
         if await supports(SpeechTranscriber.supportedLocales, locale) {
             return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
-                                             attributeOptions: [.audioTimeRange]))
+                                             attributeOptions: [.audioTimeRange, .transcriptionConfidence]))
         }
         if await supports(DictationTranscriber.supportedLocales, locale) {
-            return .dictation(DictationTranscriber(locale: locale, preset: .timeIndexedLongDictation))
+            let preset = DictationTranscriber.Preset.timeIndexedLongDictation
+            return .dictation(DictationTranscriber(locale: locale, contentHints: preset.contentHints,
+                                                   transcriptionOptions: preset.transcriptionOptions,
+                                                   reportingOptions: preset.reportingOptions,
+                                                   attributeOptions: preset.attributeOptions.union([.transcriptionConfidence])))
         }
         return nil
     }
@@ -96,18 +104,18 @@ enum SpeechModel {
     }
 }
 
-private struct AppleSpeechEngine: SpeechEngine {
+struct AppleSpeechEngine: SpeechEngine {
     let language: MeetingLanguage
 
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         switch await SpeechModel.make(for: language) {
-        case .speech(let module): return Transcript(segments: try await run(module, audio), engine: "SpeechTranscriber")
-        case .dictation(let module): return Transcript(segments: try await run(module, audio), engine: "DictationTranscriber")
+        case .speech(let module): return try await run(module, audio, engine: "SpeechTranscriber")
+        case .dictation(let module): return try await run(module, audio, engine: "DictationTranscriber")
         case nil: throw TranscriptionError.unsupportedLanguage(language)
         }
     }
 
-    private func run<Module: SpeechModule>(_ module: Module, _ audio: URL) async throws -> [TranscriptSegment]
+    private func run<Module: SpeechModule>(_ module: Module, _ audio: URL, engine: String) async throws -> Transcript
     where Module.Result: TextResult {
         if let request = try await AssetInventory.assetInstallationRequest(supporting: [module]) {
             try await request.downloadAndInstall()
@@ -116,14 +124,17 @@ private struct AppleSpeechEngine: SpeechEngine {
         let analyzer = SpeechAnalyzer(modules: [module])
         let collector = Task {
             var segments: [TranscriptSegment] = []
+            var confidence = ConfidenceMean()
             for try await result in module.results where result.isFinal {
                 let pieces = result.text.runs.map { run in
                     (text: String(result.text[run.range].characters),
-                     start: run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self]?.start.seconds)
+                     start: run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self]?.start.seconds,
+                     confidence: run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self])
                 }
-                segments += ProcessingLogic.sentences(pieces, from: result.range.start.seconds)
+                pieces.forEach { confidence.add($0.confidence, weight: $0.text.count) }
+                segments += ProcessingLogic.sentences(pieces.map { ($0.text, $0.start) }, from: result.range.start.seconds)
             }
-            return segments
+            return Transcript(segments: segments, engine: engine, confidence: confidence.value)
         }
         do {
             if let end = try await analyzer.analyzeSequence(from: file) {
@@ -135,8 +146,8 @@ private struct AppleSpeechEngine: SpeechEngine {
             collector.cancel()
             throw error
         }
-        let segments = try await collector.value
-        guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
-        return segments
+        let transcript = try await collector.value
+        guard !transcript.segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
+        return transcript
     }
 }

@@ -46,6 +46,8 @@ struct Meeting: Equatable {
     var transcriptEngine: String?
     var transcribed = false
     var summarised = false
+    /// Whether the language was detected rather than chosen.
+    var languageDetected = false
 
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle) }
 }
@@ -192,11 +194,12 @@ final class MeetingStore: @unchecked Sendable {
             updated REAL NOT NULL
         );
         """,
+        "ALTER TABLE meetings ADD COLUMN language_detected INTEGER NOT NULL DEFAULT 0",
     ]
 
     private static let meetingColumns = """
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
-        transcribed, summarised
+        transcribed, summarised, language_detected
         """
 
     let openError: DatabaseUnavailable?
@@ -327,11 +330,12 @@ final class MeetingStore: @unchecked Sendable {
     }
 
     /// Replaces the transcript and the meeting's speakers.
-    func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, engine: String,
-                        speakers: [SpeakerProfile] = []) throws {
+    func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, detected: Bool = false,
+                        engine: String, speakers: [SpeakerProfile] = []) throws {
         try write {
             let id = try ensure(audioFile)
-            try db.run("UPDATE meetings SET language = ?, transcript_engine = ? WHERE id = ?", [language.rawValue, engine, id])
+            try db.run("UPDATE meetings SET language = ?, language_detected = ?, transcript_engine = ? WHERE id = ?",
+                       [language.rawValue, detected, engine, id])
             try replaceSegments(id, segments)
             try db.run("DELETE FROM speakers WHERE meeting_id = ?", [id])
             for profile in speakers {
@@ -454,7 +458,8 @@ final class MeetingStore: @unchecked Sendable {
                 duration: row.optionalDouble(3), language: row.optionalString(4).flatMap(MeetingLanguage.init),
                 titleOverride: row.optionalString(5), aiTitle: row.optionalString(6), notes: row.string(7),
                 status: ProcessingStatus(rawValue: row.string(8)) ?? .none, statusMessage: row.optionalString(9),
-                transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12))
+                transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12),
+                languageDetected: row.bool(13))
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {

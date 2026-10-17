@@ -120,7 +120,7 @@ struct RecordingDetail: View {
         var parts = [entry.date.formatted(.dateTime.weekday(.wide).day().month(.wide)),
                      entry.date.formatted(date: .omitted, time: .shortened)]
         if let duration = entry.duration { parts.append(LibraryLogic.minutesText(duration)) }
-        parts.append(language.displayName)
+        parts.append(language.displayName + (library.languageDetected(of: entry) ? " (auto)" : ""))
         return parts.joined(separator: " \u{00B7} ")
     }
 

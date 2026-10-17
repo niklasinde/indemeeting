@@ -4,14 +4,11 @@ enum MeetingLanguage: String, CaseIterable, Identifiable {
     case swedish = "sv-SE"
     case english = "en-US"
 
-    static let storageKey = "meetingLanguage"
-
-    static var current: MeetingLanguage {
-        UserDefaults.standard.string(forKey: storageKey).flatMap(Self.init) ?? .swedish
-    }
 
     var id: String { rawValue }
     var locale: Locale { Locale(identifier: rawValue) }
+    /// The ISO 639 code: `sv`, `en`.
+    var code: String { String(rawValue.prefix { $0 != "-" }) }
     var displayName: String { self == .swedish ? "Svenska" : "English" }
     var englishName: String { self == .swedish ? "Swedish" : "English" }
 
@@ -237,6 +234,7 @@ extension ProcessingLogic {
 enum ProcessingStage: Equatable {
     case transcribing(progress: Double? = nil)
     case recognisingSpeakers(progress: Double? = nil)
+    case detectingLanguage
     case summarising(part: Int, of: Int)
     case combining
 
@@ -246,6 +244,7 @@ enum ProcessingStage: Equatable {
         case .transcribing: return "Transcribing \(name)\u{2026}"
         case .recognisingSpeakers(let progress?): return "Recognising speakers in \(name)\u{2026} \(ProcessingLogic.percent(progress))"
         case .recognisingSpeakers: return "Recognising speakers in \(name)\u{2026}"
+        case .detectingLanguage: return "Detecting the language of \(name)\u{2026}"
         case .summarising(let part, let total) where total > 1: return "Summarising \(name)\u{2026} (\(part)/\(total))"
         case .summarising: return "Summarising \(name)\u{2026}"
         case .combining: return "Summarising \(name)\u{2026} (combining)"
