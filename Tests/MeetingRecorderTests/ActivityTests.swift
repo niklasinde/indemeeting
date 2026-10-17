@@ -449,19 +449,26 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
                       b(0, 10.5, 11, app: "Safari", ticket: "QDLY-8296", url: "github.com/quiddly-com/finq.api/pull/1"),
                       b(0, 13, 14, app: "Xcode", title: "Main, \"quoted\""),
                       b(2, 9, 9.25, app: "Slack")]
+        let directory = TicketDirectory(titles: ["QDLY-8296": "Round reminder fees"], sites: ["QDLY": "quiddly.atlassian.net"])
         let report = ActivityLogic.WeekReport(days: ActivityLogic.week(containing: t0, calendar: utc), blocks: blocks, rules: rules,
-                                              projects: projects, calendar: utc)
+                                              projects: projects, calendar: utc, directory: directory)
         let csv = ActivityLogic.csv(report)
         let lines = csv.split(separator: "\n")
-        check(lines[0] == "date,project,hours,details", "header")
-        check(lines[1] == "\(ActivityLogic.dateText(monday)),Quiddly,2.00,QDLY-8296; finq.api (NI/QDLY-8296); github.com", "quiddly row '\(lines[1])'")
-        check(lines[2] == "\(ActivityLogic.dateText(monday)),Inde,1.00,\"Main, \"\"quoted\"\"\"", "quoted field '\(lines[2])'")
-        check(lines[3].hasSuffix(",Unassigned,0.25,Slack") && lines.count == 4, "slack on wednesday '\(lines[3])'")
+        let date = ActivityLogic.dateText(monday)
+        let jira = "https://quiddly.atlassian.net/browse/QDLY-8296"
+        check(lines[0] == "date,project,work_item,ticket,ticket_title,jira_url,hours,details", "header")
+        check(lines[1] == "\(date),Quiddly,NI/QDLY-8296,QDLY-8296,Round reminder fees,\(jira),1.50,QDLY-8296; finq.api (NI/QDLY-8296)", "branch row '\(lines[1])'")
+        check(lines[2] == "\(date),Quiddly,QDLY-8296,QDLY-8296,Round reminder fees,\(jira),0.50,QDLY-8296; github.com", "ticket row '\(lines[2])'")
+        check(lines[3] == "\(date),Inde,,,,,1.00,\"Main, \"\"quoted\"\"\"", "quoted field without a work item '\(lines[3])'")
+        check(lines[4].hasSuffix(",Unassigned,,,,,0.25,Slack") && lines.count == 5, "slack on wednesday '\(lines[4])'")
         let markdown = ActivityLogic.markdown(report)
         check(markdown.hasPrefix("# Week ") && markdown.contains("Total: 3 h 15 min"), "title and total \(markdown.prefix(80))")
         check(markdown.contains("### Quiddly \u{00B7} 2 h\n- QDLY-8296\n- finq.api (NI/QDLY-8296)\n- github.com\n"), "project bullets \(markdown)")
         check(markdown.contains("### Unassigned \u{00B7} 15 min\n- Slack"), "unassigned")
-        check(markdown.components(separatedBy: "\n## ").count == 3, "only days with activity")
+        check(markdown.components(separatedBy: "\n## ").count == 5, "days with activity and the two breakdowns")
+        check(markdown.contains("## By branch\n- NI/QDLY-8296 (finq.api) \u{00B7} [QDLY-8296 \u{00B7} Round reminder fees](\(jira)) \u{00B7} Quiddly \u{00B7} 1 h 30 min\n"
+                                + "- [QDLY-8296 \u{00B7} Round reminder fees](\(jira)) \u{00B7} Quiddly \u{00B7} 30 min\n"), "by branch \(markdown)")
+        check(markdown.contains("## By ticket\n- [QDLY-8296 \u{00B7} Round reminder fees](\(jira)) \u{00B7} Quiddly \u{00B7} 2 h (NI/QDLY-8296)\n"), "by ticket")
     }),
 
     ("the context summary lists projects, apps, repos, tickets, urls, claude sessions and meetings", {
@@ -478,7 +485,8 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(markdown.contains("## Projects\n- Inde: 30 min\n- Quiddly: 10 min\n- Unassigned: 15 min"), "projects \(markdown)")
         check(markdown.contains("## Apps\n- Xcode \u{00B7} 30 min\n- Slack \u{00B7} 15 min\n- Safari \u{00B7} 10 min"), "apps")
         check(markdown.contains("## Repositories\n- indemeeting (main) \u{00B7} 30 min"), "repos")
-        check(markdown.contains("## Tickets\n- QDLY-8296 \u{00B7} 10 min"), "tickets")
+        check(markdown.contains("## By ticket\n- QDLY-8296 \u{00B7} Quiddly \u{00B7} 10 min"), "tickets \(markdown)")
+        check(markdown.contains("## By branch\n- main (indemeeting) \u{00B7} Inde \u{00B7} 30 min\n- QDLY-8296 \u{00B7} Quiddly \u{00B7} 10 min"), "branches")
         check(markdown.contains("## Websites\n- github.com/quiddly-com/finq.api/pull/1966 \u{00B7} 10 min"), "urls")
         check(markdown.contains("## Claude sessions\n- Activity tracking (indemeeting) \u{00B7} 40 min"), "claude lane spans both blocks")
         check(markdown.contains("## Windows\n- general (Quiddly) \u{2014} Slack \u{00B7} 15 min"), "titles only where no repo or url")
@@ -744,6 +752,7 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(prompt == """
             App: Safari
             Address: github.com/quiddly-com/finq.api/pull/1966
+            Code host: quiddly-com/finq.api, pull request 1966
             Repository: finq.api on branch NI/QDLY-8296
             Ticket: QDLY-8296
             Text being written: Looks good, one nit on the rounding
@@ -813,5 +822,159 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(cached?.category == "coding" && cached?.description == "Editing Swift" && cached?.project == nil, "upsert \(String(describing: cached))")
         try store.deleteProject(project.id)
         check(try store.blocks(in: t0..<t0.addingTimeInterval(1000))[0].aiProjectID == nil, "deleting a project clears guesses")
+    }),
+    ("code-host addresses give the owner, repository and the pull request, merge request, issue or commit", {
+        func parse(_ url: String) -> CodeHostLink? { CodeHostLink.parse(url) }
+        let pr = parse("github.com/quiddly-com/finq.api/pull/2094/changes/BASE..6253f441b0b15951d44b50680402ebd5ea928552")
+        check(pr == CodeHostLink(host: "github.com", owner: "quiddly-com", repo: "finq.api", kind: .pullRequest("2094")), "github pr \(String(describing: pr))")
+        check(pr?.label == "quiddly-com/finq.api \u{00B7} PR #2094", "pr label")
+        check(parse("github.com/niklasinde/papercut/issues/12")?.label == "niklasinde/papercut \u{00B7} Issue #12", "issue")
+        check(parse("github.com/quiddly-com/finq.api/commit/6253f441b0b15951d44b50680402ebd5ea928552")?.label == "quiddly-com/finq.api \u{00B7} commit 6253f44", "commit")
+        check(parse("github.com/quiddly-com/finq.api/blob/main/app/x.py")?.kind == .repository, "file path ignored")
+        check(parse("github.com/quiddly-com/finq.api/pulls")?.kind == .repository, "pull request list")
+        check(parse("github.com/quiddly-com/finq.api/pull/new")?.kind == .repository, "not a number")
+        check(parse("github.com/orgs/quiddly-com/projects") == nil && parse("github.com/login") == nil && parse("github.com/sessions/social/apple/callback") == nil && parse("github.com/settings/profile") == nil, "reserved")
+        check(parse("github.acme.com/team/service/pull/7")?.label == "team/service \u{00B7} PR #7", "enterprise github")
+        check(parse("gitlab.com/group/sub/project/-/merge_requests/12")?.label == "group/sub/project \u{00B7} MR !12", "gitlab nested group")
+        check(parse("gitlab.acme.se/team/app/-/issues/3")?.label == "team/app \u{00B7} Issue #3", "self-hosted gitlab")
+        check(parse("gitlab.com/team/app/-/commit/abcdef1234567")?.kind == .commit("abcdef1234567"), "gitlab commit")
+        check(parse("gitlab.com/team/app") == CodeHostLink(host: "gitlab.com", owner: "team", repo: "app", kind: .repository), "gitlab project")
+        check(parse("bitbucket.org/acme/web/pull-requests/45/overview")?.label == "acme/web \u{00B7} PR #45", "bitbucket pr")
+        check(parse("bitbucket.org/acme/web/commits/abc1234def")?.kind == .commit("abc1234def"), "bitbucket commit")
+        check(parse("github.com/quiddly-com") == nil && parse("example.com/a/b") == nil && CodeHostLink.parse(nil) == nil, "no repository")
+    }),
+
+    ("addresses fill an empty repository and owner, and a browser ticket finds its local branch", {
+        let index = BranchIndex(branches: ["finq.api": ["develop", "NI/QDLY-8315", "NI/QDLY-83150-other"], "finq.admin-ui": ["NI/QDLY-8400"]])
+        var key = block(0, 5, app: "Chrome", url: "github.com/quiddly-com/finq.api/pull/2094", ticket: "QDLY-8315").key
+        let linked = ActivityLogic.linked(key, branches: index)
+        check(linked.repo == "finq.api" && linked.owner == "quiddly-com" && linked.branch == "NI/QDLY-8315", "pr linked \(linked)")
+        key.repo = "kept"
+        check(ActivityLogic.linked(key, branches: index).repo == "kept" && ActivityLogic.linked(key, branches: index).branch == nil,
+              "a known repository is kept and only searched")
+        let jira = block(0, 5, app: "Chrome", url: "quiddly.atlassian.net/browse/QDLY-8400", ticket: "QDLY-8400").key
+        let fromJira = ActivityLogic.linked(jira, branches: index)
+        check(fromJira.branch == "NI/QDLY-8400" && fromJira.repo == "finq.admin-ui" && fromJira.owner == nil, "jira finds the branch anywhere \(fromJira)")
+        check(index.branch(for: "QDLY-83", repo: nil) == nil, "a key is not a prefix of a longer key")
+        check(ActivityLogic.linked(block(0, 5, app: "Slack", title: "QDLY-8400", ticket: "QDLY-8400").key, branches: index).branch == nil,
+              "only blocks with an address are linked")
+        check(ActivityLogic.urlLabel("github.com/quiddly-com/finq.api/pull/2094/changes/BASE..6253f441") == "quiddly-com/finq.api \u{00B7} PR #2094", "chip label")
+        check(ActivityLogic.urlLabel("x.se/build/6253f441b0b15951d44b5068") == "x.se/build/6253f44\u{2026}", "hash shortened")
+        let long = ActivityLogic.urlLabel("docs.example.com/" + String(repeating: "section/", count: 12) + "end", limit: 40)
+        check(long.count == 40 && long.hasPrefix("docs.example.com/") && long.hasSuffix("/end") && long.contains("\u{2026}"), "middle cut '\(long)'")
+        check(ActivityLogic.urlLabel("mail.google.com") == "mail.google.com", "short kept")
+    }),
+
+    ("branches come from loose refs, packed-refs and worktrees", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let repo = folder.appendingPathComponent("finq.api")
+        let git = repo.appendingPathComponent(".git")
+        try FileManager.default.createDirectory(at: git.appendingPathComponent("refs/heads/NI"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: git.appendingPathComponent("worktrees/wt"), withIntermediateDirectories: true)
+        try "ref: refs/heads/develop\n".write(to: git.appendingPathComponent("HEAD"), atomically: true, encoding: .utf8)
+        try "abc\n".write(to: git.appendingPathComponent("refs/heads/develop"), atomically: true, encoding: .utf8)
+        try "abc\n".write(to: git.appendingPathComponent("refs/heads/NI/QDLY-8315"), atomically: true, encoding: .utf8)
+        try "# pack-refs with: peeled fully-peeled sorted\nabc refs/heads/feature/papercut-1\nabc refs/remotes/origin/main\n^def\n"
+            .write(to: git.appendingPathComponent("packed-refs"), atomically: true, encoding: .utf8)
+        try "ref: refs/heads/NI/QDLY-8400\n".write(to: git.appendingPathComponent("worktrees/wt/HEAD"), atomically: true, encoding: .utf8)
+        let index = BranchIndex.scan([repo])
+        check(index.branches["finq.api"] == ["NI/QDLY-8315", "NI/QDLY-8400", "develop", "feature/papercut-1"], "branches \(index)")
+        check(index.branch(for: "QDLY-8400", repo: "finq.api")?.branch == "NI/QDLY-8400", "worktree branch found")
+    }),
+
+    ("rules go branch, ticket prefix, repository, organisation, website, app, then the ai guess", {
+        let ordered = [ProjectRule(id: 1, projectID: 6, field: .app, pattern: "Google Chrome"),
+                       ProjectRule(id: 2, projectID: 5, field: .host, pattern: "github.com"),
+                       ProjectRule(id: 3, projectID: 4, field: .owner, pattern: "quiddly-com"),
+                       ProjectRule(id: 4, projectID: 3, field: .repo, pattern: "finq.api"),
+                       ProjectRule(id: 5, projectID: 2, field: .ticket, pattern: "QDLY"),
+                       ProjectRule(id: 6, projectID: 1, field: .branch, pattern: "NI/QDLY-*")]
+        let names = (1...6).map { Project(id: Int64($0), name: "P\($0)", color: "#000000") }
+        var b = block(0, 5, app: "Google Chrome", url: "github.com/quiddly-com/finq.api/pull/2094", repo: "finq.api", branch: "NI/QDLY-8315",
+                      ticket: "QDLY-8315")
+        b.key.owner = "quiddly-com"
+        b.aiProjectID = 6
+        func project() -> String? { ActivityLogic.project(for: b, rules: ordered, projects: names)?.name }
+        check(project() == "P1", "branch first")
+        b.key.branch = "main"
+        check(project() == "P2", "then the ticket prefix")
+        b.key.ticket = nil
+        check(project() == "P3", "then the repository")
+        b.key.repo = "other"
+        check(project() == "P4", "then the organisation")
+        b.key.owner = "niklasinde"
+        check(project() == "P5", "then the website")
+        b.key.url = "example.com"
+        check(project() == "P6", "then the app")
+        b.key.appName = "Safari"
+        b.aiProjectID = 1
+        check(project() == "P1" && ActivityLogic.projectIsGuessed(b, rules: ordered), "then the guess")
+        b.projectID = 3
+        check(project() == "P3", "a manual choice beats everything")
+        check(ProjectRule.glob("feature/papercut-*", matches: "Feature/Papercut-12") && !ProjectRule.glob("NI/QDLY-*", matches: "x/NI/QDLY-1")
+              && ProjectRule.glob("main", matches: "main") && !ProjectRule.glob("main", matches: "maint") && ProjectRule.glob("a.b*", matches: "a.bc")
+              && !ProjectRule.glob("a.b", matches: "axb"), "wildcards")
+        let jiraProject = block(0, 5, app: "Safari", url: "quiddly.atlassian.net/jira/software/c/projects/QDLY/boards/12").key
+        check(jiraProject.ticketPrefix == "QDLY" && ProjectRule(id: 1, projectID: 1, field: .ticket, pattern: "qdly").matches(jiraProject),
+              "a jira project page matches its ticket prefix")
+    }),
+
+    ("jira addresses give the site, project and ticket; page titles give ticket titles", {
+        check(JiraLink.parse("papyrus-se.atlassian.net/browse/ISD-12466") == JiraLink(site: "papyrus-se.atlassian.net", prefix: "ISD", ticket: "ISD-12466"), "browse")
+        check(JiraLink.parse("quiddly.atlassian.net/jira/software/projects/QDLY/boards/3") == JiraLink(site: "quiddly.atlassian.net", prefix: "QDLY", ticket: nil), "board")
+        check(JiraLink.parse("quiddly.atlassian.net/jira/servicedesk/projects/ISD/queues/custom/1/ISD-13089")?.ticket == "ISD-13089", "queue issue")
+        check(JiraLink.parse("quiddly.atlassian.net/wiki/spaces/X") == nil && JiraLink.parse("github.com/browse/QDLY-1") == nil, "not jira")
+        check(ActivityLogic.ticket(in: "quiddly.atlassian.net/browse/QDLY-8315") == "QDLY-8315", "ticket regex covers browse urls")
+        let chrome = " - Google Chrome \u{2013} Niklas (quiddly.com)"
+        func title(_ window: String, _ url: String) -> String? {
+            ActivityLogic.ticketTitle(windowTitle: window, url: url).map { "\($0.ticket)|\($0.title)" }
+        }
+        check(title("[ISD-12466] Det genereras inte n\u{00E5}gon utbetalning - JIRA" + chrome, "papyrus-se.atlassian.net/browse/ISD-12466")
+              == "ISD-12466|Det genereras inte n\u{00E5}gon utbetalning", "bracketed jira title")
+        check(title("QDLY-8315: Add Strawbay - Jira", "quiddly.atlassian.net/jira/software/projects/QDLY/boards/3?x") == "QDLY-8315|Add Strawbay", "colon jira title")
+        check(title("[QDLY-1] Old page - Jira" + chrome, "quiddly.atlassian.net/browse/QDLY-2") == nil, "a title from another issue is not taken")
+        check(title("YouTube" + chrome, "papyrus-se.atlassian.net/browse/ISD-12466") == nil, "not a jira title")
+        let pr = "QDLY-8315: Add Strawbay (kfm-api) as a second enforcement service provider by niklasinde \u{00B7} Pull Request #2094 \u{00B7} quiddly-com/finq.api"
+        check(title(pr + chrome, "github.com/quiddly-com/finq.api/pull/2094/changes") == "QDLY-8315|Add Strawbay (kfm-api) as a second enforcement service provider",
+              "pull request title")
+        check(title(pr + chrome, "github.com/quiddly-com/finq.api/pull/2095") == nil, "another pull request's title")
+        check(title("Redesign the invoice table by niklasinde \u{00B7} Pull Request #120 \u{00B7} niklasinde/papercut", "github.com/niklasinde/papercut/pull/120") == nil,
+              "no key")
+        let directory = TicketDirectory(titles: ["QDLY-8315": "Add Strawbay"], sites: ["QDLY": "quiddly.atlassian.net"])
+        check(directory.url(for: "QDLY-8315")?.absoluteString == "https://quiddly.atlassian.net/browse/QDLY-8315" && directory.url(for: "ISD-1") == nil, "jira url")
+        check(directory.label("QDLY-8315") == "QDLY-8315 \u{00B7} Add Strawbay" && directory.label("ISD-1") == "ISD-1", "label")
+    }),
+
+    ("the store learns jira sites and ticket titles, and backfills repositories, owners and branches", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
+        let pr = "QDLY-8315: Add Strawbay by niklasinde \u{00B7} Pull Request #2094 \u{00B7} quiddly-com/finq.api - Google Chrome"
+        var github = block(0, 60, app: "Google Chrome", title: pr, url: "github.com/quiddly-com/finq.api/pull/2094/changes/BASE..6253f44", ticket: "QDLY-8315")
+        var jira = block(60, 120, app: "Google Chrome", title: "[QDLY-8315] Strawbay provider - Jira", url: "quiddly.atlassian.net/browse/QDLY-8315",
+                         ticket: "QDLY-8315")
+        var other = block(120, 180, app: "Google Chrome", url: "example.com/x")
+        var owned = block(180, 240, app: "Google Chrome", url: "github.com/niklasinde/papercut/pull/1", repo: "papercut")
+        owned.key.owner = "niklasinde"
+        for b in [github, jira, other, owned] {
+            var b = b
+            b.id = 0
+            try store.saveBlock(b)
+        }
+        let count = try store.backfillLinks(branches: BranchIndex(branches: ["finq.api": ["NI/QDLY-8315"]]))
+        check(count == 2, "the github and jira blocks change, the others are left \(count)")
+        let saved = try store.blocks(in: t0..<t0.addingTimeInterval(1000))
+        github = saved[0]; jira = saved[1]; other = saved[2]; owned = saved[3]
+        check(github.key.repo == "finq.api" && github.key.owner == "quiddly-com" && github.key.branch == "NI/QDLY-8315", "github filled \(github.key)")
+        check(jira.key.branch == "NI/QDLY-8315" && jira.key.repo == "finq.api", "jira linked to the branch")
+        check(other.key.repo == nil && owned.key.owner == "niklasinde", "others unchanged")
+        let directory = try store.ticketDirectory()
+        check(directory.sites == ["QDLY": "quiddly.atlassian.net"], "site learned \(directory)")
+        check(directory.titles["QDLY-8315"] == "Strawbay provider", "the later title wins \(directory)")
+        check(try store.backfillLinks(branches: BranchIndex()) == 0, "a second run changes nothing")
+        try store.redact(blockIDs: [github.id], as: .private)
+        check(try store.blocks(in: t0..<t0.addingTimeInterval(60))[0].key.owner == nil, "private blocks lose the owner")
     }),
 ]

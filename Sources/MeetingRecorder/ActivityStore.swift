@@ -4,13 +4,13 @@ import Foundation
 extension MeetingStore {
     private static let detailColumns = """
         app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session, claude_title, idle, project_id,
-        typed_excerpt, category, ai_description, ai_project_id, claude_focus, claude_prompt, redaction, ai_work
+        typed_excerpt, category, ai_description, ai_project_id, claude_focus, claude_prompt, redaction, ai_work, repo_owner
         """
     private static let blockColumns = "id, start, end, " + detailColumns
     /// What a private block loses: everything but the app, the times and the category.
     private static let privateFields = """
         window_title = NULL, url = NULL, repo = NULL, branch = NULL, ticket = NULL, claude_session = NULL, claude_title = NULL,
-        typed_excerpt = NULL, ai_description = NULL, claude_focus = NULL, claude_prompt = NULL
+        typed_excerpt = NULL, ai_description = NULL, claude_focus = NULL, claude_prompt = NULL, repo_owner = NULL
         """
 
     func blocks(in range: Range<Date>) throws -> [ActivityBlock] {
@@ -30,20 +30,20 @@ extension MeetingStore {
                                        key.claude.isEmpty ? nil : key.claude.map(\.id).joined(separator: "\n"),
                                        key.claude.isEmpty ? nil : key.claude.map { "\($0.folder)\t\($0.title)" }.joined(separator: "\n"),
                                        key.idle, block.projectID, block.typedExcerpt, block.category?.rawValue, block.aiDescription,
-                                       block.aiProjectID, key.claudeFocus, block.claudePrompt, key.redaction?.rawValue, block.aiWork]
+                                       block.aiProjectID, key.claudeFocus, block.claudePrompt, key.redaction?.rawValue, block.aiWork, key.owner]
             if block.id > 0 {
                 try db.run("""
                     UPDATE activity_blocks SET start = ?, end = ?, app_bundle = ?, app_name = ?, window_title = ?, url = ?, repo = ?,
                         branch = ?, ticket = ?, claude_session = ?, claude_title = ?, idle = ?, project_id = ?, typed_excerpt = ?,
-                        category = ?, ai_description = ?, ai_project_id = ?, claude_focus = ?, claude_prompt = ?, redaction = ?, ai_work = ? WHERE id = ?
+                        category = ?, ai_description = ?, ai_project_id = ?, claude_focus = ?, claude_prompt = ?, redaction = ?, ai_work = ?, repo_owner = ? WHERE id = ?
                     """, values + [block.id])
                 return block.id
             }
             try db.run("""
                 INSERT INTO activity_blocks (start, end, app_bundle, app_name, window_title, url, repo, branch, ticket, claude_session,
                                              claude_title, idle, project_id, typed_excerpt, category, ai_description, ai_project_id,
-                                             claude_focus, claude_prompt, redaction, ai_work)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                             claude_focus, claude_prompt, redaction, ai_work, repo_owner)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, values)
             return try db.lastInsertID
         }
@@ -232,6 +232,68 @@ extension MeetingStore {
         try write(notify: Self.activityDidChange) { try db.run("DELETE FROM project_rules WHERE id = ?", [id]) }
     }
 
+    /// Remembers the Jira site of the page's project and the ticket title the page shows; writes only what is new.
+    func learnTickets(from key: ActivityKey) throws {
+        let jira = JiraLink.parse(key.url)
+        let titled = ActivityLogic.ticketTitle(windowTitle: key.windowTitle, url: key.url)
+        guard jira != nil || titled != nil else { return }
+        let known = try ticketDirectory()
+        let newSite = jira.map { known.sites[$0.prefix] != $0.site } ?? false
+        let newTitle = titled.map { known.titles[$0.ticket] != $0.title } ?? false
+        guard newSite || newTitle else { return }
+        let now = Date().timeIntervalSince1970
+        try write(notify: Self.activityDidChange) {
+            if let jira, newSite {
+                try db.run("""
+                    INSERT INTO jira_sites (prefix, site, updated) VALUES (?, ?, ?)
+                    ON CONFLICT (prefix) DO UPDATE SET site = excluded.site, updated = excluded.updated
+                    """, [jira.prefix, jira.site, now])
+            }
+            if let titled, newTitle {
+                try db.run("""
+                    INSERT INTO tickets (key, title, site, updated) VALUES (?, ?, ?, ?)
+                    ON CONFLICT (key) DO UPDATE SET title = excluded.title, site = coalesce(excluded.site, tickets.site), updated = excluded.updated
+                    """, [titled.ticket, titled.title, jira?.site, now])
+            }
+        }
+    }
+
+    func ticketDirectory() throws -> TicketDirectory {
+        try read {
+            var directory = TicketDirectory()
+            for (prefix, site) in try db.query("SELECT prefix, site FROM jira_sites", [], { ($0.string(0), $0.string(1)) }) {
+                directory.sites[prefix] = site
+            }
+            for (key, title) in try db.query("SELECT key, title FROM tickets WHERE title IS NOT NULL", [], { ($0.string(0), $0.string(1)) }) {
+                directory.titles[key] = title
+            }
+            return directory
+        }
+    }
+
+    /// Fills the repository, owner and branch that the addresses of stored blocks give (`ActivityLogic.linked`), and
+    /// learns their ticket titles and Jira sites. Only empty fields are filled; returns how many blocks changed.
+    @discardableResult
+    func backfillLinks(branches: BranchIndex) throws -> Int {
+        let blocks = try read {
+            try db.query("SELECT \(Self.blockColumns) FROM activity_blocks WHERE idle = 0 AND url IS NOT NULL AND redaction IS NULL", [], Self.block)
+        }
+        var changed: [ActivityBlock] = []
+        for block in blocks {
+            try learnTickets(from: block.key)
+            let key = ActivityLogic.linked(block.key, branches: branches)
+            if key != block.key { changed.append(ActivityBlock(id: block.id, start: block.start, end: block.end, key: key, projectID: nil)) }
+        }
+        guard !changed.isEmpty else { return 0 }
+        try write(notify: Self.activityDidChange) {
+            for block in changed {
+                try db.run("UPDATE activity_blocks SET repo = ?, repo_owner = ?, branch = ? WHERE id = ?",
+                           [block.key.repo, block.key.owner, block.key.branch, block.id])
+            }
+        }
+        return changed.count
+    }
+
     /// The meetings that start in `range`, for the context summary.
     func meetingLines(in range: Range<Date>) throws -> [ActivityLogic.MeetingSummaryLine] {
         try meetings().filter { range.contains($0.created) }.sorted { $0.created < $1.created }
@@ -248,7 +310,7 @@ extension MeetingStore {
         let key = ActivityKey(appBundle: row.optionalString(3), appName: row.optionalString(4), windowTitle: row.optionalString(5),
                               url: row.optionalString(6), repo: row.optionalString(7), branch: row.optionalString(8),
                               ticket: row.optionalString(9), claude: claude, idle: row.bool(12), claudeFocus: row.optionalString(18),
-                              redaction: row.optionalString(20).flatMap(ActivityRedaction.init))
+                              redaction: row.optionalString(20).flatMap(ActivityRedaction.init), owner: row.optionalString(22))
         return ActivityBlock(id: row.int64(0), start: Date(timeIntervalSince1970: row.double(1)), end: Date(timeIntervalSince1970: row.double(2)),
                              key: key, projectID: row.isNull(13) ? nil : row.int64(13), typedExcerpt: row.optionalString(14),
                              category: row.optionalString(15).flatMap(ActivityCategory.init), aiDescription: row.optionalString(16),

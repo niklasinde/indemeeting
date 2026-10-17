@@ -31,7 +31,7 @@ final class ActivityProjectsModel: ObservableObject {
         tracker.flush()
         var count = 0
         perform { count = try store?.applyRules(settings) ?? 0 }
-        return count
+        return count + tracker.backfillLinks()
     }
 
     func setColor(_ color: String, of project: Project) {
@@ -326,6 +326,8 @@ private struct ProjectSettingsRow: View {
 
     private var placeholder: String {
         switch field {
+        case .branch: return "NI/QDLY-*"
+        case .owner: return "quiddly-com"
         case .repo: return "finq.api"
         case .host: return "github.com"
         case .app: return "Xcode"

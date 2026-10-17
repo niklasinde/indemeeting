@@ -15,6 +15,7 @@ final class ActivityModel: ObservableObject {
     @Published private(set) var blocks: [ActivityBlock] = []
     @Published private(set) var projects: [Project] = []
     @Published private(set) var rules: [ProjectRule] = []
+    @Published private(set) var directory = TicketDirectory()
     @Published var editing: ActivityBlock?
     @Published var selected: Int64?
     @Published var copied = false
@@ -46,6 +47,7 @@ final class ActivityModel: ObservableObject {
         blocks = (try? store.blocks(in: range)) ?? []
         projects = (try? store.projects()) ?? []
         rules = (try? store.rules()) ?? []
+        directory = (try? store.ticketDirectory()) ?? TicketDirectory()
     }
 
     func shift(_ offset: Int) {
@@ -142,7 +144,7 @@ final class ActivityModel: ObservableObject {
     var contextMarkdown: String {
         let range = mode == .day ? day : self.range
         return ActivityLogic.contextMarkdown(blocks: blocks, meetings: (try? store.meetingLines(in: range)) ?? [], range: range,
-                                             rules: rules, projects: projects)
+                                             rules: rules, projects: projects, directory: directory)
     }
 
     func copyContext() {
@@ -158,7 +160,7 @@ final class ActivityModel: ObservableObject {
     func exportWeek(markdown: Bool) {
         let days = week
         let blocks = (try? store.blocks(in: days.first!.lowerBound..<days.last!.upperBound)) ?? []
-        let report = ActivityLogic.WeekReport(days: days, blocks: blocks, rules: rules, projects: projects)
+        let report = ActivityLogic.WeekReport(days: days, blocks: blocks, rules: rules, projects: projects, directory: directory)
         let panel = NSSavePanel()
         panel.title = "Export Week"
         let week = Calendar.current.component(.weekOfYear, from: date)
@@ -326,6 +328,7 @@ struct DayView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            WorkBreakdown(model: model, range: model.day)
             if model.blocks.isEmpty {
                 Text(model.isToday ? "Nothing tracked yet today." : "Nothing tracked this day.")
                     .foregroundStyle(.secondary)
@@ -456,9 +459,12 @@ struct BlockRow: View {
 
     private var chips: [Chip] {
         var chips: [Chip] = []
-        if let url = block.key.url { chips.append(Chip(text: url, icon: "globe")) }
-        if let repo = block.key.repo { chips.append(Chip(text: [repo, block.key.branch].compactMap { $0 }.joined(separator: " \u{00B7} "), icon: "arrow.triangle.branch")) }
-        if let ticket = block.key.ticket { chips.append(Chip(text: ticket, icon: "tag")) }
+        let link = block.key.codeHost
+        if let url = block.key.url { chips.append(Chip(text: ActivityLogic.urlLabel(url), icon: "globe", help: url)) }
+        if let repo = block.key.repo, link == nil || block.key.branch != nil {
+            chips.append(Chip(text: [repo, block.key.branch].compactMap { $0 }.joined(separator: " \u{00B7} "), icon: "arrow.triangle.branch"))
+        }
+        if let ticket = block.key.ticket { chips.append(.ticket(ticket, model.directory, short: true)) }
         if let category = block.category { chips.append(Chip(text: category.label, icon: "square.grid.2x2")) }
         let lane = block.backgroundSessions
         if !lane.isEmpty {
@@ -522,12 +528,14 @@ struct ProjectPicker: View {
             if ActivityLogic.projectIsGuessed(block, rules: model.rules), let guess = model.projects.first(where: { $0.id == block.aiProjectID }) {
                 Button { model.setProject(guess.id, of: block) } label: { Label("Accept suggestion: \(guess.name)", systemImage: "sparkles") }
             }
-            if let project = chosenProject, let rule = ruleCandidate {
-                Button("Always map \(rule.field.label.lowercased()) \u{201C}\(rule.pattern)\u{201D} to \(project.name)") {
-                    model.addRule(rule.field, pattern: rule.pattern, project: project.id)
-                    model.setProject(nil, of: block)
+            if let project = chosenProject {
+                ForEach(ruleCandidates, id: \.pattern) { rule in
+                    Button("Always map \(rule.field.label.lowercased()) \u{201C}\(rule.pattern)\u{201D} to \(project.name)") {
+                        model.addRule(rule.field, pattern: rule.pattern, project: project.id)
+                        model.setProject(nil, of: block)
+                    }
+                    .disabled(model.rules.contains { $0.field == rule.field && $0.pattern.caseInsensitiveCompare(rule.pattern) == .orderedSame })
                 }
-                .disabled(model.rules.contains { $0.field == rule.field && $0.pattern.caseInsensitiveCompare(rule.pattern) == .orderedSame })
             }
             HStack {
                 TextField("New project", text: $newName).textFieldStyle(.roundedBorder).onSubmit(create)
@@ -550,11 +558,14 @@ struct ProjectPicker: View {
         model.projects.first { $0.id == (block.projectID ?? model.project(of: block)?.id) }
     }
 
-    private var ruleCandidate: (field: RuleField, pattern: String)? {
-        if let repo = block.key.repo { return (.repo, repo) }
-        if let host = block.host { return (.host, host) }
-        if let ticket = block.key.ticket, let dash = ticket.firstIndex(of: "-") { return (.ticket, String(ticket[..<dash])) }
-        return block.key.appName.map { (.app, $0) }
+    /// The rules that would map blocks like this one, in the order they are tried. A code-host address offers its
+    /// repository and organisation instead of the host, which every repository shares.
+    private var ruleCandidates: [(field: RuleField, pattern: String)] {
+        let key = block.key
+        let host = key.owner == nil ? key.host : nil
+        let fields: [(RuleField, String?)] = [(.branch, key.branch), (.ticket, key.ticketPrefix), (.repo, key.repo), (.owner, key.owner),
+                                              (.host, host), (.app, host == nil && key.repo == nil ? key.appName : nil)]
+        return fields.compactMap { field, pattern in pattern.map { (field, $0) } }
     }
 
     private func create() {
@@ -576,6 +587,14 @@ struct WeekView: View {
             if (a == ActivityLogic.unassigned) != (b == ActivityLogic.unassigned) { return b == ActivityLogic.unassigned }
             return weekSeconds(a, totals) > weekSeconds(b, totals)
         }
+        let work = days.map { day in
+            ActivityLogic.workTotals(model.blocks, in: day, rules: model.rules, projects: model.projects)
+                .map { ActivityLogic.Total(name: $0.label, seconds: $0.seconds) }
+        }
+        let tickets = days.map { day in
+            ActivityLogic.ticketTotals(model.blocks, in: day, rules: model.rules, projects: model.projects)
+                .map { ActivityLogic.Total(name: $0.ticket, seconds: $0.seconds) }
+        }
         let categories = days.map { ActivityLogic.categoryTotals(model.blocks, in: $0) }
         let categoryNames = categories.flatMap { $0.map(\.name) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             .sorted { weekSeconds($0, categories) > weekSeconds($1, categories) }
@@ -593,6 +612,15 @@ struct WeekView: View {
                 if !categoryNames.isEmpty {
                     table("Category", days: days, names: categoryNames, totals: categories, withTotal: false) { _ in nil }
                 }
+                let workNames = weekNames(work)
+                if !workNames.isEmpty {
+                    table("Branch", days: days, names: Array(workNames.prefix(20)), totals: work, withTotal: false) { _ in nil }
+                }
+                let ticketNames = weekNames(tickets)
+                if !ticketNames.isEmpty {
+                    table("Ticket", days: days, names: Array(ticketNames.prefix(20)), totals: tickets, withTotal: false,
+                          display: { .ticket($0, model.directory, short: false) }) { _ in nil }
+                }
                 HStack {
                     Button("Export CSV\u{2026}") { model.exportWeek(markdown: false) }
                     Button("Export Markdown\u{2026}") { model.exportWeek(markdown: true) }
@@ -601,8 +629,14 @@ struct WeekView: View {
         }
     }
 
+    /// The names in the week's totals, longest first.
+    private func weekNames(_ totals: [[ActivityLogic.Total]]) -> [String] {
+        totals.flatMap { $0.map(\.name) }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            .sorted { weekSeconds($0, totals) > weekSeconds($1, totals) }
+    }
+
     private func table(_ title: String, days: [Range<Date>], names: [String], totals: [[ActivityLogic.Total]], withTotal: Bool,
-                       color: @escaping (String) -> Color?) -> some View {
+                       display: ((String) -> Chip)? = nil, color: @escaping (String) -> Color?) -> some View {
                 Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 8) {
                     GridRow {
                         Text(title).gridColumnAlignment(.leading)
@@ -619,7 +653,7 @@ struct WeekView: View {
                         GridRow {
                             HStack(spacing: 6) {
                                 if let color = color(name) { Circle().fill(color).frame(width: 8, height: 8) }
-                                Text(name)
+                                if let chip = display?(name) { ChipLabel(chip: chip) } else { Text(name) }
                             }
                             .gridColumnAlignment(.leading)
                             ForEach(Array(totals.enumerated()), id: \.offset) { _, dayTotals in
@@ -662,6 +696,88 @@ struct Chip: Hashable {
     var color: Color?
     var tint: Color?
     var help: String?
+    /// Opened in the default browser when the chip is clicked.
+    var link: URL?
+
+    /// A ticket, with its title when known (or only in the tooltip when `short`), linking to Jira when its site is known.
+    static func ticket(_ ticket: String, _ directory: TicketDirectory, short: Bool) -> Chip {
+        let title = directory.titles[ticket]
+        let link = directory.url(for: ticket)
+        return Chip(text: short ? ticket : directory.label(ticket), icon: "tag", tint: link == nil ? nil : .accentColor,
+                    help: [title, link?.absoluteString].compactMap { $0 }.joined(separator: "\n"), link: link)
+    }
+}
+
+/// A chip on its own, clickable when it has a link.
+struct ChipLabel: View {
+    let chip: Chip
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let color = chip.color { Circle().fill(color).frame(width: 7, height: 7) }
+            if let icon = chip.icon { Image(systemName: icon).font(.system(size: 9)) }
+            Text(chip.text).lineLimit(1)
+        }
+        .foregroundStyle(chip.tint ?? .secondary)
+        .help(chip.help ?? "")
+        .contentShape(Rectangle())
+        .highPriorityGesture(TapGesture().onEnded { if let link = chip.link { NSWorkspace.shared.open(link) } }, including: chip.link == nil ? .subviews : .all)
+    }
+}
+
+/// Time per branch and per ticket for a range, under the day's totals.
+struct WorkBreakdown: View {
+    @ObservedObject var model: ActivityModel
+    let range: Range<Date>
+
+    var body: some View {
+        let work = ActivityLogic.workTotals(model.blocks, in: range, rules: model.rules, projects: model.projects)
+        let tickets = ActivityLogic.ticketTotals(model.blocks, in: range, rules: model.rules, projects: model.projects)
+        if !work.isEmpty || !tickets.isEmpty {
+            HStack(alignment: .top, spacing: 28) {
+                if !work.isEmpty {
+                    section("By branch") {
+                        ForEach(work.prefix(8), id: \.label) { item in
+                            let branch = item.ticket != item.name
+                            row(branch ? branchChip(item) : .ticket(item.name, model.directory, short: false),
+                                link: branch ? item.ticket : nil, project: item.project, seconds: item.seconds)
+                        }
+                    }
+                }
+                if !tickets.isEmpty {
+                    section("By ticket") {
+                        ForEach(tickets.prefix(8), id: \.ticket) { total in
+                            row(.ticket(total.ticket, model.directory, short: false), link: nil, project: total.project, seconds: total.seconds)
+                                .help(total.branches.joined(separator: "\n"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func branchChip(_ item: ActivityLogic.WorkTotal) -> Chip {
+        Chip(text: item.label, icon: "arrow.triangle.branch", help: item.ticket.map { model.directory.label($0) })
+    }
+
+    private func section(_ title: String, @ViewBuilder _ rows: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            rows()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func row(_ chip: Chip, link ticket: String?, project: String?, seconds: TimeInterval) -> some View {
+        HStack(spacing: 6) {
+            ChipLabel(chip: chip)
+            if let ticket { ChipLabel(chip: .ticket(ticket, model.directory, short: true)) }
+            Spacer(minLength: 6)
+            if let project { Text(project).foregroundStyle(.tertiary).lineLimit(1) }
+            Text(ActivityLogic.hoursText(seconds)).foregroundStyle(.secondary).monospacedDigit()
+        }
+        .font(.callout)
+    }
 }
 
 /// Small labels that wrap onto new lines.
@@ -673,17 +789,11 @@ struct FlowChips: View {
     var body: some View {
         FlowLayout(spacing: 6) {
             ForEach(chips, id: \.self) { chip in
-                HStack(spacing: 4) {
-                    if let color = chip.color { Circle().fill(color).frame(width: 7, height: 7) }
-                    if let icon = chip.icon { Image(systemName: icon).font(.system(size: 9)) }
-                    Text(chip.text).lineLimit(1)
-                }
-                .font(.caption)
-                .foregroundStyle(chip.tint ?? .secondary)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(Capsule().fill((chip.tint ?? Color.primary).opacity(0.07)))
-                .help(chip.help ?? "")
+                ChipLabel(chip: chip)
+                    .font(.caption)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Capsule().fill((chip.tint ?? Color.primary).opacity(0.07)))
             }
         }
     }

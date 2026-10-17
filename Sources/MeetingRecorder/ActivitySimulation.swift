@@ -72,9 +72,9 @@ enum SampleActivity {
                    focus: ClaudeSession? = nil, prompt: String? = nil, redaction: ActivityRedaction? = nil) throws {
             let day = calendar.startOfDay(for: calendar.date(byAdding: .day, value: dayOffset, to: now)!)
             let anonymous = idle || redaction == .other
-            let key = ActivityKey(appBundle: anonymous ? nil : app.0, appName: anonymous ? nil : app.1, windowTitle: title, url: url, repo: repo,
+            let key = ActivityLogic.linked(ActivityKey(appBundle: anonymous ? nil : app.0, appName: anonymous ? nil : app.1, windowTitle: title, url: url, repo: repo,
                                   branch: branch, ticket: ActivityLogic.ticket(in: branch, title, url), claude: claude, idle: idle,
-                                  claudeFocus: focus?.id, redaction: redaction)
+                                  claudeFocus: focus?.id, redaction: redaction))
             try store.saveBlock(ActivityBlock(id: 0, start: day.addingTimeInterval(from * 3600), end: day.addingTimeInterval(to * 3600),
                                               key: key, projectID: nil, typedExcerpt: excerpt, category: category, aiDescription: description,
                                               aiProjectID: guess, claudePrompt: prompt))

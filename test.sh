@@ -17,6 +17,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/SQLiteDatabase.swift \
     Sources/MeetingRecorder/MeetingStore.swift \
     Sources/MeetingRecorder/ActivityLogic.swift \
+    Sources/MeetingRecorder/ActivityLinks.swift \
     Sources/MeetingRecorder/ActivityStore.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \

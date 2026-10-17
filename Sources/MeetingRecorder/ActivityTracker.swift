@@ -17,6 +17,8 @@ final class ActivityTracker: ObservableObject {
     private var away = false
     private var repositories: [URL] = []
     private var repositoriesScanned = Date.distantPast
+    private var branches = BranchIndex()
+    private static let backfilledKey = "activityLinksBackfilled"
     private var cleanedUp = Date.distantPast
     private var typing = TypingWatch()
     private let claude = ClaudeSessionScanner()
@@ -60,7 +62,25 @@ final class ActivityTracker: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: ActivitySettings.interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        if store.isAvailable, !UserDefaults.standard.bool(forKey: Self.backfilledKey) {
+            backfillLinks()
+            UserDefaults.standard.set(true, forKey: Self.backfilledKey)
+        }
         tick()
+    }
+
+    /// Fills the repository, owner and branch of stored blocks from their addresses; returns how many changed.
+    @discardableResult
+    func backfillLinks() -> Int {
+        flush()
+        do {
+            let count = try store.backfillLinks(branches: branchIndex(Date()))
+            FileHandle.standardError.write(Data("Activity links filled in for \(count) blocks\n".utf8))
+            return count
+        } catch {
+            FileHandle.standardError.write(Data("Activity links not filled in: \(error.localizedDescription)\n".utf8))
+            return 0
+        }
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -115,7 +135,12 @@ final class ActivityTracker: ObservableObject {
             typing.blockChanged()
         }
         var open = result.open
-        if open.id == 0 { open.id = saveReturningID(open) } else { save(open) }
+        if open.id == 0 {
+            open.id = saveReturningID(open)
+            _ = try? store.learnTickets(from: open.key)
+        } else {
+            save(open)
+        }
         current = open
     }
 
@@ -151,6 +176,7 @@ final class ActivityTracker: ObservableObject {
         if settings.claude { addClaude(to: &sample, now: now) }
         sample.ticket = ActivityLogic.ticket(in: sample.branch, sample.claudeFocus.flatMap { id in sample.claude.first { $0.id == id }?.title },
                                              sample.windowTitle, sample.url)
+        sample.link(branches: branchIndex(now))
         ingest(sample)
         let excerpt = settings.typing && current != nil && current?.key.redaction == nil && !IsSecureEventInputEnabled()
             ? Self.focusedTextExcerpt(of: app.processIdentifier) : nil
@@ -184,9 +210,15 @@ final class ActivityTracker: ObservableObject {
     private func repositories(_ now: Date) -> [URL] {
         if now.timeIntervalSince(repositoriesScanned) > 300 {
             repositories = ActivityLogic.repositories(under: repositoriesRoot)
+            branches = BranchIndex.scan(repositories)
             repositoriesScanned = now
         }
         return repositories
+    }
+
+    private func branchIndex(_ now: Date) -> BranchIndex {
+        _ = repositories(now)
+        return branches
     }
 
     private func cleanUp(_ now: Date) {

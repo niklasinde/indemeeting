@@ -26,6 +26,8 @@ struct ActivitySample: Equatable {
     var ticket: String?
     var claude: [ClaudeSession] = []
     var idle = false
+    /// The owner or organisation of a code-host repository in the address.
+    var owner: String?
     /// The session the user is typing into while Claude is frontmost, and the last thing they asked it.
     var claudeFocus: String?
     var claudePrompt: String?
@@ -37,7 +39,15 @@ struct ActivitySample: Equatable {
     /// background are gathered over the block instead.
     var key: ActivityKey {
         ActivityKey(appBundle: appBundle, appName: appName, windowTitle: windowTitle, url: url, repo: repo, branch: branch,
-                    ticket: ticket, claude: claude, idle: idle, claudeFocus: claudeFocus, redaction: redaction)
+                    ticket: ticket, claude: claude, idle: idle, claudeFocus: claudeFocus, redaction: redaction, owner: owner)
+    }
+
+    /// Takes the repository, owner and branch `ActivityLogic.linked` finds for the address.
+    mutating func link(branches: BranchIndex) {
+        let key = ActivityLogic.linked(key, branches: branches)
+        repo = key.repo
+        owner = key.owner
+        branch = key.branch
     }
 }
 
@@ -61,8 +71,17 @@ struct ActivityKey: Hashable {
     var idle: Bool
     var claudeFocus: String?
     var redaction: ActivityRedaction?
+    var owner: String? = nil
 
     var host: String? { url.flatMap { $0.split(separator: "/", maxSplits: 1).first }.map(String.init) }
+
+    var codeHost: CodeHostLink? { CodeHostLink.parse(url) }
+
+    /// The ticket's prefix, or the Jira project of the page.
+    var ticketPrefix: String? { ticket.map(ActivityLogic.ticketPrefix) ?? JiraLink.parse(url)?.prefix }
+
+    /// What the block was worked on: its branch when known, else its ticket.
+    var workItem: String? { branch ?? ticket }
 
     func sameBlock(as other: ActivityKey) -> Bool {
         var a = self, b = other
@@ -136,20 +155,27 @@ struct Project: Equatable, Identifiable, Hashable {
     static let colors = ["#5B8DEF", "#E0665C", "#4CAF7D", "#E6A23C", "#9B6BD6", "#2BB3B1", "#D66B9B", "#8A8F98"]
 }
 
+/// The fields a rule can match, in the order rules are tried: a block's own choice comes first, the AI guess last.
 enum RuleField: String, CaseIterable {
+    case branch
+    case ticket
     case repo
+    case owner
     case host
     case app
-    case ticket
 
     var label: String {
         switch self {
+        case .branch: return "Branch"
+        case .ticket: return "Ticket prefix"
         case .repo: return "Repository"
+        case .owner: return "Organisation"
         case .host: return "Website"
         case .app: return "App"
-        case .ticket: return "Ticket prefix"
         }
     }
+
+    var rank: Int { Self.allCases.firstIndex(of: self)! }
 }
 
 struct ProjectRule: Equatable, Identifiable {
@@ -161,11 +187,20 @@ struct ProjectRule: Equatable, Identifiable {
     func matches(_ key: ActivityKey) -> Bool {
         let pattern = pattern.lowercased()
         switch field {
+        case .branch: return key.branch.map { Self.glob(pattern, matches: $0.lowercased()) } ?? false
+        case .ticket: return key.ticketPrefix?.lowercased() == pattern
         case .repo: return key.repo?.lowercased() == pattern
+        case .owner: return key.owner?.lowercased() == pattern
         case .host: return key.host.map { HostPattern.matches(pattern, host: $0) } ?? false
         case .app: return [key.appBundle, key.appName].contains { $0?.lowercased() == pattern }
-        case .ticket: return key.ticket?.lowercased().hasPrefix(pattern + "-") == true
         }
+    }
+
+    /// `*` stands for any run of characters; everything else matches itself.
+    static func glob(_ pattern: String, matches text: String) -> Bool {
+        let regex = "^" + pattern.split(separator: "*", omittingEmptySubsequences: false)
+            .map { NSRegularExpression.escapedPattern(for: String($0)) }.joined(separator: ".*") + "$"
+        return text.range(of: regex, options: [.regularExpression, .caseInsensitive]) != nil
     }
 }
 
@@ -448,10 +483,14 @@ enum ActivityLogic {
         case .keep: break
         }
         if !settings.titles { sample.windowTitle = nil }
-        if !settings.urls { sample.url = nil }
+        if !settings.urls {
+            sample.url = nil
+            sample.owner = nil
+        }
         if !settings.git {
             sample.repo = nil
             sample.branch = nil
+            sample.owner = nil
         }
         if !settings.claude {
             sample.claudePrompt = nil
@@ -695,15 +734,20 @@ enum ActivityLogic {
 
     // MARK: Projects
 
-    /// The block's own choice, else the first matching rule, else the AI guess.
+    /// The block's own choice, else the matching rule whose field comes first in `RuleField` (the older rule among
+    /// equals), else the AI guess.
     static func project(for block: ActivityBlock, rules: [ProjectRule], projects: [Project]) -> Project? {
-        let id = block.projectID ?? rules.first { $0.matches(block.key) }?.projectID ?? block.aiProjectID
+        let id = block.projectID ?? matchingRule(block.key, rules)?.projectID ?? block.aiProjectID
         return id.flatMap { id in projects.first { $0.id == id } }
+    }
+
+    static func matchingRule(_ key: ActivityKey, _ rules: [ProjectRule]) -> ProjectRule? {
+        rules.filter { $0.matches(key) }.min { ($0.field.rank, $0.id) < ($1.field.rank, $1.id) }
     }
 
     /// Whether the shown project is only the AI's guess.
     static func projectIsGuessed(_ block: ActivityBlock, rules: [ProjectRule]) -> Bool {
-        block.projectID == nil && block.aiProjectID != nil && !rules.contains { $0.matches(block.key) }
+        block.projectID == nil && block.aiProjectID != nil && matchingRule(block.key, rules) == nil
     }
 
     // MARK: Totals
@@ -741,6 +785,54 @@ enum ActivityLogic {
         }
     }
 
+    /// `owner/repo` when the owner is known, else the repository's folder name.
+    static func repoLabel(_ key: ActivityKey) -> String {
+        [key.owner, key.repo].compactMap { $0 }.joined(separator: "/")
+    }
+
+    /// Time per work item: a branch (in its repository), else a ticket worked on without one.
+    struct WorkTotal: Equatable {
+        let name: String
+        let repo: String?
+        let ticket: String?
+        let project: String?
+        let seconds: TimeInterval
+
+        var label: String { repo.map { "\(name) (\($0))" } ?? name }
+    }
+
+    /// Time per ticket: its branches and the browser time on its pages.
+    struct TicketTotal: Equatable {
+        let ticket: String
+        let branches: [String]
+        let project: String?
+        let seconds: TimeInterval
+    }
+
+    static func ticket(of key: ActivityKey) -> String? { key.ticket ?? ticket(in: key.branch) }
+
+    static func workTotals(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project]) -> [WorkTotal] {
+        let groups = Dictionary(grouping: blocks.filter { !$0.key.idle && $0.key.workItem != nil && $0.seconds(in: range) > 0 }) { block in
+            [block.key.workItem!, block.key.branch == nil ? "" : block.key.repo ?? ""]
+        }
+        return groups.map { group, blocks in
+            WorkTotal(name: group[0], repo: group[1].isEmpty ? nil : group[1], ticket: blocks.lazy.compactMap { ticket(of: $0.key) }.first,
+                      project: mainProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range))
+        }.sorted { $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.label < $1.label }
+    }
+
+    static func ticketTotals(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project]) -> [TicketTotal] {
+        let groups = Dictionary(grouping: blocks.filter { !$0.key.idle && $0.seconds(in: range) > 0 }) { ticket(of: $0.key) }
+        return groups.compactMap { ticket, blocks in
+            ticket.map { TicketTotal(ticket: $0, branches: Array(Set(blocks.compactMap(\.key.branch))).sorted(),
+                                     project: mainProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range)) }
+        }.sorted { $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.ticket < $1.ticket }
+    }
+
+    private static func mainProject(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project]) -> String? {
+        projectTotals(blocks, in: range, rules: rules, projects: projects).first { $0.name != unassigned }?.name
+    }
+
     static func activeSeconds(_ blocks: [ActivityBlock], in range: Range<Date>) -> TimeInterval {
         blocks.filter { !$0.key.idle }.reduce(0) { $0 + $1.seconds(in: range) }
     }
@@ -772,15 +864,23 @@ enum ActivityLogic {
         let rules: [ProjectRule]
         let projects: [Project]
         var calendar = Calendar.current
+        var directory = TicketDirectory()
     }
 
+    /// One row per day, project and work item; blocks without a work item come last with an empty one.
     static func csv(_ report: WeekReport) -> String {
-        var lines = ["date,project,hours,details"]
+        var lines = ["date,project,work_item,ticket,ticket_title,jira_url,hours,details"]
         for day in report.days {
             let date = dateText(day.lowerBound)
             for (name, blocks) in groupedByProject(report, in: day) {
-                let seconds = activeSeconds(blocks, in: day)
-                lines.append([date, name, hours(seconds), details(of: blocks).joined(separator: "; ")].map(csvField).joined(separator: ","))
+                let items = Dictionary(grouping: blocks) { $0.key.workItem ?? "" }.map { ($0.key, $0.value, activeSeconds($0.value, in: day)) }
+                    .sorted { ($0.0.isEmpty ? 1 : 0, -$0.2, $0.0) < ($1.0.isEmpty ? 1 : 0, -$1.2, $1.0) }
+                for (item, blocks, seconds) in items {
+                    let ticket = blocks.lazy.compactMap { ticket(of: $0.key) }.first
+                    lines.append([date, name, item, ticket ?? "", ticket.flatMap { report.directory.titles[$0] } ?? "",
+                                  ticket.flatMap { report.directory.url(for: $0)?.absoluteString } ?? "", hours(seconds),
+                                  details(of: blocks).joined(separator: "; ")].map(csvField).joined(separator: ","))
+                }
             }
         }
         return lines.joined(separator: "\n") + "\n"
@@ -801,7 +901,30 @@ enum ActivityLogic {
                 lines += details(of: blocks).map { "- " + $0 }
             }
         }
+        lines += workSections(report.blocks, in: first..<report.days.last!.upperBound, rules: report.rules, projects: report.projects,
+                              directory: report.directory)
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// `## By branch` and `## By ticket`, for the week export and the context summary.
+    static func workSections(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project],
+                             directory: TicketDirectory) -> [String] {
+        var lines: [String] = []
+        let work = workTotals(blocks, in: range, rules: rules, projects: projects)
+        if !work.isEmpty {
+            lines += ["", "## By branch"] + work.prefix(15).map { item in
+                let names = item.name == item.ticket ? [directory.markdown(item.name)] : [item.label, item.ticket.map(directory.markdown)]
+                return "- " + (names + [item.project, hoursText(item.seconds)]).compactMap { $0 }.joined(separator: " \u{00B7} ")
+            }
+        }
+        let tickets = ticketTotals(blocks, in: range, rules: rules, projects: projects)
+        if !tickets.isEmpty {
+            lines += ["", "## By ticket"] + tickets.prefix(15).map { total in
+                "- " + [directory.markdown(total.ticket), total.project, hoursText(total.seconds)].compactMap { $0 }.joined(separator: " \u{00B7} ")
+                    + (total.branches.isEmpty ? "" : " (\(total.branches.joined(separator: ", ")))")
+            }
+        }
+        return lines
     }
 
     /// Repositories (with branches and tickets), tickets, websites and the longest window titles of the blocks.
@@ -809,8 +932,8 @@ enum ActivityLogic {
         var seconds: [String: TimeInterval] = [:]
         for block in blocks where !block.key.idle {
             var labels: [String] = []
-            if let repo = block.key.repo {
-                labels.append([repo, block.key.branch.map { "(\($0))" }].compactMap { $0 }.joined(separator: " "))
+            if block.key.repo != nil {
+                labels.append([repoLabel(block.key), block.key.branch.map { "(\($0))" }].compactMap { $0 }.joined(separator: " "))
             }
             if let ticket = block.key.ticket { labels.append(ticket) }
             if let host = block.host { labels.append(host) }
@@ -847,7 +970,7 @@ enum ActivityLogic {
 
     /// A compact Markdown summary of what happened in `range`, for pasting into a Claude conversation.
     static func contextMarkdown(blocks: [ActivityBlock], meetings: [MeetingSummaryLine], range: Range<Date>,
-                                rules: [ProjectRule] = [], projects: [Project] = []) -> String {
+                                rules: [ProjectRule] = [], projects: [Project] = [], directory: TicketDirectory = TicketDirectory()) -> String {
         let active = blocks.filter { !$0.key.idle && $0.seconds(in: range) > 0 }
         let time = { (date: Date) in date.formatted(date: .omitted, time: .shortened) }
         var lines = ["# Activity \(dateText(range.lowerBound)) \(time(range.lowerBound)) \u{2013} \(time(range.upperBound))",
@@ -862,9 +985,9 @@ enum ActivityLogic {
         }
         section("Apps", appTotals(active, in: range).map { ($0.name, $0.seconds) })
         section("Repositories", ranked(active, in: range) { block in
-            block.key.repo.map { [$0, block.key.branch.map { "(\($0))" }].compactMap { $0 }.joined(separator: " ") }
+            block.key.repo.map { _ in [repoLabel(block.key), block.key.branch.map { "(\($0))" }].compactMap { $0 }.joined(separator: " ") }
         })
-        section("Tickets", ranked(active, in: range) { $0.key.ticket })
+        lines += workSections(active, in: range, rules: rules, projects: projects, directory: directory)
         section("Websites", ranked(active, in: range, limit: 15) { $0.key.url })
         section("Claude sessions", claudeTotals(active, in: range))
         section("Windows", ranked(active, in: range, limit: 12) { block in
@@ -973,7 +1096,8 @@ enum ActivityAI {
         var lines = ["App: \(key.appName ?? key.appBundle ?? "unknown")"]
         if let title = key.windowTitle { lines.append("Window: \(title)") }
         if let url = key.url { lines.append("Address: \(url)") }
-        if let repo = key.repo { lines.append("Repository: \(repo)" + (key.branch.map { " on branch \($0)" } ?? "")) }
+        if let link = key.codeHost { lines.append("Code host: \(link.promptText)") }
+        if key.repo != nil { lines.append("Repository: \(ActivityLogic.repoLabel(key))" + (key.branch.map { " on branch \($0)" } ?? "")) }
         if let ticket = key.ticket { lines.append("Ticket: \(ticket)") }
         if let session = block.claudeFocusSession { lines.append("Claude Code session: \(session.title)") }
         if let prompt = block.claudePrompt { lines.append("Last request to Claude: \(prompt)") }

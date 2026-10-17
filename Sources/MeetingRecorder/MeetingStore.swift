@@ -198,6 +198,11 @@ final class MeetingStore: @unchecked Sendable {
         "ALTER TABLE activity_blocks ADD COLUMN claude_focus TEXT; ALTER TABLE activity_blocks ADD COLUMN claude_prompt TEXT",
         "ALTER TABLE activity_blocks ADD COLUMN redaction TEXT; ALTER TABLE activity_blocks ADD COLUMN ai_work INTEGER; "
             + "ALTER TABLE activity_ai_cache ADD COLUMN work INTEGER",
+        """
+        ALTER TABLE activity_blocks ADD COLUMN repo_owner TEXT;
+        CREATE TABLE tickets (key TEXT PRIMARY KEY, title TEXT, site TEXT, updated REAL NOT NULL);
+        CREATE TABLE jira_sites (prefix TEXT PRIMARY KEY, site TEXT NOT NULL, updated REAL NOT NULL);
+        """,
     ]
 
     private static let meetingColumns = """
