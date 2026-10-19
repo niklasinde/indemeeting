@@ -43,6 +43,12 @@ final class MainWindow {
         window.show()
     }
 
+    func showGitHub() {
+        library.start()
+        library.showsGitHub = true
+        window.show()
+    }
+
     static func makeWindow(_ view: MainView) -> NSWindow {
         let controller = NSHostingController(rootView: view)
         controller.sceneBridgingOptions = [.toolbars]
@@ -70,7 +76,13 @@ final class RecordingLibrary: ObservableObject {
     @Published var tab = DetailTab.summary
     @Published var confirmingDelete = false
     /// The Activity page is shown instead of the selected meeting.
-    @Published var showsActivity = false
+    @Published var showsActivity = false {
+        didSet { if showsActivity { showsGitHub = false } }
+    }
+    /// The GitHub page is shown instead of the selected meeting.
+    @Published var showsGitHub = false {
+        didSet { if showsGitHub { showsActivity = false } }
+    }
     /// A moment in the selected meeting that the transcript should scroll to.
     @Published var seekTarget: TimeInterval?
     /// The meeting being recorded, listed before its file exists.
@@ -91,10 +103,11 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var selected: RecordingEntry? { showsActivity ? nil : recordings.first { $0.id == selection } }
+    var selected: RecordingEntry? { showsActivity || showsGitHub ? nil : recordings.first { $0.id == selection } }
 
     func select(_ entry: RecordingEntry) {
         showsActivity = false
+        showsGitHub = false
         selection = entry.id
     }
 
@@ -313,6 +326,8 @@ struct MainView: View {
                 if let error = library.databaseError { DatabaseErrorBanner(error: error) }
                 if library.showsActivity {
                     ActivityView(model: activity, tracker: activity.tracker)
+                } else if library.showsGitHub {
+                    GitHubView(model: .shared)
                 } else if let entry = library.selected {
                     RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
                         .id(entry.id)
@@ -462,6 +477,7 @@ struct Sidebar: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
             activityRow
+            gitHubRow
             chatRow
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
@@ -499,6 +515,21 @@ struct Sidebar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .help("What you worked on, by day and week")
+    }
+
+    private var gitHubRow: some View {
+        Button { library.showsGitHub = true } label: {
+            Label("GitHub", systemImage: "arrow.triangle.branch")
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(library.showsGitHub ? Color.primary.opacity(0.08) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .help("Your pull requests, read through the GitHub CLI")
     }
 
     private var chatRow: some View {

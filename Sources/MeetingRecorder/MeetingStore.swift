@@ -229,6 +229,28 @@ final class MeetingStore: @unchecked Sendable {
         );
         CREATE INDEX chat_messages_chat ON chat_messages(chat_id);
         """,
+        """
+        CREATE TABLE github_prs (
+            kind TEXT NOT NULL,
+            url TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            is_draft INTEGER NOT NULL,
+            state TEXT NOT NULL,
+            updated REAL NOT NULL,
+            review TEXT,
+            checks TEXT NOT NULL,
+            author TEXT,
+            additions INTEGER NOT NULL,
+            deletions INTEGER NOT NULL,
+            comments INTEGER NOT NULL,
+            labels TEXT NOT NULL,
+            fetched REAL NOT NULL,
+            PRIMARY KEY (kind, url)
+        );
+        """,
     ]
 
     private static let meetingColumns = """

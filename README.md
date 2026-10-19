@@ -471,6 +471,36 @@ folder:
 MeetingRecorder --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
 ```
 
+## GitHub
+
+Off by default. Settings > Activity > GitHub turns on a **GitHub** row in the main window's sidebar: your pull requests
+as a compact list, read through the GitHub CLI (`gh`) that is already signed in on this Mac. The app never handles a
+token, password or API key; if `gh` is missing the page shows `brew install gh`, and if it is not signed in it shows
+`gh auth login`, each with a Copy button (the app never runs the interactive login).
+
+This is the app's only network use besides model downloads, the Claude Code plugin install and the Jira links you
+click: with the switch on, `gh api graphql` runs a search per tab (at most 50 open pull requests each, plus the
+latest 30 closed or merged ones you created) and `gh auth status` checks the sign-in. Nothing is uploaded; only the
+search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@me`) go to GitHub.
+
+- **Tabs:** Created, Review requested, Assigned and Mentioned, with a state filter (Open by default, Merged, Closed,
+  All), a repository menu and a search field; rows are sorted by last update. The header counts the rows ("47 created").
+- **Rows:** `owner / repo #number`, the title, and chips for the Jira ticket (when the title starts with a key; it links
+  to Jira once the site is known from your browsing), Draft, the review decision, comments, `+additions -deletions` and
+  the time since the last update. The mark on the right is a green check (checks passed), red cross (failed), amber dot
+  (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
+- **Click** opens the pull request in the browser. Right-click: Copy Link, Copy Title, Open Repository, and Ask About This
+  Pull Request, which opens a general chat with the title and link in the box.
+- **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
+  data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
+- **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks" opens the page.
+- **Timeline:** the tooltip of a pull request address in the Activity timeline shows its title from the cache.
+- **Cache:** the last fetch is stored in `github_prs` in the meeting database, so the page opens instantly and works
+  offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.
+
+`MeetingRecorder --github-prs` runs the same searches once and prints the counts and the newest rows (read only).
+In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
+
 ## Claude Code plugin
 
 `plugin/` is a Claude Code plugin, published from this repository as the `indemeeting` marketplace. Install it from

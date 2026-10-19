@@ -7,11 +7,15 @@ enum Main {
         if let output = ProjectPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { ProjectPreview.run(to: output) }
         }
+        if let output = GitHubPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { GitHubPreview.run(to: output) }
+        }
         if let output = PreviewRenderer.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
         #endif
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
+        if CommandLine.arguments.contains("--github-prs") { GitHubClient.runFromCommandLine() }
         if let job = ChatLogic.chatArguments(CommandLine.arguments) { ChatCommandLine.run(job) }
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             let store = MeetingStore.openDefault()
@@ -115,7 +119,8 @@ struct MeetingRecorderApp: App {
     var body: some Scene {
         MenuBarExtra {
             MenuContent(recorder: delegate.recorder, processor: delegate.processor, tracker: delegate.tracker,
-                        databaseError: delegate.databaseError, openActivity: { delegate.mainWindow.showActivity() }) {
+                        databaseError: delegate.databaseError, openActivity: { delegate.mainWindow.showActivity() },
+                        openGitHub: { delegate.mainWindow.showGitHub() }) {
                 delegate.mainWindow.show(selecting: $0)
             }
         } label: {
@@ -158,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
             self?.toggleRecording()
         }
+        GitHubModel.shared.store = store
+        GitHubModel.shared.start()
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
@@ -214,10 +221,12 @@ struct MenuContent: View {
     @ObservedObject var tracker: ActivityTracker
     let databaseError: DatabaseUnavailable?
     let openActivity: () -> Void
+    let openGitHub: () -> Void
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
     @ObservedObject private var listened = ListenedLanguages.shared
+    @ObservedObject private var github = GitHubModel.shared
 
     var body: some View {
         Button("Open Meeting Recorder") { openApp(nil) }
@@ -273,6 +282,10 @@ struct MenuContent: View {
             Text(status)
             Toggle("Pause activity tracking", isOn: Binding(get: { tracker.settings.paused }, set: { tracker.setPaused($0) }))
             Button("Open Activity") { openActivity() }
+        }
+        if let summary = github.menuSummary {
+            Divider()
+            Button(summary) { openGitHub() }
         }
         Divider()
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)

@@ -172,6 +172,7 @@ struct ActivitySettingsView: View {
                 pluginRows
             }
             .onAppear { plugin.refresh() }
+            GitHubSettingsSection(model: .shared)
             SettingsSection("Apps and websites", footer: "The blocklist wins over the allowlist. Blocked apps and websites keep only the "
                             + "app and the times and show as Private; apps outside the allowlist show as Other with only the times, so "
                             + "day totals still add up. Excluded categories apply once Apple Intelligence has categorised a block.") {

@@ -16,6 +16,7 @@ final class ActivityModel: ObservableObject {
     @Published private(set) var projects: [Project] = []
     @Published private(set) var rules: [ProjectRule] = []
     @Published private(set) var directory = TicketDirectory()
+    @Published private(set) var pullRequestTitles: [String: String] = [:]
     @Published var editing: ActivityBlock?
     @Published var selected: Int64?
     @Published var copied = false
@@ -48,6 +49,7 @@ final class ActivityModel: ObservableObject {
         projects = (try? store.projects()) ?? []
         rules = (try? store.rules()) ?? []
         directory = (try? store.ticketDirectory()) ?? TicketDirectory()
+        pullRequestTitles = (try? store.githubTitles()) ?? [:]
     }
 
     func shift(_ offset: Int) {
@@ -478,7 +480,7 @@ struct BlockRow: View {
     private var chips: [Chip] {
         var chips: [Chip] = []
         let link = block.key.codeHost
-        if let url = block.key.url { chips.append(Chip(text: ActivityLogic.urlLabel(url), icon: "globe", help: url)) }
+        if let url = block.key.url { chips.append(Chip(text: ActivityLogic.urlLabel(url), icon: "globe", help: [model.pullRequestTitles[url], url].compactMap { $0 }.joined(separator: "\n"))) }
         if let repo = block.key.repo, link == nil || block.key.branch != nil {
             chips.append(Chip(text: [repo, block.key.branch].compactMap { $0 }.joined(separator: " \u{00B7} "), icon: "arrow.triangle.branch"))
         }
