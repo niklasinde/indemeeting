@@ -536,6 +536,14 @@ Keychain with `--keychain`. In a debug build `--phone-client <host:port> <url> <
 pairing and prints the device url to use afterwards. `--render-phone <folder>` saves previews of the settings and the pairing
 sheet.
 
+### iPhone app
+
+`ios/` holds "Meeting Recorder" for iPhone (iOS 26, SwiftUI): a read-only viewer for this Mac's meetings (summary, notes,
+transcript with tap-to-play, action items, audio with scrubbing and speed, Markdown sharing), activity (day and week),
+GitHub pull requests and chat, with the last answers cached so it opens instantly and still shows data when the Mac is
+asleep. Open `ios/MeetingRecorderPhone.xcodeproj` in Xcode, pick your Team under Signing, and run it on your phone. Setup,
+pairing and troubleshooting are in [ios/README.md](ios/README.md).
+
 ## Claude Code plugin
 
 `plugin/` is a Claude Code plugin, published from this repository as the `indemeeting` marketplace. Install it from

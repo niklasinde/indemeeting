@@ -45,13 +45,12 @@ struct ChatView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if appModel.status?.features.chatAvailable == false {
                 ProblemView(title: "Chat is unavailable", message: "Apple Intelligence is not available on your Mac right now, so it cannot answer questions.",
                             systemImage: "sparkles.slash")
             } else {
-                transcript
-                composer
+                transcript.safeAreaInset(edge: .bottom, spacing: 0) { composer }
             }
         }
         .toolbar {

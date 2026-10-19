@@ -110,15 +110,15 @@ struct PRRow: View {
                 Image(systemName: stateSymbol).foregroundStyle(stateColor).font(.title3).frame(width: 24)
                 VStack(alignment: .leading, spacing: 5) {
                     Text(pr.title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).multilineTextAlignment(.leading).lineLimit(3)
-                    Text("\(pr.repo) #\(pr.number)\(pr.author.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(pr.updated.formatted(.relative(presentation: .named)))")
+                    Text(verbatim: "\(pr.repo) #\(pr.number)\(pr.author.map { " \u{00B7} \($0)" } ?? "") \u{00B7} \(pr.updated.formatted(.relative(presentation: .named)))")
                         .font(.caption).foregroundStyle(.secondary)
                     FlowLayout(spacing: 4) {
                         if pr.isDraft { Chip(text: "Draft", systemImage: "pencil") }
                         if pr.phase == .open, let check = checkChip { check }
                         if pr.phase == .open, let review = reviewChip { review }
                         if let ticket = pr.ticket { Chip(text: ticket, systemImage: "ticket", tint: .blue) }
-                        Chip(text: "+\(pr.additions)", tint: .green)
-                        Chip(text: "\u{2212}\(pr.deletions)", tint: .red)
+                        Chip(text: "+" + String(pr.additions), tint: .green)
+                        Chip(text: "\u{2212}" + String(pr.deletions), tint: .red)
                         if pr.comments > 0 { Chip(text: "\(pr.comments)", systemImage: "bubble.left") }
                         ForEach(pr.labels.prefix(3), id: \.self) { Chip(text: $0) }
                     }

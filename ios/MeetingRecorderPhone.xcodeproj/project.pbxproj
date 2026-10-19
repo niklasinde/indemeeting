@@ -28,6 +28,7 @@
 		926BFA9AC4AA689A7FCCE5EE /* MeetingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D6C282405C4C71437CBCD80 /* MeetingsModel.swift */; };
 		96D3FB57A2E9D1BC90A0DB12 /* HTTPParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1083CF428E8E2F9F6F984086 /* HTTPParserTests.swift */; };
 		9B1264AD33B015FC73B84D3D /* PhoneFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1461E738208ED6EBD857BC /* PhoneFormat.swift */; };
+		A4794838E76CD671E270D783 /* EndToEndTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E61E44F4534B3E86F9CC33F /* EndToEndTests.swift */; };
 		A69E458D4C027B2798CB2D4D /* Compat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7FBFB3C407998412606B82B /* Compat.swift */; };
 		A8AD59244CBD327099ED6D80 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D946C77FA1C04CF73727E4 /* RootView.swift */; };
 		A8D41341E308C0593B0E0F91 /* GitHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5AED6279CE3558CAF02EEE /* GitHubView.swift */; };
@@ -53,6 +54,13 @@
 			remoteGlobalIDString = A55115B19D6EE286B705DFF7;
 			remoteInfo = MeetingRecorderPhone;
 		};
+		9FFDCFA17E2223AE466DC98C /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C2367E50315E0A74C4052883 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A55115B19D6EE286B705DFF7;
+			remoteInfo = MeetingRecorderPhone;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +68,7 @@
 		0EAFEF6FEE493BC8CB49A5B5 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		1083CF428E8E2F9F6F984086 /* HTTPParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPParserTests.swift; sourceTree = "<group>"; };
 		1940343D043B44BBF42FF84F /* MeetingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingsView.swift; sourceTree = "<group>"; };
+		1E61E44F4534B3E86F9CC33F /* EndToEndTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndToEndTests.swift; sourceTree = "<group>"; };
 		1FC22E4E6FCEB1345ED127AE /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		2117A533C4C84046DB71A5FB /* PlayerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViews.swift; sourceTree = "<group>"; };
 		21E9814AB74E29855ACC28B2 /* AudioProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProxy.swift; sourceTree = "<group>"; };
@@ -89,6 +98,7 @@
 		D4DED78AA74D65698A00F90E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D908555D2F414873F716707A /* SecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretStore.swift; sourceTree = "<group>"; };
 		DB5CDCF6F068685D6EFD5D59 /* PhoneRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneRequest.swift; sourceTree = "<group>"; };
+		DD2ECEFC3DEC846B5D245F0F /* MeetingRecorderPhoneUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MeetingRecorderPhoneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		DD358F12A8206425360FB9EB /* MeetingDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingDetailView.swift; sourceTree = "<group>"; };
 		DDF5ABC33DD35B5886D6565A /* ClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientTests.swift; sourceTree = "<group>"; };
 		E751F48F85B8105393C1BEE3 /* PairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingService.swift; sourceTree = "<group>"; };
@@ -195,6 +205,7 @@
 			children = (
 				DD023D00800360FB7F29C887 /* MeetingRecorderPhone */,
 				210127932B9743F3A18CA2F4 /* MeetingRecorderPhoneTests */,
+				F388B28AC1DB79E0BFCB89D0 /* MeetingRecorderPhoneUITests */,
 				36DA24E8CAFE1E21942B4518 /* Shared */,
 				D4A117C1E8D41F54C1F66256 /* Products */,
 			);
@@ -205,6 +216,7 @@
 			children = (
 				A754B38624CE21D70D4848EE /* MeetingRecorderPhone.app */,
 				345B006F811FA1DCA3F7B573 /* MeetingRecorderPhoneTests.xctest */,
+				DD2ECEFC3DEC846B5D245F0F /* MeetingRecorderPhoneUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -230,6 +242,14 @@
 				37B6AFDBC2A3BE05E94EB1F3 /* AudioPlayer.swift */,
 			);
 			path = Audio;
+			sourceTree = "<group>";
+		};
+		F388B28AC1DB79E0BFCB89D0 /* MeetingRecorderPhoneUITests */ = {
+			isa = PBXGroup;
+			children = (
+				1E61E44F4534B3E86F9CC33F /* EndToEndTests.swift */,
+			);
+			path = MeetingRecorderPhoneUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -271,6 +291,24 @@
 			productReference = 345B006F811FA1DCA3F7B573 /* MeetingRecorderPhoneTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		F07427118B8303121452BC6B /* MeetingRecorderPhoneUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 17AF766ACFBA324E0907FE82 /* Build configuration list for PBXNativeTarget "MeetingRecorderPhoneUITests" */;
+			buildPhases = (
+				1AED03F066A1F0D65DD328F6 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FB99AD67FF3629322D7BFDAE /* PBXTargetDependency */,
+			);
+			name = MeetingRecorderPhoneUITests;
+			packageProductDependencies = (
+			);
+			productName = MeetingRecorderPhoneUITests;
+			productReference = DD2ECEFC3DEC846B5D245F0F /* MeetingRecorderPhoneUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -287,6 +325,11 @@
 					CF158FE4F1842DEF6B3ADFDA = {
 						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
+					};
+					F07427118B8303121452BC6B = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+						TestTargetID = A55115B19D6EE286B705DFF7;
 					};
 				};
 			};
@@ -306,6 +349,7 @@
 			targets = (
 				A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */,
 				CF158FE4F1842DEF6B3ADFDA /* MeetingRecorderPhoneTests */,
+				F07427118B8303121452BC6B /* MeetingRecorderPhoneUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -322,6 +366,14 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		1AED03F066A1F0D65DD328F6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A4794838E76CD671E270D783 /* EndToEndTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A26E608A351FE2E9156FC982 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -378,6 +430,11 @@
 			isa = PBXTargetDependency;
 			target = A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */;
 			targetProxy = 37DF0A2F00835CCBA2D2FFDF /* PBXContainerItemProxy */;
+		};
+		FB99AD67FF3629322D7BFDAE /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */;
+			targetProxy = 9FFDCFA17E2223AE466DC98C /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -521,6 +578,40 @@
 			};
 			name = Release;
 		};
+		994122E5AFF2BFBDD53F8FB1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhoneUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MeetingRecorderPhone;
+			};
+			name = Release;
+		};
+		C9BB7F2AD79A14DE591EFB78 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhoneUITests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MeetingRecorderPhone;
+			};
+			name = Debug;
+		};
 		CD1FF04AAB34CB432D75AC14 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -586,6 +677,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		17AF766ACFBA324E0907FE82 /* Build configuration list for PBXNativeTarget "MeetingRecorderPhoneUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C9BB7F2AD79A14DE591EFB78 /* Debug */,
+				994122E5AFF2BFBDD53F8FB1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		2650B2EBE5805E670276B46A /* Build configuration list for PBXNativeTarget "MeetingRecorderPhone" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

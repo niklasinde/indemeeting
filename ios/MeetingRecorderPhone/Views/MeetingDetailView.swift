@@ -70,7 +70,11 @@ struct MeetingDetailView: View {
                 .listRowBackground(Color.orange.opacity(0.12))
             Section {
                 header(meeting)
-                if meeting.audio.available { AudioCard(track: track(meeting)) }
+            }
+            if meeting.audio.available {
+                Section { AudioCard(track: track(meeting)) }
+            }
+            Section {
                 Picker("Section", selection: $page) {
                     ForEach(Page.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -85,6 +89,7 @@ struct MeetingDetailView: View {
             case .actions: ActionItemsSection(meeting: meeting)
             }
         }
+        .listSectionSpacing(.compact)
         .refreshable { await load() }
     }
 

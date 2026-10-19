@@ -35,27 +35,35 @@ struct MainTabs: View {
     var body: some View {
         @Bindable var router = router
         TabView(selection: $router.tab) {
-            MeetingsView().tabItem { Label("Meetings", systemImage: "waveform") }.tag(AppTab.meetings)
-            ActivityView().tabItem { Label("Activity", systemImage: "chart.bar.xaxis") }.tag(AppTab.activity)
-            GitHubView().tabItem { Label("GitHub", systemImage: "arrow.triangle.pull") }.tag(AppTab.github)
-            ChatTab().tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }.tag(AppTab.chat)
-            SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }.tag(AppTab.settings)
+            MeetingsView().modifier(PlayerAccessoryInset()).tabItem { Label("Meetings", systemImage: "waveform") }.tag(AppTab.meetings)
+            ActivityView().modifier(PlayerAccessoryInset()).tabItem { Label("Activity", systemImage: "chart.bar.xaxis") }.tag(AppTab.activity)
+            GitHubView().modifier(PlayerAccessoryInset()).tabItem { Label("GitHub", systemImage: "arrow.triangle.pull") }.tag(AppTab.github)
+            ChatTab().modifier(PlayerAccessoryInset()).tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }.tag(AppTab.chat)
+            SettingsView().modifier(PlayerAccessoryInset()).tabItem { Label("Settings", systemImage: "gearshape") }.tag(AppTab.settings)
         }
         .modifier(PlayerAccessory(active: model.player.track != nil))
         .minimizesTabBarOnScroll()
     }
 }
 
-/// The mini player above the tab bar; before iOS 26.1 the accessory cannot be switched off, so it is a bottom inset there.
+/// The mini player above the tab bar. From iOS 26.1 it is the tab view's bottom accessory; before that it is an inset in each tab.
 private struct PlayerAccessory: ViewModifier {
     let active: Bool
 
     func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) { content.tabViewBottomAccessory(isEnabled: active) { MiniPlayer() } } else { content }
+    }
+}
+
+private struct PlayerAccessoryInset: ViewModifier {
+    @Environment(AppModel.self) private var model
+
+    func body(content: Content) -> some View {
         if #available(iOS 26.1, *) {
-            content.tabViewBottomAccessory(isEnabled: active) { MiniPlayer() }
+            content
         } else {
-            content.safeAreaInset(edge: .bottom) {
-                if active { MiniPlayer().padding(.vertical, 10).glassBackground(Capsule()).padding(.horizontal).padding(.bottom, 56) }
+            content.safeAreaInset(edge: .bottom, spacing: 0) {
+                if model.player.track != nil { MiniPlayer().padding(.vertical, 10).glassBackground(Capsule()).padding(.horizontal).padding(.bottom, 4) }
             }
         }
     }

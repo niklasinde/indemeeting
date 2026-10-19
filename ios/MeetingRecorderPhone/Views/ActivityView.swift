@@ -30,8 +30,8 @@ struct ActivityView: View {
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets())
-                DateStepper(model: model)
             }
+            Section { DateStepper(model: model) }
             SyncBanner(error: resource.error, syncedAt: resource.syncedAt) { Task { await model.load() } }
                 .listRowBackground(Color.orange.opacity(0.12))
             if let activity = resource.value {

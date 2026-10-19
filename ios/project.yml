@@ -67,6 +67,17 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.niklasinde.MeetingRecorderPhoneTests
         GENERATE_INFOPLIST_FILE: YES
+  MeetingRecorderPhoneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: MeetingRecorderPhoneUITests
+    dependencies:
+      - target: MeetingRecorderPhone
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.niklasinde.MeetingRecorderPhoneUITests
+        GENERATE_INFOPLIST_FILE: YES
 schemes:
   MeetingRecorderPhone:
     build:
@@ -78,3 +89,11 @@ schemes:
     test:
       config: Debug
       targets: [MeetingRecorderPhoneTests]
+  MeetingRecorderPhoneE2E:
+    build:
+      targets:
+        MeetingRecorderPhone: all
+        MeetingRecorderPhoneUITests: [test]
+    test:
+      config: Debug
+      targets: [MeetingRecorderPhoneUITests]

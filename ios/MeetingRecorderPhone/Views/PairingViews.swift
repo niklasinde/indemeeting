@@ -85,11 +85,11 @@ struct ManualPairingView: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("QKXJ-TZW5-QCN3-DYDE-…", text: $code, axis: .vertical)
-                        .font(.body.monospaced())
+                    TextField("QKXJ-TZW5-QCN3-DYDE-…", text: $code)
+                        .font(.callout.monospaced())
+                        .minimumScaleFactor(0.7)
                         .textInputAutocapitalization(.characters)
                         .autocorrectionDisabled()
-                        .lineLimit(1...3)
                         .accessibilityLabel("Pairing code")
                 } header: {
                     Text("Code")
