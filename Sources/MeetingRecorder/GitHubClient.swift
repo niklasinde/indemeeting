@@ -91,6 +91,12 @@ enum GitHubClient {
         switch fetchDetail(cli: GitHubLogic.findCLI(), repo: target.repo, number: target.number) {
         case .success(let result):
             print(GitHubLogic.summary(result.detail, now: Date()))
+            let started = Date()
+            _ = try? GitHubLogic.parseDetail(result.json)
+            print(String(format: "Parse of the cached response: %.1f ms for %d bytes", Date().timeIntervalSince(started) * 1000, result.json.count))
+            if let limit = GitHubLogic.detailCost(result.json) {
+                print("GraphQL cost: \(limit.cost) points, \(limit.remaining.map(String.init) ?? "?") left of the hourly allowance")
+            }
             exit(0)
         case .failure(let error):
             FileHandle.standardError.write(Data("Failed: \(error.message)\n".utf8))

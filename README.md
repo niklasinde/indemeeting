@@ -474,7 +474,7 @@ MeetingRecorder --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
 ## GitHub
 
 Off by default. Settings > Activity > GitHub turns on a **GitHub** row in the main window's sidebar: your pull requests
-as a compact list, read through the GitHub CLI (`gh`) that is already signed in on this Mac. The app never handles a
+as a list on the left and the selected pull request on the right, read through the GitHub CLI (`gh`) that is already signed in on this Mac. The app never handles a
 token, password or API key; if `gh` is missing the page shows `brew install gh`, and if it is not signed in it shows
 `gh auth login`, each with a Copy button (the app never runs the interactive login).
 
@@ -492,18 +492,30 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 - **Needs attention** adds one weight per thing on a pull request, in the order of how much it asks of you: a review waiting
   on you 50, new feedback from people 40, changes requested 30, failing checks 20, unresolved threads 10, plus the number of
   new comments and unresolved threads (each at most 9) to tell equals apart; the last update decides the rest.
-- **Rows:** `owner / repo #number`, the title, and chips for the Jira ticket (when the title starts with a key; it links
+- **Rows:** `repo #number` with the status mark at the right, the title (two lines at most), and chips for the Jira ticket (when the title starts with a key; it links
   to Jira once the site is known from your browsing), Draft, the review decision, comments, `+additions -deletions` and
-  the time since the last update. Open pull requests also show Waiting on you, "3 unresolved" (the first 20 review threads
+  the time since the last update at the right. Open pull requests also show Waiting on you, "3 unresolved" (the first 20 review threads
   are looked at, so "20+" is a lower bound), "2 new comments", "2 from bots" and who spoke last (initials, or a bot mark).
   *New comments* are comments and reviews by other people after your last commit, review or reply on your own pull
   requests, or after your review on someone else's; bots (Copilot, CodeRabbit, Snyk, dependabot, github-actions) are counted
   apart and never count as new feedback. Waiting on you is a review asked of you, or the author pushing or answering after
   your review. Bot-only means a bot's pull request or last word with nothing for a person to answer. The mark on the right is a green check (checks passed), red cross (failed), amber dot
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
-- **Click** opens the pull request in the app (see below). Right-click: Open, Open in Browser, Copy Link, Copy Title, Open
-  Repository, and Ask About This Pull Request, which opens a general chat with the title and link in the box.
-- **Pull request page:** a back button returns to the list with its tab, filter and search kept. The page shows the
+- **Layout:** the list (tabs, filters, sort, quick filters and rows) is on the left, 320 to 560 points wide (420 by default);
+  drag the divider to resize it, the width is remembered. The pull request page is on the right, or "Select a pull request"
+  while nothing is selected. When the area right of the sidebar is narrower than 780 points (a window narrower than about
+  1000) the two take turns instead: a click shows the page full width with a "Pull requests" back button.
+- **Selecting:** a click selects and shows the page at once, from the cache. Up and Down (also with Command) move through the
+  filtered and sorted list and keep the row in view, Return moves to the page (Escape back to the list), double-click or
+  Command-O opens it in the browser. The selection survives a change of tab, filter, sort or refresh while the pull request is
+  still listed, otherwise it is cleared, and the last one is selected again at the next start. Right-click: Show Details, Open
+  in Browser, Copy Link, Copy Title, Open Repository, and Ask About This Pull Request, which opens a general chat with the
+  title and link in the box.
+- **Fast browsing:** the cached page is read synchronously when you select (a few milliseconds), the fetch starts 0.3 seconds
+  after the selection settles so holding an arrow key does not query once per row, and the page of the row above and the
+  row below is fetched in the background (at most two at a time, only when the cached one is older than 2 minutes). A
+  page costs 1 GraphQL point, so walking through 10 pull requests costs about 10 to 20 of the 5000 an hour.
+- **Pull request page:** the list keeps its tab, filter, search and scroll position. The page shows the
   state (Open, Draft, Merged, Closed), the Jira ticket from the title or branch (linked once the site is known), the
   conflict state, the review decision, labels, the base and head branch, the size, reviewers (requested people and teams
   plus each person's latest review, as initials circles), assignees, the description (Markdown: headings, lists, task

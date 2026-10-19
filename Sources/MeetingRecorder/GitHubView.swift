@@ -3,26 +3,108 @@ import SwiftUI
 
 struct GitHubView: View {
     @ObservedObject var model: GitHubModel
+    @AppStorage("githubListWidth") private var listWidth = Self.defaultListWidth
+    @State private var showsDetail = false
+    @State private var dragStart: Double?
+    @FocusState private var focus: Pane?
+
+    enum Pane { case list, detail }
+    static let defaultListWidth = 420.0
+    static let listWidths = 320.0...560.0
+    static let minimumDetailWidth = 420.0
+    /// Below this the list and the page take turns instead of sitting side by side.
+    static let compactBelow = 780.0
 
     var body: some View {
-        if model.enabled, let page = model.page {
-            GitHubDetailView(page: page, model: model)
-        } else {
-            list
+        GeometryReader { proxy in
+            if !model.showsList {
+                listPane
+            } else if proxy.size.width < Self.compactBelow {
+                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }) } else { listPane }
+            } else {
+                split(width: proxy.size.width)
+            }
+        }
+        .background { openShortcut }
+        .onAppear {
+            model.loadCache()
+            model.reconcile()
+            Task { await model.refresh() }
+        }
+        .onChange(of: model.visible.map(\.url)) { model.reconcile() }
+        .onChange(of: model.selectedURL) { if model.selectedURL == nil { showsDetail = false } }
+    }
+
+    private func split(width: CGFloat) -> some View {
+        let list = Self.listWidth(listWidth, in: width)
+        return HStack(spacing: 0) {
+            listPane.frame(width: list)
+            splitter(current: list, total: width)
+            detailPane(back: nil)
         }
     }
 
-    private var list: some View {
+    static func listWidth(_ stored: Double, in total: Double) -> Double {
+        min(max(stored, listWidths.lowerBound), min(listWidths.upperBound, total - minimumDetailWidth))
+    }
+
+    private func splitter(current: Double, total: Double) -> some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 1)
+            .overlay {
+                Color.clear.frame(width: 9).contentShape(Rectangle()).pointerStyle(.columnResize)
+                    .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { drag in
+                            let start = dragStart ?? current
+                            dragStart = start
+                            listWidth = Self.listWidth(start + drag.translation.width, in: total)
+                        }
+                        .onEnded { _ in dragStart = nil })
+            }
+    }
+
+    private var openShortcut: some View {
+        Button("Open in Browser") { model.page.map { NSWorkspace.shared.open(URL(string: $0.pr.url)!) } }
+            .keyboardShortcut("o")
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+    }
+
+    private func detailPane(back: (() -> Void)?) -> some View {
+        Group {
+            if let page = model.page {
+                GitHubDetailView(page: page, model: model, back: back)
+                    .id(page.pr.url)
+                    .focusable()
+                    .focused($focus, equals: .detail)
+                    .focusEffectDisabled()
+                    .onKeyPress(.escape) {
+                        focus = .list
+                        return .handled
+                    }
+            } else {
+                GitHubEmptyState(icon: "arrow.triangle.pull", title: "Select a pull request",
+                                 text: "Click one in the list, or use the arrow keys. Return moves to the page, \u{2318}O opens it in the browser.") { EmptyView() }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func show(_ pr: GitHubPR) {
+        model.select(pr)
+        showsDetail = true
+        focus = .list
+    }
+
+    private var listPane: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = model.error, model.enabled, model.hasData { ErrorBanner(error: error) }
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .onAppear {
-            model.loadCache()
-            Task { await model.refresh() }
-        }
     }
 
     private var header: some View {
@@ -35,27 +117,28 @@ struct GitHubView: View {
             if model.showsList {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(GitHubLogic.header(count: model.visible.count, kind: model.kind, capped: model.isCapped))
-                        .font(.system(size: 28, weight: .medium))
+                        .font(.system(size: 22, weight: .medium))
                     if model.filter.state != .open { Text(model.filter.state.rawValue.lowercased()).foregroundStyle(.secondary) }
                 }
-                .padding(.top, 10)
-                HStack(spacing: 2) {
+                .padding(.top, 8)
+                FlowLayout(spacing: 2) {
                     ForEach(GitHubKind.allCases) { kind in
                         Button(kind.tabTitle) { model.kind = kind }
                             .buttonStyle(PillButtonStyle(selected: model.kind == kind))
                     }
-                    Spacer()
                 }
-                .padding(.top, 14)
+                .padding(.top, 10)
                 .padding(.leading, -8)
-                filters.padding(.top, 10)
+                filters.padding(.top, 8)
                 quickFilters.padding(.top, 8).padding(.leading, -8)
             }
         }
-        .padding(.horizontal, RecordingDetail.gutter)
+        .padding(.horizontal, Self.gutter)
         .padding(.top, 20)
-        .padding(.bottom, 12)
+        .padding(.bottom, 10)
     }
+
+    private static let gutter: CGFloat = 16
 
     private var refreshControls: some View {
         HStack(spacing: 8) {
@@ -72,39 +155,40 @@ struct GitHubView: View {
     }
 
     private var filters: some View {
-        HStack(spacing: 8) {
-            Picker("State", selection: $model.filter.state) {
-                ForEach(GitHubLogic.StateFilter.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .labelsHidden()
-            .fixedSize()
-            Menu {
-                Button("All repositories") { model.filter.repo = nil }
-                Divider()
-                ForEach(model.repos, id: \.self) { repo in
-                    Button { model.filter.repo = repo } label: {
-                        if model.filter.repo == repo { Label(repo, systemImage: "checkmark") } else { Text(repo) }
-                    }
+        VStack(alignment: .leading, spacing: 8) {
+            FlowLayout(spacing: 8) {
+                Picker("State", selection: $model.filter.state) {
+                    ForEach(GitHubLogic.StateFilter.allCases) { Text($0.rawValue).tag($0) }
                 }
-            } label: {
-                Label(model.filter.repo.map { GitHubLogic.repoName($0).name } ?? "All repositories", systemImage: "shippingbox")
-            }
-            .menuIndicator(.hidden)
-            .fixedSize()
-            SearchField(text: $model.filter.query).frame(maxWidth: 240)
-            Spacer()
-            Menu {
-                Picker("Sort by", selection: $model.filter.sort) {
-                    ForEach(GitHubSort.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.inline)
                 .labelsHidden()
-            } label: {
-                Label(model.filter.sort.rawValue, systemImage: "arrow.up.arrow.down")
+                .fixedSize()
+                Menu {
+                    Button("All repositories") { model.filter.repo = nil }
+                    Divider()
+                    ForEach(model.repos, id: \.self) { repo in
+                        Button { model.filter.repo = repo } label: {
+                            if model.filter.repo == repo { Label(repo, systemImage: "checkmark") } else { Text(repo) }
+                        }
+                    }
+                } label: {
+                    Label(model.filter.repo.map { GitHubLogic.repoName($0).name } ?? "All repositories", systemImage: "shippingbox")
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                Menu {
+                    Picker("Sort by", selection: $model.filter.sort) {
+                        ForEach(GitHubSort.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } label: {
+                    Label(model.filter.sort.rawValue, systemImage: "arrow.up.arrow.down")
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Sort the pull requests")
             }
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Sort the pull requests")
+            SearchField(text: $model.filter.query)
         }
         .controlSize(.small)
     }
@@ -139,45 +223,70 @@ struct GitHubView: View {
                        : model.filter == GitHubLogic.Filter() ? "No pull requests" : "Nothing matches",
                        text: model.filter == GitHubLogic.Filter() ? nil : "Change the state, repository, search or quick filters.") { EmptyView() }
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(model.visible) { pr in
-                        PullRequestRow(pr: pr, model: model)
-                        Divider()
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(model.visible) { pr in
+                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, show: show)
+                            Divider().padding(.horizontal, Self.gutter)
+                        }
                     }
+                    .padding(.horizontal, Self.gutter - 8)
+                    .padding(.bottom, 20)
                 }
-                .frame(maxWidth: 760, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, RecordingDetail.gutter)
-                .padding(.bottom, 28)
+                .focusable()
+                .focused($focus, equals: .list)
+                .focusEffectDisabled()
+                .onKeyPress(.upArrow) { step(.previous) }
+                .onKeyPress(.downArrow) { step(.next) }
+                .onKeyPress(.return) {
+                    if model.page != nil { enterDetail() }
+                    return .handled
+                }
+                .onChange(of: model.selectedURL) { if let url = model.selectedURL { proxy.scrollTo(url) } }
             }
         }
+    }
+
+    private func step(_ direction: GitHubSelection.Direction) -> KeyPress.Result {
+        model.step(direction)
+        return .handled
+    }
+
+    private func enterDetail() {
+        showsDetail = true
+        focus = .detail
     }
 }
 
 private struct PullRequestRow: View {
     let pr: GitHubPR
     @ObservedObject var model: GitHubModel
+    let selected: Bool
+    let show: (GitHubPR) -> Void
 
     var body: some View {
-        let repo = GitHubLogic.repoName(pr.repo)
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("\(repo.owner) / \(repo.name) #\(String(pr.number))")
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: 8) {
+                Text("\(GitHubLogic.repoName(pr.repo).name) #\(String(pr.number))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(pr.title).lineLimit(2).foregroundStyle(.primary)
-                details
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                StatusMark(pr: pr)
             }
-            Spacer(minLength: 8)
-            StatusMark(pr: pr)
+            Text(pr.title).lineLimit(2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+            details
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.primary.opacity(0.08) : .clear))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onTapGesture { model.open(pr) }
+        .onTapGesture { show(pr) }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { open(pr.url) })
         .contextMenu {
-            Button("Open") { model.open(pr) }
+            Button("Show Details") { show(pr) }
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
@@ -189,10 +298,13 @@ private struct PullRequestRow: View {
     }
 
     private var details: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             FlowChips(chips)
-            Text(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)).monospacedDigit()
-            Text(GitHubLogic.updatedText(pr.updated, now: Date()))
+            Spacer(minLength: 0)
+            Text("\(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)) \u{00B7} \(GitHubLogic.updatedText(pr.updated, now: Date()))")
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize()
         }
         .font(.caption)
         .foregroundStyle(.tertiary)
@@ -237,9 +349,8 @@ struct StatusMark: View {
 
     var body: some View {
         Image(systemName: symbol.name)
-            .font(.system(size: 17))
+            .font(.system(size: 15))
             .foregroundStyle(symbol.color)
-            .frame(width: 24)
             .help(symbol.help)
     }
 

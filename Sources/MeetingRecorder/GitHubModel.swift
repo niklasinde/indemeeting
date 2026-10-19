@@ -7,6 +7,7 @@ final class GitHubModel: ObservableObject {
     static let shared = GitHubModel()
     static let enabledKey = "githubEnabled"
     static let intervalKey = "githubRefreshMinutes"
+    static let selectionKey = "githubSelectedPR"
     static let intervals = [1, 5, 10, 15, 30, 60]
 
     @Published private(set) var enabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -19,9 +20,12 @@ final class GitHubModel: ObservableObject {
     @Published var kind = GitHubKind.created
     @Published var filter = GitHubLogic.Filter()
     @Published private(set) var page: GitHubDetailModel?
+    @Published private(set) var selectedURL = UserDefaults.standard.string(forKey: selectionKey)
 
     var store: MeetingStore?
     private var loop: Task<Void, Never>?
+    private let settle = Debouncer()
+    private var prefetching = Set<String>()
 
     var interval: Int {
         let stored = UserDefaults.standard.integer(forKey: Self.intervalKey)
@@ -88,15 +92,52 @@ final class GitHubModel: ObservableObject {
         loadCache()
     }
 
-    func open(_ pr: GitHubPR) {
+    /// Shows the pull request on the right at once, from the cache. The fetch waits until the selection has settled, so holding
+    /// an arrow key does not fire a query per row.
+    func select(_ pr: GitHubPR?) {
+        guard pr?.url != selectedURL || (pr != nil && page == nil) else { return }
         page?.stop()
-        page = GitHubDetailModel(pr: pr, store: store)
-        page?.start()
+        settle.cancel()
+        selectedURL = pr?.url
+        UserDefaults.standard.set(pr?.url, forKey: Self.selectionKey)
+        page = pr.map { GitHubDetailModel(pr: $0, store: store) }
+        guard page != nil else { return }
+        settle.schedule(after: GitHubSelection.settleDelay) { [weak self] in
+            MainActor.assumeIsolated { self?.settled() }
+        }
     }
 
-    func closePage() {
-        page?.stop()
-        page = nil
+    func step(_ direction: GitHubSelection.Direction) {
+        select(GitHubSelection.step(direction, from: selectedURL, in: visible))
+    }
+
+    /// Keeps the selection through a change of tab, filter, sort or refresh while its pull request is listed; otherwise clears it.
+    func reconcile() {
+        guard hasData else { return }
+        guard let url = GitHubSelection.preserved(selectedURL, in: visible) else { return select(nil) }
+        if page == nil { select(visible.first { $0.url == url }) }
+    }
+
+    private func settled() {
+        page?.start()
+        prefetchNeighbours()
+    }
+
+    private func prefetchNeighbours() {
+        let fetched = (try? store?.githubDetailFetched()) ?? [:]
+        let slots = GitHubSelection.prefetchSlots - prefetching.count
+        let targets = GitHubSelection.prefetchTargets(selected: selectedURL, in: visible, fetched: fetched, now: Date(),
+                                                      excluding: prefetching, slots: slots)
+        let cli = GitHubLogic.findCLI()
+        for pr in targets {
+            prefetching.insert(pr.url)
+            Task(priority: .utility) { [weak self] in
+                let result = await Task.detached(priority: .utility) { GitHubClient.fetchDetail(cli: cli, repo: pr.repo, number: pr.number) }.value
+                guard let self else { return }
+                if case .success(let fetched) = result { try? self.store?.saveGitHubDetail(pr.url, json: fetched.json) }
+                self.prefetching.remove(pr.url)
+            }
+        }
     }
 
     func ask(about pr: GitHubPR) {
@@ -121,6 +162,12 @@ final class GitHubModel: ObservableObject {
         kind = .created
         filter = GitHubLogic.Filter()
         page = nil
+        selectedURL = nil
+    }
+
+    func showSample(selecting pr: GitHubPR?, detail: GitHubPRDetail?) {
+        page = pr.map { GitHubDetailModel(pr: $0, sample: detail) }
+        selectedURL = pr?.url
     }
     #endif
 }

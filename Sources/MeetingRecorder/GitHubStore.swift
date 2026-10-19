@@ -75,6 +75,13 @@ extension MeetingStore {
         }
     }
 
+    /// When each pull request's detail was last fetched.
+    func githubDetailFetched() throws -> [String: Date] {
+        try read {
+            Dictionary(try db.query("SELECT url, fetched FROM github_pr_details", []) { ($0.string(0), Date(timeIntervalSince1970: $0.double(1))) }) { $1 }
+        }
+    }
+
     func saveGitHubDetail(_ url: String, json: Data, fetched: Date = Date()) throws {
         try write(notify: Self.githubDidChange) {
             try db.run("INSERT OR REPLACE INTO github_pr_details (url, json, fetched) VALUES (?, ?, ?)", [url, json, fetched.timeIntervalSince1970])

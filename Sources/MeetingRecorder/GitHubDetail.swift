@@ -82,6 +82,7 @@ struct GitHubPRDetail: Equatable {
 extension GitHubLogic {
     static let detailQuery = """
         query($owner: String!, $name: String!, $number: Int!) {
+          rateLimit { cost remaining }
           repository(owner: $owner, name: $name) {
             pullRequest(number: $number) {
               number title body url isDraft state merged mergeable reviewDecision baseRefName headRefName createdAt updatedAt
@@ -201,6 +202,17 @@ extension GitHubLogic {
         struct Failure: Decodable { let message: String? }
         let data: Payload?
         let errors: [Failure]?
+    }
+
+    /// The GraphQL points one `detailQuery` response says it cost, and what was left of the hourly allowance.
+    static func detailCost(_ data: Data) -> (cost: Int, remaining: Int?)? {
+        struct Response: Decodable {
+            struct Payload: Decodable { let rateLimit: Cost? }
+            struct Cost: Decodable { let cost: Int?; let remaining: Int? }
+            let data: Payload?
+        }
+        guard let limit = (try? JSONDecoder().decode(Response.self, from: data))?.data?.rateLimit, let cost = limit.cost else { return nil }
+        return (cost, limit.remaining)
     }
 
     /// The detail of one pull request from the GraphQL response of `detailQuery`.

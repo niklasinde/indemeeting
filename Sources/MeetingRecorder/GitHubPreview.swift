@@ -57,6 +57,17 @@ enum GitHubPreview {
             await shot("all-states", appearances: [.aqua])
             model.filter = GitHubLogic.Filter(state: .open, repo: "acme/finq.api", query: "zzz")
             await shot("no-match", appearances: [.aqua])
+            let sample = detailSamples[0]
+            let selected = samples[.created]?[1]
+            model.showSample(prs: samples, directory: directory)
+            model.showSample(selecting: selected, detail: sample.detail)
+            await shot("split-selected")
+            model.filter = GitHubLogic.Filter(state: .all, repo: "acme/finq.api", quick: [.unresolved], hideBotOnly: true, sort: .needsAttention)
+            await shot("split-many-filters", appearances: [.aqua])
+            model.filter = GitHubLogic.Filter()
+            window.setContentSize(NSSize(width: 800, height: 700))
+            await shot("narrow-window")
+            window.setContentSize(NSSize(width: 1040, height: 760))
             model.showSample(prs: samples, directory: directory, error: .rateLimited)
             await shot("error-with-cache", appearances: [.aqua])
             model.showSample(prs: [:], error: .cliMissing, fetched: nil)

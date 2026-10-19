@@ -1,16 +1,18 @@
 import AppKit
 import SwiftUI
 
-/// A pull request opened from the list: back button, actions and the page.
+/// The selected pull request: refresh, actions and the page, with a back button when it replaces the list.
 struct GitHubDetailView: View {
     @ObservedObject var page: GitHubDetailModel
     @ObservedObject var model: GitHubModel
+    let back: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
-                Button { model.closePage() } label: { Label("Pull requests", systemImage: "chevron.left") }
-                    .buttonStyle(.borderless)
+                if let back {
+                    Button(action: back) { Label("Pull requests", systemImage: "chevron.left") }.buttonStyle(.borderless)
+                }
                 Spacer()
                 if page.loading { ProgressView().controlSize(.small) } else {
                     Button { page.start() } label: { Image(systemName: "arrow.clockwise") }.help("Fetch this pull request now")
@@ -88,7 +90,7 @@ struct GitHubDetailContent: View {
             Text(detail?.title ?? pr.title).font(.system(size: 22, weight: .medium)).textSelection(.enabled)
             FlowChips(headerChips)
             if let detail {
-                HStack(spacing: 6) {
+                FlowLayout(spacing: 6) {
                     Text(detail.author ?? "ghost").foregroundStyle(.primary)
                     Text("opened \(detail.created.map { GitHubLogic.updatedText($0, now: Date()) } ?? "")")
                     Text("\u{00B7} updated \(detail.updated.map { GitHubLogic.updatedText($0, now: Date()) } ?? "")")
@@ -140,11 +142,10 @@ struct GitHubDetailContent: View {
     }
 
     private var actions: some View {
-        HStack(spacing: 8) {
+        FlowLayout(spacing: 8) {
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
-            Spacer()
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
         }
         .controlSize(.small)
