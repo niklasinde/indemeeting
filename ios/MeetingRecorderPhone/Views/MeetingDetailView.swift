@@ -96,13 +96,10 @@ struct MeetingDetailView: View {
     private func header(_ meeting: PhoneMeetingDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(meeting.summaryTitle ?? meeting.title).font(.title3.bold())
-            HStack(spacing: 6) {
-                Text(meeting.date.formatted(date: .abbreviated, time: .shortened))
-                if let duration = meeting.duration { Text("\u{00B7} " + PhoneFormat.duration(duration)) }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.secondary)
-            HStack(spacing: 6) {
+            Text([meeting.date.formatted(date: .abbreviated, time: .shortened), meeting.duration.map(PhoneFormat.duration)].compactMap { $0 }.joined(separator: " \u{00B7} "))
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            FlowLayout(spacing: 6) {
                 ForEach(meeting.languages, id: \.self) { Chip(text: $0.uppercased() + (meeting.languageDetected ? " detected" : ""), systemImage: "globe") }
                 if let engine = meeting.engines.summary { Chip(text: engine == "apple-intelligence" ? "Apple Intelligence" : engine, systemImage: "sparkles", tint: .accentColor) }
             }

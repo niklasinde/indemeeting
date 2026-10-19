@@ -15,9 +15,7 @@ struct SettingsView: View {
                         LabeledContent("Status") { statusText }
                         if let status = model.status {
                             LabeledContent("Mac app", value: status.appVersion)
-                            LabeledContent("Features") {
-                                Text(features(status.features)).multilineTextAlignment(.trailing)
-                            }
+                            LabeledContent("Features", value: features(status.features))
                         }
                         Button { Task { await check() } } label: {
                             HStack { Text("Check connection"); if checking { Spacer(); ProgressView() } }
@@ -60,12 +58,13 @@ struct SettingsView: View {
         .task { await model.refreshStatus() }
     }
 
-    @ViewBuilder private var statusText: some View {
-        switch model.reachability {
-        case .online(let date): Label("Connected \(date.formatted(.relative(presentation: .named)))", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-        case .offline(let error, _): Label(error.problemTitle, systemImage: "wifi.exclamationmark").foregroundStyle(.orange)
-        case .unknown: Label("Not checked", systemImage: "circle.dashed").foregroundStyle(.secondary)
+    private var statusText: some View {
+        let (text, symbol, color): (String, String, Color) = switch model.reachability {
+        case .online(let date): ("Connected \(date.formatted(.relative(presentation: .named)))", "checkmark.circle.fill", .green)
+        case .offline(let error, _): (error.problemTitle, "wifi.exclamationmark", .orange)
+        case .unknown: ("Not checked", "circle.dashed", .secondary)
         }
+        return HStack(spacing: 6) { Image(systemName: symbol); Text(text) }.foregroundStyle(color)
     }
 
     private func features(_ features: PhoneFeatures) -> String {

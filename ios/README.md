@@ -55,6 +55,10 @@ too, revoke it in the Mac's iPhone settings; the app then asks you to pair again
 
 - Unit tests (parser, requests, error mapping, pairing input, formatting, cache, and the HTTP client against an in-process
   PSK server): `xcodebuild test -project MeetingRecorderPhone.xcodeproj -scheme MeetingRecorderPhone -destination 'platform=iOS Simulator,name=<a simulator>'`.
+- Tested on the iOS 27.0 simulator (iPhone 18 Pro, and an iPhone SE for the small screen) with the iOS 26 code paths (Liquid Glass,
+  the tab bar accessory), in light and dark and at the largest accessibility text size. The simulator has no Local Network
+  prompt, so that permission flow and Bonjour across devices still need a real phone. `xcodebuild` may keep running after
+  the UI tests finish; stop it once the summary line has been printed.
 - End to end: the `MeetingRecorderPhoneE2E` scheme drives the app with XCUITest against the Mac's headless server and saves a
   screenshot per state. Start the server on a copy of your data (`MeetingRecorder --serve --port N --data-dir <copy>`, then
   type `pair`), and pass `TEST_RUNNER_E2E_CODE`, `TEST_RUNNER_E2E_ADDRESS` (`host:pairing-port`) and `TEST_RUNNER_E2E_SHOTS`.

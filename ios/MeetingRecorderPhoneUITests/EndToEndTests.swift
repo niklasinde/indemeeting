@@ -18,7 +18,10 @@ final class EndToEndTests: XCTestCase {
         try? XCUIScreen.main.screenshot().pngRepresentation.write(to: URL(fileURLWithPath: folder).appendingPathComponent("\(name).png"))
     }
 
-    private func tab(_ name: String) { app.tabBars.buttons[name].tap() }
+    private func tab(_ name: String) {
+        if !app.tabBars.buttons[name].exists { app.swipeDown() }
+        app.tabBars.buttons[name].tap()
+    }
 
     func test1_PairAndBrowse() throws {
         let code = try XCTUnwrap(environment["E2E_CODE"]), address = try XCTUnwrap(environment["E2E_ADDRESS"])
@@ -82,6 +85,73 @@ final class EndToEndTests: XCTestCase {
         tab("Settings")
         sleep(1)
         shot("15-settings")
+    }
+
+    /// Screens of the paired app, named with `E2E_SUFFIX`; run once per appearance, device and text size.
+    func test4_Tour() throws {
+        let suffix = environment["E2E_SUFFIX"] ?? "tour"
+        let title = environment["E2E_MEETING"] ?? "standup"
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Meetings"].waitForExistence(timeout: 20))
+        sleep(3)
+        shot("meetings-\(suffix)")
+        let row = app.buttons.containing(NSPredicate(format: "label CONTAINS[c] %@", title)).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        sleep(2)
+        shot("detail-\(suffix)")
+        let play = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Play recording'")).firstMatch
+        for _ in 0..<6 where !play.isHittable { app.swipeUp() }
+        shot("detail-scrolled-\(suffix)")
+        play.tap()
+        sleep(4)
+        shot("playing-\(suffix)")
+        app.buttons["Pause"].firstMatch.tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        for name in ["Activity", "GitHub", "Chat", "Settings"] {
+            tab(name)
+            sleep(3)
+            shot("\(name.lowercased())-\(suffix)")
+        }
+        tab("Chat")
+        app.buttons["What meetings did I have this week?"].tap()
+        sleep(25)
+        shot("chat-answer-\(suffix)")
+    }
+
+    func test5_Settings() throws {
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Meetings"].waitForExistence(timeout: 20))
+        tab("Settings")
+        sleep(3)
+        shot("settings-\(environment["E2E_SUFFIX"] ?? "only")")
+    }
+
+    /// Seeks while playing, then asks a question while another client's chat is running (start one before this test).
+    func test6_SeekAndBusyChat() throws {
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Meetings"].waitForExistence(timeout: 20))
+        let row = app.buttons.containing(NSPredicate(format: "label CONTAINS[c] %@", environment["E2E_MEETING"] ?? "standup")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 15))
+        row.tap()
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Play recording'")).firstMatch.tap()
+        let position = app.sliders["Position"]
+        XCTAssertTrue(position.waitForExistence(timeout: 10))
+        sleep(4)
+        let before = position.value as? String ?? ""
+        position.adjust(toNormalizedSliderPosition: 0.7)
+        sleep(5)
+        shot("seek-after")
+        XCTAssertNotEqual(position.value as? String, before)
+        app.buttons["Pause"].firstMatch.tap()
+        app.navigationBars.buttons.firstMatch.tap()
+        tab("Chat")
+        app.buttons["What did I decide about the release?"].tap()
+        let busy = app.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] 'answering another question'")).firstMatch
+        _ = busy.waitForExistence(timeout: 30)
+        shot("chat-busy")
+        XCTAssertTrue(busy.exists)
+        XCTAssertTrue(app.buttons["Try again"].exists)
     }
 
     func test2_OfflineShowsCachedData() throws {

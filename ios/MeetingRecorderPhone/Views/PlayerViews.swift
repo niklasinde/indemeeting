@@ -47,6 +47,7 @@ struct PlayerControls: View {
                     .accessibilityLabel("Close player")
             }
             .buttonStyle(.plain)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             if let failure = player.failure { Text(failure).font(.footnote).foregroundStyle(.red) }
         }
         .padding(.vertical, 4)
@@ -86,6 +87,7 @@ struct MiniPlayer: View {
             .buttonStyle(.plain)
             .font(.title3)
             .padding(.horizontal, 16)
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         }
     }
 }

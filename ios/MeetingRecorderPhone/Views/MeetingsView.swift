@@ -90,9 +90,8 @@ struct MeetingRow: View {
                         Image(systemName: "sparkles").foregroundStyle(.tint).imageScale(.small).accessibilityLabel("Has a summary")
                     }
                 }
-                HStack(spacing: 6) {
-                    Text(meeting.date.timeText)
-                    if let duration = meeting.duration { Text("\u{00B7} " + PhoneFormat.duration(duration)) }
+                FlowLayout(spacing: 6) {
+                    Text([meeting.date.timeText, meeting.duration.map(PhoneFormat.duration)].compactMap { $0 }.joined(separator: " \u{00B7} "))
                     if let language = meeting.language { Chip(text: language.uppercased(), tint: .secondary) }
                 }
                 .font(.subheadline)
