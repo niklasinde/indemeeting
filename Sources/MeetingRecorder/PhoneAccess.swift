@@ -86,7 +86,10 @@ final class PhoneAccess: ObservableObject {
         if pairing != nil, open == nil, pairedName == nil, devices.count > devicesBeforePairing {
             pairedName = devices.last?.name
         }
-        if open == nil, pairedName == nil { pairing = nil }
+        if open == nil, pairing != nil, pairedName == nil {
+            pairing = nil
+            pairingError = "The pairing expired. Close this and start again."
+        }
     }
 
     func beginPairing() {

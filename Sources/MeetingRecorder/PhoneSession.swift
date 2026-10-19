@@ -42,8 +42,8 @@ final class PhoneSession: @unchecked Sendable {
     }
 
     /// Reads more bytes, or nil when the peer closed. A connection that stays silent for `idle` seconds is closed.
-    func receive(idle seconds: TimeInterval) async throws -> Data? {
-        arm(seconds)
+    func receive(idle seconds: TimeInterval?) async throws -> Data? {
+        if let seconds { arm(seconds) }
         defer { disarm() }
         return try await withCheckedThrowingContinuation { continuation in
             connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, complete, error in

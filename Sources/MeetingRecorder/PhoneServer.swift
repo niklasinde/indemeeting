@@ -372,11 +372,21 @@ final class PhoneServer: @unchecked Sendable {
         }
         let head = ["Content-Type": "application/x-ndjson", "Transfer-Encoding": "chunked", "Cache-Control": "no-store",
                     "X-Content-Type-Options": "nosniff", "Connection": "close"]
-        try await session.send(PhoneHTTP.head(status: 200, headers: head))
-        for await event in job.events(store: store) {
-            try await session.send(PhoneHTTP.chunk(try PhoneAPI.encoder.encode(event) + Data("\n".utf8)))
+        do { try await session.send(PhoneHTTP.head(status: 200, headers: head)) } catch {
+            PhoneChatGate.shared.release()
+            throw error
         }
-        try await session.send(PhoneHTTP.lastChunk)
+        let events = job.events(store: store)
+        let consumer = Task {
+            for await event in events { try await session.send(PhoneHTTP.chunk(try PhoneAPI.encoder.encode(event) + Data("\n".utf8))) }
+            try await session.send(PhoneHTTP.lastChunk)
+        }
+        let watcher = Task {
+            _ = try? await session.receive(idle: nil)
+            consumer.cancel()
+        }
+        defer { watcher.cancel() }
+        try await consumer.value
         #else
         try await write(.error(503, "chat_unavailable", "This Mac cannot run the on-device model."), to: session, keepAlive: false)
         #endif
