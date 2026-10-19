@@ -19,9 +19,13 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ActivityLogic.swift \
     Sources/MeetingRecorder/ActivityLinks.swift \
     Sources/MeetingRecorder/ActivityStore.swift \
+    Sources/MeetingRecorder/ClaudeEvents.swift \
+    Sources/MeetingRecorder/ClaudePlugin.swift \
+    Sources/MeetingRecorder/MCPServer.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
     Tests/MeetingRecorderTests/ActivityTests.swift \
+    Tests/MeetingRecorderTests/PluginTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

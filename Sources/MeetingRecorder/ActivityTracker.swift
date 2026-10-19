@@ -22,6 +22,8 @@ final class ActivityTracker: ObservableObject {
     private var cleanedUp = Date.distantPast
     private var typing = TypingWatch()
     private let claude = ClaudeSessionScanner()
+    private var inbox = ClaudeInbox(url: AppPaths.claudeInbox)
+    private var hookSessions = ClaudeSessions()
 
     init(store: MeetingStore, repositoriesRoot: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("git")) {
         self.store = store
@@ -159,8 +161,9 @@ final class ActivityTracker: ObservableObject {
 
     private func tick() {
         accessibilityGranted = Permissions.accessibilityGranted
-        guard isTracking else { return flush() }
         let now = Date()
+        hookSessions.apply(inbox.read())
+        guard isTracking else { return flush() }
         cleanUp(now)
         if away || idleSeconds() > settings.idleSeconds { return ingest(.idle(at: now)) }
         guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return ingest(.idle(at: now)) }
@@ -186,10 +189,10 @@ final class ActivityTracker: ObservableObject {
         }
     }
 
-    /// The sessions working lately, and while Claude is frontmost the one the user is in, with its repository and branch.
+    /// The sessions working, and while Claude is frontmost the one the user is in, with its repository and branch.
     private func addClaude(to sample: inout ActivitySample, now: Date) {
-        let activity = claude.active(since: now.addingTimeInterval(-ActivitySettings.claudeLookback))
-        sample.claude = activity.map(\.session)
+        let activity = claudeActivity(now)
+        sample.claude = activity.filter(\.working).map(\.session)
         guard ActivityLogic.isClaudeWindow(bundle: sample.appBundle, title: sample.windowTitle) else { return }
         let open = current?.key.appBundle == sample.appBundle ? current : nil
         guard let id = ActivityLogic.focusedSession(activity, now: now, window: ActivitySettings.claudeLookback, sticky: open?.key.claudeFocus),
@@ -201,6 +204,22 @@ final class ActivityTracker: ObservableObject {
             sample.repo = checkout.repo
             sample.branch = ActivityLogic.branch(ofRepository: checkout.checkout)
         }
+    }
+
+    /// The sessions the plugin's hook events report; sessions it has not seen (started before it was installed, or
+    /// without it) come from their transcripts being written to.
+    private func claudeActivity(_ now: Date) -> [ClaudeActivity] {
+        hookSessions.forget(before: now.addingTimeInterval(-ClaudeSessions.keep))
+        let reported = hookSessions.active(now: now, lookback: ActivitySettings.claudeLookback).compactMap { state, working -> ClaudeActivity? in
+            let transcript = state.transcriptPath.map { URL(fileURLWithPath: $0) }
+            let parsed = transcript.flatMap(claude.session)
+            let session = ClaudeSession(id: state.id, folder: state.cwd.isEmpty ? parsed?.folder ?? "" : state.cwd,
+                                        title: parsed?.title ?? "Untitled session")
+            let prompt = state.prompt.flatMap { ActivityLogic.promptExcerpt($0) } ?? transcript.flatMap(claude.lastUser)?.text
+            return ClaudeActivity(session: session, lastUser: state.lastPrompt, lastPrompt: prompt, working: working)
+        }
+        let known = hookSessions.ids
+        return reported + claude.active(since: now.addingTimeInterval(-ActivitySettings.claudeLookback)).filter { !known.contains($0.session.id) }
     }
 
     private func idleSeconds() -> TimeInterval {
@@ -346,13 +365,17 @@ final class ClaudeSessionScanner {
             for file in files where file.pathExtension == "jsonl" {
                 guard let values = try? file.resourceValues(forKeys: keys), values.isRegularFile == true,
                       let modified = values.contentModificationDate, modified >= since else { continue }
-                if let session = session(file, project: project) {
+                if let session = session(file) {
                     let user = lastUser(file, modified: modified)
                     sessions.append(ClaudeActivity(session: session, lastUser: user?.time, lastPrompt: user?.text))
                 }
             }
         }
         return sessions.sorted { $0.session.id < $1.session.id }
+    }
+
+    func lastUser(_ file: URL) -> (time: Date?, text: String)? {
+        (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate.flatMap { lastUser(file, modified: $0) }
     }
 
     /// The last message the user typed, from the end of the transcript; re-read only when the file changed.
@@ -369,8 +392,10 @@ final class ClaudeSessionScanner {
         return user
     }
 
-    private func session(_ file: URL, project: URL) -> ClaudeSession? {
+    /// The session of a transcript, with its title; nil until its first user message is written.
+    func session(_ file: URL) -> ClaudeSession? {
         let id = file.deletingPathExtension().lastPathComponent
+        let project = file.deletingLastPathComponent()
         let sidecar = project.appendingPathComponent(id).appendingPathComponent("custom-title.json")
         let customTitle = (try? Data(contentsOf: sidecar)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["customTitle"] as? String
         if let cached = cache[file.path] {
@@ -378,8 +403,9 @@ final class ClaudeSessionScanner {
         }
         guard let handle = try? FileHandle(forReadingFrom: file), let data = try? handle.read(upToCount: 512_000) else { return nil }
         try? handle.close()
-        let parsed = ActivityLogic.claudeSession(id: id, jsonl: String(decoding: data, as: UTF8.self), customTitle: customTitle)
-            ?? ClaudeSession(id: id, folder: ActivityLogic.decodeProjectFolder(project.lastPathComponent), title: customTitle ?? "Untitled session")
+        guard let parsed = ActivityLogic.claudeSession(id: id, jsonl: String(decoding: data, as: UTF8.self), customTitle: customTitle) else {
+            return ClaudeSession(id: id, folder: ActivityLogic.decodeProjectFolder(project.lastPathComponent), title: customTitle ?? "Untitled session")
+        }
         cache[file.path] = parsed
         return parsed
     }

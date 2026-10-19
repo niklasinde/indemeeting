@@ -63,17 +63,29 @@ final class SQLiteDatabase {
     private let handle: OpaquePointer
     private var statements: [String: OpaquePointer] = [:]
 
-    init(path: String) throws {
+    /// A read-only connection never writes, so it can read while the app has the database open. When the app is not
+    /// running a WAL database has no shared-memory file, which a read-only connection cannot create; it then opens
+    /// read-write with `query_only` on, so it still cannot write.
+    init(path: String, readOnly: Bool = false) throws {
+        if readOnly, let db = try? Self.open(path, SQLITE_OPEN_READONLY),
+           sqlite3_exec(db, "SELECT count(*) FROM sqlite_master", nil, nil, nil) == SQLITE_OK {
+            handle = db
+        } else {
+            handle = try Self.open(path, readOnly ? SQLITE_OPEN_READWRITE : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE)
+        }
+        sqlite3_busy_timeout(handle, 5000)
+        try execute(readOnly ? "PRAGMA query_only = ON" : "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON")
+    }
+
+    private static func open(_ path: String, _ flags: Int32) throws -> OpaquePointer {
         var db: OpaquePointer?
-        let result = sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        let result = sqlite3_open_v2(path, &db, flags, nil)
         guard result == SQLITE_OK, let db else {
             let message = db.map { String(cString: sqlite3_errmsg($0)) } ?? String(cString: sqlite3_errstr(result))
             sqlite3_close_v2(db)
             throw SQLiteError(message: "\(path): \(message)")
         }
-        handle = db
-        sqlite3_busy_timeout(db, 5000)
-        try execute("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON")
+        return db
     }
 
     deinit {

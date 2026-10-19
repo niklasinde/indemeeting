@@ -1,0 +1,19 @@
+{
+  "name": "indemeeting",
+  "owner": {
+    "name": "Niklas Inde"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for MeetingRecorder"
+  },
+  "plugins": [
+    {
+      "name": "meetingrecorder",
+      "source": "./plugin",
+      "description": "Local Claude Code session tracking for MeetingRecorder, and read-only access to your activity, time report and meetings",
+      "version": "1.0.0",
+      "category": "productivity",
+      "keywords": ["time-tracking", "meetings", "activity", "mcp", "hooks"]
+    }
+  ]
+}

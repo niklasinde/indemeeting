@@ -8,6 +8,7 @@ enum Main {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
         #endif
+        if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             let store = MeetingStore.openDefault()
             if let error = store.openError {
@@ -54,10 +55,8 @@ enum Main {
             FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
             exit(1)
         }
-        let range = Date().addingTimeInterval(-hours * 3600)..<Date()
         do {
-            print(ActivityLogic.contextMarkdown(blocks: try store.blocks(in: range), meetings: try store.meetingLines(in: range), range: range,
-                                                rules: try store.rules(), projects: try store.projects()), terminator: "")
+            print(try store.contextMarkdown(hours: hours), terminator: "")
             exit(0)
         } catch {
             FileHandle.standardError.write(Data("Failed: \(error.localizedDescription)\n".utf8))
@@ -150,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         TerminationSignals.observe { NSApp.terminate(nil) }
+        CommandLineLink.refresh()
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
             self?.toggleRecording()
         }

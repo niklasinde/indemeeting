@@ -18,6 +18,9 @@ enum AppPaths {
 
     static var database: URL { support.appendingPathComponent("meetings.sqlite") }
     static var models: URL { support.appendingPathComponent("Models", isDirectory: true) }
+    /// Where the Claude Code plugin's hooks append their events.
+    static var claudeInbox: URL { support.appendingPathComponent("claude-events.jsonl") }
+    static var commandLineLink: URL { support.appendingPathComponent("bin/meetingrecorder") }
 
     private static var support: URL {
         dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -221,6 +224,11 @@ final class MeetingStore: @unchecked Sendable {
         openError = nil
     }
 
+    private init(readOnly db: SQLiteDatabase) {
+        connection = db
+        openError = nil
+    }
+
     private init(unavailable: DatabaseUnavailable) {
         connection = nil
         openError = unavailable
@@ -238,6 +246,11 @@ final class MeetingStore: @unchecked Sendable {
     static func open(at url: URL) throws -> MeetingStore {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         return try MeetingStore(path: url.path)
+    }
+
+    /// Reads the database as it is, without migrating it, for `--mcp` next to the running app.
+    static func openReadOnly(at url: URL = AppPaths.database) throws -> MeetingStore {
+        MeetingStore(readOnly: try SQLiteDatabase(path: url.path, readOnly: true))
     }
 
     /// The app's database. When it cannot be opened the store is unavailable: recording still works, but nothing is
@@ -305,6 +318,23 @@ final class MeetingStore: @unchecked Sendable {
                 SELECT m.audio_file FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
                 WHERE meetings_fts MATCH ?
                 """, [match]) { $0.string(0) })
+        }
+    }
+
+    func meeting(id: Int64) throws -> Meeting? {
+        try read { try db.query("SELECT \(Self.meetingColumns) FROM meetings WHERE id = ?", [id], Self.meeting).first }
+    }
+
+    /// The best matches of `query` (every word as a prefix) with a snippet around the match.
+    func searchMeetings(_ query: String, limit: Int) throws -> [(meeting: Meeting, snippet: String)] {
+        guard let match = LibraryLogic.ftsQuery(query) else { return [] }
+        let columns = Self.meetingColumns.split(separator: ",").map { "m." + $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        return try read {
+            try db.query("""
+                SELECT \(columns.joined(separator: ", ")), snippet(meetings_fts, -1, '**', '**', '\u{2026}', 16)
+                FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
+                WHERE meetings_fts MATCH ? ORDER BY rank LIMIT ?
+                """, [match, limit]) { (Self.meeting($0), $0.string(14)) }
         }
     }
 

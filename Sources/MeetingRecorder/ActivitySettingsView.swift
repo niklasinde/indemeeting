@@ -67,6 +67,7 @@ struct ActivitySettingsView: View {
     @State private var rulesChanged = false
     @State private var applied: Int?
     @State private var confirmingDeleteAll = false
+    @StateObject private var plugin = ClaudePluginModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -126,6 +127,13 @@ struct ActivitySettingsView: View {
             } message: {
                 Text("Every tracked block is removed from the database. Projects and rules stay.")
             }
+            SettingsSection("Claude Code plugin", footer: "The plugin reports exactly when each Claude Code session is working and which one "
+                            + "you are typing in, and lets Claude read your activity, time report and meetings. It installs from the GitHub "
+                            + "repository \(ClaudePlugin.githubSource), so it gets what is pushed to main. Everything stays on this Mac; "
+                            + "prompt text is not kept. New Claude Code sessions pick it up.") {
+                pluginRows
+            }
+            .onAppear { plugin.refresh() }
             SettingsSection("Apps and websites", footer: "The blocklist wins over the allowlist. Blocked apps and websites keep only the "
                             + "app and the times and show as Private; apps outside the allowlist show as Other with only the times, so "
                             + "day totals still add up. Excluded categories apply once Apple Intelligence has categorised a block.") {
@@ -233,6 +241,51 @@ struct ActivitySettingsView: View {
     private var classifyDetail: String {
         let what = "Labels finished blocks on this Mac with a category, a few words and a project guess; rules and your own choices win."
         return ActivityClassifier.isAvailable ? what : what + " Apple Intelligence is not available right now."
+    }
+
+    @ViewBuilder private var pluginRows: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            let status = ClaudePlugin.status(cli: plugin.cli, installed: plugin.installed, lastEvent: ClaudeInbox.lastWrite(at: AppPaths.claudeInbox))
+            SettingsRow(ClaudePlugin.statusText(status, now: context.date), detail: pluginDetail(status)) {
+                if plugin.running { ProgressView().controlSize(.small) }
+                if plugin.installed {
+                    Button("Remove Plugin") { plugin.remove() }.disabled(plugin.running || plugin.cli == nil)
+                } else {
+                    Button("Install Plugin") { plugin.install(fromLocal: false) }.disabled(plugin.running || plugin.cli == nil)
+                }
+            }
+        }
+        if !plugin.installed, let checkout = plugin.localCheckout {
+            Divider().padding(.leading, 14)
+            SettingsRow("Install from local folder", detail: "For development: \(checkout.path)") {
+                Button("Install from Folder") { plugin.install(fromLocal: true) }.disabled(plugin.running || plugin.cli == nil)
+            }
+        }
+        Divider().padding(.leading, 14)
+        SettingsRow("Install by hand", detail: "Type these in Claude Code.") {
+            Button("Copy Install Commands") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(ClaudePlugin.slashCommands, forType: .string)
+            }
+        }
+        if let output = plugin.output {
+            Divider().padding(.leading, 14)
+            ScrollView {
+                Text(output).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 120)
+            .padding(.horizontal, 14).padding(.vertical, 8)
+        }
+    }
+
+    private func pluginDetail(_ status: ClaudePlugin.Status) -> String {
+        switch status {
+        case .cliMissing: return "Install Claude Code, or copy the commands below into it."
+        case .notInstalled: return "Install it for exact Claude session tracking; without it sessions are guessed from their transcripts."
+        case .installed:
+            guard let source = plugin.source else { return "Sessions are tracked from the plugin\u{2019}s events." }
+            return source.hasPrefix("/") ? "From the local folder \(source)" : "From GitHub (\(source))"
+        }
     }
 
     private func toggleRow(_ title: String, _ value: Binding<Bool>) -> some View {

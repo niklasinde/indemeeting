@@ -7,11 +7,12 @@ struct ClaudeSession: Equatable, Hashable {
     let title: String
 }
 
-/// A session seen working, with the latest message the user typed into it.
+/// A session seen lately, with the latest message the user typed into it; one the user only prompted is not working.
 struct ClaudeActivity: Equatable {
     var session: ClaudeSession
     var lastUser: Date?
     var lastPrompt: String?
+    var working = true
 }
 
 /// What is captured about one moment; equal fields of consecutive samples collapse into one block.
@@ -957,7 +958,7 @@ enum ActivityLogic {
     }
 
     static func dateText(_ date: Date) -> String {
-        date.formatted(.iso8601.year().month().day().dateSeparator(.dash))
+        date.formatted(Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash))
     }
 
     // MARK: Context
@@ -989,7 +990,12 @@ enum ActivityLogic {
         })
         lines += workSections(active, in: range, rules: rules, projects: projects, directory: directory)
         section("Websites", ranked(active, in: range, limit: 15) { $0.key.url })
-        section("Claude sessions", claudeTotals(active, in: range))
+        let sessions = claudeTotals(active, in: range)
+        if !sessions.isEmpty {
+            lines += ["", "## Claude sessions"] + sessions.map { total in
+                "- \(total.label) \u{00B7} \(hoursText(total.seconds))" + (total.attended > 0 ? " \u{00B7} with you \(hoursText(total.attended))" : "")
+            }
+        }
         section("Windows", ranked(active, in: range, limit: 12) { block in
             block.key.repo == nil && block.key.url == nil ? block.key.windowTitle : nil
         })
@@ -1009,15 +1015,18 @@ enum ActivityLogic {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private static func claudeTotals(_ blocks: [ActivityBlock], in range: Range<Date>) -> [(String, TimeInterval)] {
-        var seconds: [String: TimeInterval] = [:]
+    /// Per session the time it was working or being typed into, and of that the time the user was in it.
+    private static func claudeTotals(_ blocks: [ActivityBlock], in range: Range<Date>) -> [(label: String, seconds: TimeInterval, attended: TimeInterval)] {
+        var totals: [String: (seconds: TimeInterval, attended: TimeInterval)] = [:]
         for block in blocks {
             for session in block.key.claude {
-                let folder = URL(fileURLWithPath: session.folder).lastPathComponent
-                seconds["\(session.title) (\(folder))", default: 0] += block.seconds(in: range)
+                let label = "\(session.title) (\(URL(fileURLWithPath: session.folder).lastPathComponent))"
+                totals[label, default: (0, 0)].seconds += block.seconds(in: range)
+                if session.id == block.key.claudeFocus { totals[label]!.attended += block.seconds(in: range) }
             }
         }
-        return seconds.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map { ($0.key, $0.value) }
+        return totals.sorted { $0.value.seconds != $1.value.seconds ? $0.value.seconds > $1.value.seconds : $0.key < $1.key }
+            .map { ($0.key, $0.value.seconds, $0.value.attended) }
     }
 
     private static func ranked(_ blocks: [ActivityBlock], in range: Range<Date>, limit: Int = 10,

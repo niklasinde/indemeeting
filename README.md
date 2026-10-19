@@ -377,7 +377,9 @@ Every 5 seconds while the Mac is awake, unlocked and you have touched the keyboa
   name, as a whole word, against the titles of terminals and editors (Terminal, iTerm2, Warp, Ghostty, JetBrains IDEs,
   VS Code, Cursor, Xcode, Claude, Sublime, Tower, …). The branch is read from `.git/HEAD`, following a worktree's
   `gitdir:` file; no process is spawned. Ticket keys like `QDLY-8296` are picked out of the branch, title or address.
-- Claude Code sessions: `~/.claude/projects/<folder>/<session>.jsonl` files written to in the last 10 seconds. The
+- Claude Code sessions: with the Claude Code plugin (below), its hook events say exactly which sessions are working
+  and which one you last typed into. Without it, or for sessions it has not seen, `~/.claude/projects/<folder>/<session>.jsonl`
+  files written to in the last 2 minutes count as working. The
   session's working folder comes from the `cwd` of its first user message and its title from the custom title you gave
   it (`<session>/custom-title.json` or a `custom-title` line), else the first line you typed. These form a parallel
   lane: a block can have a Claude session running while you are in another app.
@@ -422,6 +424,45 @@ database and prints the resulting blocks, so the pipeline can be checked without
 The data lives in the meeting database: `activity_blocks` (start, end, app, title, address, repository, branch,
 ticket, Claude sessions, idle, manual project, typed excerpt, category, AI description and AI project guess),
 `projects`, `project_rules` and `activity_ai_cache`. Deleting a project clears the blocks that pointed at it.
+
+## Claude Code plugin
+
+`plugin/` is a Claude Code plugin, published from this repository as the `indemeeting` marketplace. Install it from
+Settings > Activity > Claude Code plugin (Install Plugin runs the `claude` CLI; Install from Folder uses a local
+checkout while developing), or in Claude Code:
+
+    /plugin marketplace add niklasinde/indemeeting
+    /plugin install meetingrecorder@indemeeting
+
+Open MeetingRecorder once first: on launch it links itself as `~/Library/Application Support/MeetingRecorder/bin/meetingrecorder`,
+which the plugin's MCP server starts. New Claude Code sessions pick the plugin up. Remove it with Remove Plugin or
+`/plugin uninstall meetingrecorder@indemeeting`.
+
+What it adds:
+
+- Hooks on SessionStart, UserPromptSubmit, PostToolUse (at most once per 30 seconds per session), Notification,
+  SubagentStop, Stop and SessionEnd run `plugin/hooks/record-event.sh`, a POSIX `sh` + `awk` script (no Node or Python)
+  that appends one line to `claude-events.jsonl` in the data folder (`MEETING_RECORDER_DATA_DIR` is respected) and
+  always exits 0:
+
+      {"time":1792399066,"event":"UserPromptSubmit","session_id":"…","cwd":"/Users/me/git/repo","transcript_path":"…/….jsonl","prompt_bytes":27}
+
+  PostToolUse lines add `"tool"`, SessionStart `"source"`, SessionEnd `"reason"` and Notification `"notification"`. The
+  app reads new lines every 5 seconds and moves the file to `claude-events.jsonl.1` past 256 KB. A prompt makes a session
+  working until Stop, SessionEnd, a Notification (waiting for you) or 10 minutes without events; the session you
+  prompted last while Claude is frontmost is the one you are in. The context summary shows per session the time it was
+  working or in front of you and, of that, the time "with you".
+- An MCP server (`meetingrecorder --mcp`, JSON-RPC 2.0 over stdio, protocol 2025-11-25 back to 2024-11-05) with
+  read-only tools: `activity_context(hours)` (the `--context` summary), `time_report(week_start?)` (the week export
+  per day, project, branch and ticket), `search_meetings(query, limit?)` (full-text, with snippets), `get_meeting(id)`
+  (summary, action items, notes and the transcript with speakers) and `recent_meetings(limit?)`. It opens the database
+  read-only, so it never conflicts with the running app.
+- `/meeting-context [hours]` and `/time-report [week]`, and a skill telling Claude when to use the tools ("what did
+  we decide in the standup", "what was I working on").
+
+Privacy: everything stays on the Mac. Prompt text, tool input and tool output are never written; only the prompt's
+length is. `MEETING_RECORDER_HOOK_PROMPTS=1` in Claude Code's environment keeps the first 500 characters of each
+prompt (otherwise the app reads your last prompt from the transcript, as without the plugin).
 
 ## Permissions
 

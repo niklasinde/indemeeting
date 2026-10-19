@@ -1,0 +1,11 @@
+{
+  "name": "meetingrecorder",
+  "description": "Local Claude Code session tracking for MeetingRecorder, and read-only access to your activity, time report and meetings",
+  "version": "1.0.0",
+  "author": {
+    "name": "Niklas Inde"
+  },
+  "homepage": "https://github.com/niklasinde/indemeeting",
+  "repository": "https://github.com/niklasinde/indemeeting",
+  "keywords": ["time-tracking", "meetings", "activity", "mcp", "hooks"]
+}

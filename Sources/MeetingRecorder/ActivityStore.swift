@@ -294,6 +294,19 @@ extension MeetingStore {
         return changed.count
     }
 
+    /// The `--context` summary of the last `hours`.
+    func contextMarkdown(hours: Double, now: Date = Date()) throws -> String {
+        let range = now.addingTimeInterval(-hours * 3600)..<now
+        return ActivityLogic.contextMarkdown(blocks: try blocks(in: range), meetings: try meetingLines(in: range), range: range,
+                                             rules: try rules(), projects: try projects(), directory: try ticketDirectory())
+    }
+
+    func weekReport(containing date: Date) throws -> ActivityLogic.WeekReport {
+        let days = ActivityLogic.week(containing: date)
+        return ActivityLogic.WeekReport(days: days, blocks: try blocks(in: days.first!.lowerBound..<days.last!.upperBound),
+                                        rules: try rules(), projects: try projects(), directory: try ticketDirectory())
+    }
+
     /// The meetings that start in `range`, for the context summary.
     func meetingLines(in range: Range<Date>) throws -> [ActivityLogic.MeetingSummaryLine] {
         try meetings().filter { range.contains($0.created) }.sorted { $0.created < $1.created }
