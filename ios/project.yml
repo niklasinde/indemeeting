@@ -1,0 +1,80 @@
+name: MeetingRecorderPhone
+options:
+  bundleIdPrefix: com.niklasinde
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: en
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    TARGETED_DEVICE_FAMILY: "1,2"
+targets:
+  MeetingRecorderPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: MeetingRecorderPhone
+      - path: ../Sources/Shared
+        group: Shared
+      - path: ../Sources/MeetingRecorder/SQLiteDatabase.swift
+        group: Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.niklasinde.MeetingRecorderPhone
+        PRODUCT_NAME: MeetingRecorderPhone
+        INFOPLIST_FILE: MeetingRecorderPhone/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: MeetingRecorderPhone/Info.plist
+      properties:
+        CFBundleDisplayName: Meeting Recorder
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIBackgroundModes: [audio]
+        ITSAppUsesNonExemptEncryption: false
+        NSLocalNetworkUsageDescription: Meeting Recorder connects to your Mac on this network to show your meetings, activity and pull requests.
+        NSBonjourServices: [_meetingrecorder._tcp]
+        NSCameraUsageDescription: The camera scans the pairing QR code shown on your Mac.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        CFBundleURLTypes:
+          - CFBundleURLName: com.niklasinde.MeetingRecorderPhone.pair
+            CFBundleURLSchemes: [meetingrecorder]
+  MeetingRecorderPhoneTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: MeetingRecorderPhoneTests
+    dependencies:
+      - target: MeetingRecorderPhone
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.niklasinde.MeetingRecorderPhoneTests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  MeetingRecorderPhone:
+    build:
+      targets:
+        MeetingRecorderPhone: all
+        MeetingRecorderPhoneTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets: [MeetingRecorderPhoneTests]

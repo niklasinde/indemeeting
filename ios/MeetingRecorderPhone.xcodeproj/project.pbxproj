@@ -1,0 +1,619 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		02BAD7B853ABD53031DC5810 /* MeetingDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD358F12A8206425360FB9EB /* MeetingDetailView.swift */; };
+		05AF6C6D880681B074134B0C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D4DED78AA74D65698A00F90E /* Assets.xcassets */; };
+		08AFFC7C8AA7E1AA86E9E10C /* PairedMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38323150C4D36485DF330632 /* PairedMac.swift */; };
+		13263680D3DE5E516F67B427 /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55438C716679D42A57AF61FF /* ChatView.swift */; };
+		1E058453F45BDE966488145B /* ChatModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 858C5A8B28014E36D6CA0289 /* ChatModel.swift */; };
+		1E6A3E2344F301F4099DF000 /* PhoneRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB5CDCF6F068685D6EFD5D59 /* PhoneRequest.swift */; };
+		2102EC00DA9DC56D49C05723 /* LogicTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B3D7B73E8AD0BC51AF270F8 /* LogicTests.swift */; };
+		26E0CCFF95995A87B1139781 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89BDD54AE9513C281F620B90 /* ActivityView.swift */; };
+		2B3DE7F65C1FFFD0BD049058 /* Router.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01A589BDC13841EAB782D97B /* Router.swift */; };
+		37BB795F9E1124DEB776B57A /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FC22E4E6FCEB1345ED127AE /* Components.swift */; };
+		4C6E993D03E0FADA9DB7A5EB /* PhoneCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41DBE30686314A1A6155A544 /* PhoneCache.swift */; };
+		4E0997ACB551897DEDC2341E /* PhoneTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB5A1C65E9AC3445D1C4B590 /* PhoneTransport.swift */; };
+		50E23FE846B970DF38606D04 /* MeetingRecorderPhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B63E1BB73E316CAF209F7687 /* MeetingRecorderPhoneApp.swift */; };
+		5164B7440DEC6BF5FC87A225 /* PlayerViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2117A533C4C84046DB71A5FB /* PlayerViews.swift */; };
+		5C4E725BE2374804CF4B76C2 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB30D561F6899B7542A9D8FC /* AppModel.swift */; };
+		5FED92DCAFA40DB29197228E /* MacLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C98C68B470FAE5499D3C9B1E /* MacLocator.swift */; };
+		8B99AADE38EDAC8F0EB46B03 /* HTTPResponseParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5558142A004E08EE87D17AF0 /* HTTPResponseParser.swift */; };
+		8D50FE61F7BFF6D9211DB4D4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EAFEF6FEE493BC8CB49A5B5 /* SettingsView.swift */; };
+		926BFA9AC4AA689A7FCCE5EE /* MeetingsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D6C282405C4C71437CBCD80 /* MeetingsModel.swift */; };
+		96D3FB57A2E9D1BC90A0DB12 /* HTTPParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1083CF428E8E2F9F6F984086 /* HTTPParserTests.swift */; };
+		9B1264AD33B015FC73B84D3D /* PhoneFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E1461E738208ED6EBD857BC /* PhoneFormat.swift */; };
+		A69E458D4C027B2798CB2D4D /* Compat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7FBFB3C407998412606B82B /* Compat.swift */; };
+		A8AD59244CBD327099ED6D80 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79D946C77FA1C04CF73727E4 /* RootView.swift */; };
+		A8D41341E308C0593B0E0F91 /* GitHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF5AED6279CE3558CAF02EEE /* GitHubView.swift */; };
+		AAB53DC7E1FB6D4B9A80FA23 /* ActivityModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71DC0CC10A64DAE867E6AB08 /* ActivityModel.swift */; };
+		C52DD2DF2052B6266DCD54FF /* ClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDF5ABC33DD35B5886D6565A /* ClientTests.swift */; };
+		D4F8C63933E4FF7156E0E437 /* PhoneAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B4E856A2718ECE8F187C5EC /* PhoneAPI.swift */; };
+		DA3BA75987ACC1CA11E8A375 /* PairingViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 707602A543EC4EE012BB4DFC /* PairingViews.swift */; };
+		E04E0A1D17D228754C9D7277 /* PhoneHTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BF3FC88C516FBEB636B0A2 /* PhoneHTTPClient.swift */; };
+		E2C85AF6D356F6EA5A06323C /* PairingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = E751F48F85B8105393C1BEE3 /* PairingService.swift */; };
+		E33DE1494B69143F45143E2C /* Resource.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BD383A0B15DB8EB02E889E5 /* Resource.swift */; };
+		E447B141374E07E1E6EA5E35 /* SecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D908555D2F414873F716707A /* SecretStore.swift */; };
+		E89F5996ECF1FF7C67581631 /* MeetingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1940343D043B44BBF42FF84F /* MeetingsView.swift */; };
+		F8FF49FC3C8204FF32058EB2 /* SQLiteDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 302BF03A43AE13F4557D5788 /* SQLiteDatabase.swift */; };
+		F9A9B1F1D93A8E15463B556F /* AudioProxy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21E9814AB74E29855ACC28B2 /* AudioProxy.swift */; };
+		FBE986409344052376E7FBC9 /* AudioPlayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37B6AFDBC2A3BE05E94EB1F3 /* AudioPlayer.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		37DF0A2F00835CCBA2D2FFDF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C2367E50315E0A74C4052883 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A55115B19D6EE286B705DFF7;
+			remoteInfo = MeetingRecorderPhone;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		01A589BDC13841EAB782D97B /* Router.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Router.swift; sourceTree = "<group>"; };
+		0EAFEF6FEE493BC8CB49A5B5 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		1083CF428E8E2F9F6F984086 /* HTTPParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPParserTests.swift; sourceTree = "<group>"; };
+		1940343D043B44BBF42FF84F /* MeetingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingsView.swift; sourceTree = "<group>"; };
+		1FC22E4E6FCEB1345ED127AE /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		2117A533C4C84046DB71A5FB /* PlayerViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerViews.swift; sourceTree = "<group>"; };
+		21E9814AB74E29855ACC28B2 /* AudioProxy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioProxy.swift; sourceTree = "<group>"; };
+		2BD383A0B15DB8EB02E889E5 /* Resource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Resource.swift; sourceTree = "<group>"; };
+		302BF03A43AE13F4557D5788 /* SQLiteDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SQLiteDatabase.swift; path = ../Sources/MeetingRecorder/SQLiteDatabase.swift; sourceTree = "<group>"; };
+		345B006F811FA1DCA3F7B573 /* MeetingRecorderPhoneTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = MeetingRecorderPhoneTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3701C4656866DC45E5E09909 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		37B6AFDBC2A3BE05E94EB1F3 /* AudioPlayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayer.swift; sourceTree = "<group>"; };
+		38323150C4D36485DF330632 /* PairedMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairedMac.swift; sourceTree = "<group>"; };
+		41DBE30686314A1A6155A544 /* PhoneCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneCache.swift; sourceTree = "<group>"; };
+		4E1461E738208ED6EBD857BC /* PhoneFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneFormat.swift; sourceTree = "<group>"; };
+		55438C716679D42A57AF61FF /* ChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatView.swift; sourceTree = "<group>"; };
+		5558142A004E08EE87D17AF0 /* HTTPResponseParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPResponseParser.swift; sourceTree = "<group>"; };
+		6B4E856A2718ECE8F187C5EC /* PhoneAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneAPI.swift; sourceTree = "<group>"; };
+		707602A543EC4EE012BB4DFC /* PairingViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingViews.swift; sourceTree = "<group>"; };
+		71DC0CC10A64DAE867E6AB08 /* ActivityModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityModel.swift; sourceTree = "<group>"; };
+		79D946C77FA1C04CF73727E4 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		7B3D7B73E8AD0BC51AF270F8 /* LogicTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogicTests.swift; sourceTree = "<group>"; };
+		7D6C282405C4C71437CBCD80 /* MeetingsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingsModel.swift; sourceTree = "<group>"; };
+		858C5A8B28014E36D6CA0289 /* ChatModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModel.swift; sourceTree = "<group>"; };
+		89BDD54AE9513C281F620B90 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
+		A754B38624CE21D70D4848EE /* MeetingRecorderPhone.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = MeetingRecorderPhone.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7FBFB3C407998412606B82B /* Compat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Compat.swift; sourceTree = "<group>"; };
+		B63E1BB73E316CAF209F7687 /* MeetingRecorderPhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingRecorderPhoneApp.swift; sourceTree = "<group>"; };
+		BB30D561F6899B7542A9D8FC /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		C98C68B470FAE5499D3C9B1E /* MacLocator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacLocator.swift; sourceTree = "<group>"; };
+		D4DED78AA74D65698A00F90E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D908555D2F414873F716707A /* SecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretStore.swift; sourceTree = "<group>"; };
+		DB5CDCF6F068685D6EFD5D59 /* PhoneRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneRequest.swift; sourceTree = "<group>"; };
+		DD358F12A8206425360FB9EB /* MeetingDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingDetailView.swift; sourceTree = "<group>"; };
+		DDF5ABC33DD35B5886D6565A /* ClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientTests.swift; sourceTree = "<group>"; };
+		E751F48F85B8105393C1BEE3 /* PairingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingService.swift; sourceTree = "<group>"; };
+		EB5A1C65E9AC3445D1C4B590 /* PhoneTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneTransport.swift; sourceTree = "<group>"; };
+		F4BF3FC88C516FBEB636B0A2 /* PhoneHTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneHTTPClient.swift; sourceTree = "<group>"; };
+		FF5AED6279CE3558CAF02EEE /* GitHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		1BD0BDDCC31B4EB830F5FA59 /* Net */ = {
+			isa = PBXGroup;
+			children = (
+				21E9814AB74E29855ACC28B2 /* AudioProxy.swift */,
+				5558142A004E08EE87D17AF0 /* HTTPResponseParser.swift */,
+				C98C68B470FAE5499D3C9B1E /* MacLocator.swift */,
+				E751F48F85B8105393C1BEE3 /* PairingService.swift */,
+				F4BF3FC88C516FBEB636B0A2 /* PhoneHTTPClient.swift */,
+				DB5CDCF6F068685D6EFD5D59 /* PhoneRequest.swift */,
+			);
+			path = Net;
+			sourceTree = "<group>";
+		};
+		210127932B9743F3A18CA2F4 /* MeetingRecorderPhoneTests */ = {
+			isa = PBXGroup;
+			children = (
+				DDF5ABC33DD35B5886D6565A /* ClientTests.swift */,
+				1083CF428E8E2F9F6F984086 /* HTTPParserTests.swift */,
+				7B3D7B73E8AD0BC51AF270F8 /* LogicTests.swift */,
+			);
+			path = MeetingRecorderPhoneTests;
+			sourceTree = "<group>";
+		};
+		319BD28E2778C7A025D08139 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				B63E1BB73E316CAF209F7687 /* MeetingRecorderPhoneApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		36DA24E8CAFE1E21942B4518 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				302BF03A43AE13F4557D5788 /* SQLiteDatabase.swift */,
+				6C02D2B4B0F127F8DF5BFD7F /* Shared */,
+			);
+			name = Shared;
+			sourceTree = "<group>";
+		};
+		41B1F1A674AFC099B3CB092E /* Store */ = {
+			isa = PBXGroup;
+			children = (
+				38323150C4D36485DF330632 /* PairedMac.swift */,
+				41DBE30686314A1A6155A544 /* PhoneCache.swift */,
+				D908555D2F414873F716707A /* SecretStore.swift */,
+			);
+			path = Store;
+			sourceTree = "<group>";
+		};
+		6C02D2B4B0F127F8DF5BFD7F /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				6B4E856A2718ECE8F187C5EC /* PhoneAPI.swift */,
+				4E1461E738208ED6EBD857BC /* PhoneFormat.swift */,
+				EB5A1C65E9AC3445D1C4B590 /* PhoneTransport.swift */,
+			);
+			name = Shared;
+			path = ../Sources/Shared;
+			sourceTree = "<group>";
+		};
+		8790516A75368F651DCBF100 /* Model */ = {
+			isa = PBXGroup;
+			children = (
+				71DC0CC10A64DAE867E6AB08 /* ActivityModel.swift */,
+				BB30D561F6899B7542A9D8FC /* AppModel.swift */,
+				858C5A8B28014E36D6CA0289 /* ChatModel.swift */,
+				7D6C282405C4C71437CBCD80 /* MeetingsModel.swift */,
+				2BD383A0B15DB8EB02E889E5 /* Resource.swift */,
+				01A589BDC13841EAB782D97B /* Router.swift */,
+			);
+			path = Model;
+			sourceTree = "<group>";
+		};
+		904E106E6CA0184CEC7488D1 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				89BDD54AE9513C281F620B90 /* ActivityView.swift */,
+				55438C716679D42A57AF61FF /* ChatView.swift */,
+				A7FBFB3C407998412606B82B /* Compat.swift */,
+				1FC22E4E6FCEB1345ED127AE /* Components.swift */,
+				FF5AED6279CE3558CAF02EEE /* GitHubView.swift */,
+				DD358F12A8206425360FB9EB /* MeetingDetailView.swift */,
+				1940343D043B44BBF42FF84F /* MeetingsView.swift */,
+				707602A543EC4EE012BB4DFC /* PairingViews.swift */,
+				2117A533C4C84046DB71A5FB /* PlayerViews.swift */,
+				79D946C77FA1C04CF73727E4 /* RootView.swift */,
+				0EAFEF6FEE493BC8CB49A5B5 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		9CE7C82DC31598E86FE88C53 = {
+			isa = PBXGroup;
+			children = (
+				DD023D00800360FB7F29C887 /* MeetingRecorderPhone */,
+				210127932B9743F3A18CA2F4 /* MeetingRecorderPhoneTests */,
+				36DA24E8CAFE1E21942B4518 /* Shared */,
+				D4A117C1E8D41F54C1F66256 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		D4A117C1E8D41F54C1F66256 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A754B38624CE21D70D4848EE /* MeetingRecorderPhone.app */,
+				345B006F811FA1DCA3F7B573 /* MeetingRecorderPhoneTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		DD023D00800360FB7F29C887 /* MeetingRecorderPhone */ = {
+			isa = PBXGroup;
+			children = (
+				D4DED78AA74D65698A00F90E /* Assets.xcassets */,
+				3701C4656866DC45E5E09909 /* Info.plist */,
+				319BD28E2778C7A025D08139 /* App */,
+				EEEEFE670F641809767BBBB4 /* Audio */,
+				8790516A75368F651DCBF100 /* Model */,
+				1BD0BDDCC31B4EB830F5FA59 /* Net */,
+				41B1F1A674AFC099B3CB092E /* Store */,
+				904E106E6CA0184CEC7488D1 /* Views */,
+			);
+			path = MeetingRecorderPhone;
+			sourceTree = "<group>";
+		};
+		EEEEFE670F641809767BBBB4 /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				37B6AFDBC2A3BE05E94EB1F3 /* AudioPlayer.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2650B2EBE5805E670276B46A /* Build configuration list for PBXNativeTarget "MeetingRecorderPhone" */;
+			buildPhases = (
+				F4935AC3B859892DB5BDFF36 /* Sources */,
+				895CE5F77F9E87DBB0665487 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MeetingRecorderPhone;
+			packageProductDependencies = (
+			);
+			productName = MeetingRecorderPhone;
+			productReference = A754B38624CE21D70D4848EE /* MeetingRecorderPhone.app */;
+			productType = "com.apple.product-type.application";
+		};
+		CF158FE4F1842DEF6B3ADFDA /* MeetingRecorderPhoneTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D6773D4CE47D14EEE8E928EC /* Build configuration list for PBXNativeTarget "MeetingRecorderPhoneTests" */;
+			buildPhases = (
+				A26E608A351FE2E9156FC982 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8A3121CFB1E13BB040A44098 /* PBXTargetDependency */,
+			);
+			name = MeetingRecorderPhoneTests;
+			packageProductDependencies = (
+			);
+			productName = MeetingRecorderPhoneTests;
+			productReference = 345B006F811FA1DCA3F7B573 /* MeetingRecorderPhoneTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C2367E50315E0A74C4052883 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					A55115B19D6EE286B705DFF7 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					CF158FE4F1842DEF6B3ADFDA = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 65D4ADABD2CC03C0FCFABB03 /* Build configuration list for PBXProject "MeetingRecorderPhone" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 9CE7C82DC31598E86FE88C53;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = D4A117C1E8D41F54C1F66256 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */,
+				CF158FE4F1842DEF6B3ADFDA /* MeetingRecorderPhoneTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		895CE5F77F9E87DBB0665487 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				05AF6C6D880681B074134B0C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A26E608A351FE2E9156FC982 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C52DD2DF2052B6266DCD54FF /* ClientTests.swift in Sources */,
+				96D3FB57A2E9D1BC90A0DB12 /* HTTPParserTests.swift in Sources */,
+				2102EC00DA9DC56D49C05723 /* LogicTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F4935AC3B859892DB5BDFF36 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AAB53DC7E1FB6D4B9A80FA23 /* ActivityModel.swift in Sources */,
+				26E0CCFF95995A87B1139781 /* ActivityView.swift in Sources */,
+				5C4E725BE2374804CF4B76C2 /* AppModel.swift in Sources */,
+				FBE986409344052376E7FBC9 /* AudioPlayer.swift in Sources */,
+				F9A9B1F1D93A8E15463B556F /* AudioProxy.swift in Sources */,
+				1E058453F45BDE966488145B /* ChatModel.swift in Sources */,
+				13263680D3DE5E516F67B427 /* ChatView.swift in Sources */,
+				A69E458D4C027B2798CB2D4D /* Compat.swift in Sources */,
+				37BB795F9E1124DEB776B57A /* Components.swift in Sources */,
+				A8D41341E308C0593B0E0F91 /* GitHubView.swift in Sources */,
+				8B99AADE38EDAC8F0EB46B03 /* HTTPResponseParser.swift in Sources */,
+				5FED92DCAFA40DB29197228E /* MacLocator.swift in Sources */,
+				02BAD7B853ABD53031DC5810 /* MeetingDetailView.swift in Sources */,
+				50E23FE846B970DF38606D04 /* MeetingRecorderPhoneApp.swift in Sources */,
+				926BFA9AC4AA689A7FCCE5EE /* MeetingsModel.swift in Sources */,
+				E89F5996ECF1FF7C67581631 /* MeetingsView.swift in Sources */,
+				08AFFC7C8AA7E1AA86E9E10C /* PairedMac.swift in Sources */,
+				E2C85AF6D356F6EA5A06323C /* PairingService.swift in Sources */,
+				DA3BA75987ACC1CA11E8A375 /* PairingViews.swift in Sources */,
+				D4F8C63933E4FF7156E0E437 /* PhoneAPI.swift in Sources */,
+				4C6E993D03E0FADA9DB7A5EB /* PhoneCache.swift in Sources */,
+				9B1264AD33B015FC73B84D3D /* PhoneFormat.swift in Sources */,
+				E04E0A1D17D228754C9D7277 /* PhoneHTTPClient.swift in Sources */,
+				1E6A3E2344F301F4099DF000 /* PhoneRequest.swift in Sources */,
+				4E0997ACB551897DEDC2341E /* PhoneTransport.swift in Sources */,
+				5164B7440DEC6BF5FC87A225 /* PlayerViews.swift in Sources */,
+				E33DE1494B69143F45143E2C /* Resource.swift in Sources */,
+				A8AD59244CBD327099ED6D80 /* RootView.swift in Sources */,
+				2B3DE7F65C1FFFD0BD049058 /* Router.swift in Sources */,
+				F8FF49FC3C8204FF32058EB2 /* SQLiteDatabase.swift in Sources */,
+				E447B141374E07E1E6EA5E35 /* SecretStore.swift in Sources */,
+				8D50FE61F7BFF6D9211DB4D4 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8A3121CFB1E13BB040A44098 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A55115B19D6EE286B705DFF7 /* MeetingRecorderPhone */;
+			targetProxy = 37DF0A2F00835CCBA2D2FFDF /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0912E76DF0858A39845D8843 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		17D504E0B8541010F03A3C14 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetingRecorderPhone/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhone;
+				PRODUCT_NAME = MeetingRecorderPhone;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		38F1D26D5C56CEFB16A8AC7E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhoneTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MeetingRecorderPhone.app/MeetingRecorderPhone";
+			};
+			name = Debug;
+		};
+		4DD8516F330032BFA9D9759A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = MeetingRecorderPhone/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhone;
+				PRODUCT_NAME = MeetingRecorderPhone;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5BC6D0A2FFFE6314151AD8D4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.niklasinde.MeetingRecorderPhoneTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MeetingRecorderPhone.app/MeetingRecorderPhone";
+			};
+			name = Release;
+		};
+		CD1FF04AAB34CB432D75AC14 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2650B2EBE5805E670276B46A /* Build configuration list for PBXNativeTarget "MeetingRecorderPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4DD8516F330032BFA9D9759A /* Debug */,
+				17D504E0B8541010F03A3C14 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		65D4ADABD2CC03C0FCFABB03 /* Build configuration list for PBXProject "MeetingRecorderPhone" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0912E76DF0858A39845D8843 /* Debug */,
+				CD1FF04AAB34CB432D75AC14 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D6773D4CE47D14EEE8E928EC /* Build configuration list for PBXNativeTarget "MeetingRecorderPhoneTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				38F1D26D5C56CEFB16A8AC7E /* Debug */,
+				5BC6D0A2FFFE6314151AD8D4 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C2367E50315E0A74C4052883 /* Project object */;
+}

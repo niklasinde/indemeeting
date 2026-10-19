@@ -3,3 +3,8 @@
 .DS_Store
 dist/
 .deps/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+ios/MeetingRecorderPhoneSim.xcodeproj/
+ios/.project-sim.yml
