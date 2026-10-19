@@ -82,7 +82,7 @@ Security, grant the permissions once more, and they then persist across rebuilds
 names, paused time, part and combined files and their length and bit rate, stems and their appends, merging the
 stems' transcripts and dropping echoes, speaker labels, speaker recognition (numbering, overlap assignment, cosine matching and its threshold, voice blending), auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
 migrations (including adding the speaker column and the speakers and known voices tables to an existing database), naming speakers and remembering their voices, a database that cannot be opened in an
-unwritable folder, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). Tests that
+unwritable folder, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). The iPhone tests cover request parsing and its limits, ranges, pairing urls and codes, one-use and expiry of a pairing, the auth decision and the failure limiter, the data types, and every endpoint against a scratch database (including stripped activity blocks and a stored file name that tries to leave the recordings folder). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
 
 ## Run
@@ -478,8 +478,8 @@ as a compact list, read through the GitHub CLI (`gh`) that is already signed in 
 token, password or API key; if `gh` is missing the page shows `brew install gh`, and if it is not signed in it shows
 `gh auth login`, each with a Copy button (the app never runs the interactive login).
 
-This is the app's only network use besides model downloads, the Claude Code plugin install and the Jira links you
-click: with the switch on, `gh api graphql` runs a search per tab (at most 50 open pull requests each, plus the
+This is, together with the optional iPhone access (below), the app's only network use besides model downloads, the Claude
+Code plugin install and the Jira links you click: with the switch on, `gh api graphql` runs a search per tab (at most 50 open pull requests each, plus the
 latest 30 closed or merged ones you created) and `gh auth status` checks the sign-in. Nothing is uploaded; only the
 search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@me`) go to GitHub.
 
@@ -500,6 +500,41 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 
 `MeetingRecorder --github-prs` runs the same searches once and prints the counts and the newest rows (read only).
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
+
+## iPhone access
+
+Off by default. Settings > iPhone lets an iPhone app read this Mac's meetings, activity and GitHub pull requests, and ask the
+chat questions, **over your local network**. There is no server in between and nothing is uploaded: the phone connects
+directly to this Mac, which has to be awake and on the same network. The iPhone app is a viewer; nothing it does changes
+your meetings.
+
+- **Turn it on** with Allow iPhone access. The status line says "Listening on `<name>.local:<port>` · N devices paired". The
+  port is 47821 unless you change it. The app advertises itself with Bonjour as `_meetingrecorder._tcp`.
+- **Pair a device** shows a QR code and the same information as a code to type. It is valid for five minutes and one device;
+  the phone swaps it for a key of its own. Paired devices are listed with when they last connected, and **Revoke** removes
+  one at once.
+- **Security.** The connection is TLS 1.2 with a pre-shared key and ECDHE, so a device that does not hold a key cannot get
+  past the handshake and there is no certificate to trust. Each device has its own random 32-byte key, kept in this Mac's
+  Keychain (service `com.niklasinde.MeetingRecorder.pairing`); the device records (name, when paired, when last seen) are in
+  the `paired_devices` table. Repeated failed attempts from one address are blocked for a while. The log (`os_log`,
+  category `phone`) only notes that someone connected or failed to authenticate, never what was asked.
+- **What it shares.** Meetings (summaries, notes, transcripts, audio), activity with the same privacy rules as the app
+  (blocked and other-app activity stays stripped, Claude prompts only while Store last prompt is on), the cached GitHub
+  pull requests (nothing while GitHub is off) and answers from the on-device chat, which are not stored on the Mac.
+- **Firewall.** The first time the app listens, macOS may ask whether Meeting Recorder may accept incoming connections;
+  allow it, or the phone cannot reach the Mac. The app also declares a local network usage description.
+
+The contract for the phone app, with every endpoint, the pairing flow and the error codes, is in
+[docs/phone-api.md](docs/phone-api.md); the data types are in `Sources/Shared/PhoneAPI.swift`, which an iOS target can
+compile as it is.
+
+**Testing without a phone.** `MeetingRecorder --serve [--port N] --data-dir <folder>` runs only the server against a data
+folder (use a copy; it refuses to run without `--data-dir`) and reads commands from stdin: `pair [seconds]` prints a pairing
+url and code, `devices`, `revoke <id>`, `quit`. The keys go to `phone-secrets.json` in the folder, or to a test service in the
+Keychain with `--keychain`. In a debug build `--phone-client <host:port> <url> <path> [--method M] [--body JSON|@file]
+[--header "K: V"] [--out file]` does the handshake the phone does and prints the response, and `/v1/pair` completes a
+pairing and prints the device url to use afterwards. `--render-phone <folder>` saves previews of the settings and the pairing
+sheet.
 
 ## Claude Code plugin
 

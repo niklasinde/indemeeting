@@ -18,6 +18,8 @@
     <string>Meeting Recorder records system audio so the other meeting participants are in the recording.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Meeting Recorder asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Meeting Recorder lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Meeting Recorder transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>

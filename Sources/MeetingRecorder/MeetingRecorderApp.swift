@@ -10,6 +10,9 @@ enum Main {
         if let output = GitHubPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { GitHubPreview.run(to: output) }
         }
+        if let output = PhonePreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { PhonePreview.run(to: output) }
+        }
         if let output = PreviewRenderer.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
