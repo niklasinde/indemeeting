@@ -259,6 +259,13 @@ final class MeetingStore: @unchecked Sendable {
             last_seen REAL
         );
         """,
+        """
+        CREATE TABLE github_pr_details (
+            url TEXT PRIMARY KEY,
+            json BLOB NOT NULL,
+            fetched REAL NOT NULL
+        );
+        """,
     ]
 
     private static let meetingColumns = """

@@ -67,6 +67,31 @@ enum GitHubClient {
         return fetch
     }
 
+    /// One pull request in full, with the response it was parsed from so it can be cached.
+    nonisolated static func fetchDetail(cli: URL?, repo: String, number: Int) -> Result<(detail: GitHubPRDetail, json: Data), GitHubError> {
+        guard let cli, let output = run(cli, GitHubLogic.detailArguments(repo: repo, number: number)) else { return .failure(.cliMissing) }
+        if output.status != 0, (try? GitHubLogic.parseDetail(output.stdout)) == nil { return .failure(GitHubError.classify(output.stderr)) }
+        do { return .success((try GitHubLogic.parseDetail(output.stdout), output.stdout)) } catch {
+            return .failure(error as? GitHubError ?? .failed("unexpected response"))
+        }
+    }
+
+    /// `--github-pr <owner/repo#n>`: prints the parsed summary of one pull request. Reads GitHub, writes nothing.
+    static func runDetailFromCommandLine(_ reference: String) -> Never {
+        guard let target = GitHubLogic.reference(reference) else {
+            FileHandle.standardError.write(Data("Usage: --github-pr owner/repo#number\n".utf8))
+            exit(2)
+        }
+        switch fetchDetail(cli: GitHubLogic.findCLI(), repo: target.repo, number: target.number) {
+        case .success(let result):
+            print(GitHubLogic.summary(result.detail, now: Date()))
+            exit(0)
+        case .failure(let error):
+            FileHandle.standardError.write(Data("Failed: \(error.message)\n".utf8))
+            exit(1)
+        }
+    }
+
     /// `--github-prs`: prints how many pull requests each tab holds and the newest rows. Reads GitHub, writes nothing.
     static func runFromCommandLine() -> Never {
         let fetch = fetchAll(cli: GitHubLogic.findCLI())

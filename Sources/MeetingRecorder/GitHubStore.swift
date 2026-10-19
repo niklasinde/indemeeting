@@ -60,7 +60,22 @@ extension MeetingStore {
         try write(notify: Self.githubDidChange) {
             let count = try db.query("SELECT count(DISTINCT url) FROM github_prs") { Int($0.int64(0)) }.first ?? 0
             try db.run("DELETE FROM github_prs")
+            try db.run("DELETE FROM github_pr_details")
             return count
+        }
+    }
+
+    /// The last fetched response for a pull request, parsed.
+    func githubDetail(_ url: String) throws -> GitHubPRDetail? {
+        try read {
+            try db.query("SELECT json FROM github_pr_details WHERE url = ?", [url]) { $0.optionalData(0) }.first.flatMap { $0 }
+                .flatMap { try? GitHubLogic.parseDetail($0) }
+        }
+    }
+
+    func saveGitHubDetail(_ url: String, json: Data, fetched: Date = Date()) throws {
+        try write(notify: Self.githubDidChange) {
+            try db.run("INSERT OR REPLACE INTO github_pr_details (url, json, fetched) VALUES (?, ?, ?)", [url, json, fetched.timeIntervalSince1970])
         }
     }
 }

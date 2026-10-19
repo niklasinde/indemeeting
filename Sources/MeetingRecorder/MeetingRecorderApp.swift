@@ -19,6 +19,7 @@ enum Main {
         #endif
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
         if CommandLine.arguments.contains("--github-prs") { GitHubClient.runFromCommandLine() }
+        if let reference = PhoneCommandLine.value("--github-pr", in: CommandLine.arguments) { GitHubClient.runDetailFromCommandLine(reference) }
         if CommandLine.arguments.contains("--serve") { PhoneCommandLine.serve(CommandLine.arguments) }
         #if DEBUG
         if PhoneClient.isRequested(CommandLine.arguments) { PhoneClient.run(CommandLine.arguments) }

@@ -62,6 +62,12 @@ enum GitHubPreview {
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 await renderSettings(model, appearance: appearance, to: output.appendingPathComponent("settings-\(appearance == .aqua ? "light" : "dark").png"))
             }
+            for sample in detailSamples {
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    await renderDetail(sample, directory: directory, appearance: appearance,
+                                       to: output.appendingPathComponent("detail-\(sample.name)-\(appearance == .aqua ? "light" : "dark").png"))
+                }
+            }
             exit(0)
         }
         NSApplication.shared.run()
@@ -80,6 +86,93 @@ enum GitHubPreview {
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    @MainActor
+    private static func renderDetail(_ sample: (name: String, pr: GitHubPR, detail: GitHubPRDetail), directory: TicketDirectory,
+                                     appearance: NSAppearance.Name, to url: URL) async {
+        let content = GitHubDetailContent(pr: sample.pr, detail: sample.detail, directory: directory, ask: {})
+            .padding(32).frame(width: 840, alignment: .leading).background(Color(nsColor: .windowBackgroundColor))
+        let controller = NSHostingController(rootView: content)
+        controller.sizingOptions = .preferredContentSize
+        let window = NSWindow(contentViewController: controller)
+        window.appearance = NSAppearance(named: appearance)
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        PreviewRenderer.save(window, to: url)
+        window.orderOut(nil)
+    }
+
+    private static var detailSamples: [(name: String, pr: GitHubPR, detail: GitHubPRDetail)] {
+        let now = Date()
+        func detail(_ name: String, _ number: Int, _ title: String, state: GitHubPR.State = .open, draft: Bool = false, review: GitHubPR.Review? = nil,
+                    mergeable: GitHubPRDetail.Mergeable = .mergeable, body: String, checks: [GitHubPRDetail.Check] = [],
+                    reviewers: [GitHubPRDetail.Reviewer] = [], files: Int = 7, fileTotal: Int? = nil, commits: Int = 3) -> (name: String, pr: GitHubPR, detail: GitHubPRDetail) {
+            let url = "https://github.com/acme/finq.api/pull/\(number)"
+            let list = GitHubPR(url: url, number: number, title: title, repo: "acme/finq.api", isDraft: draft, state: state, updated: now, checks: .passed, author: "niklas")
+            let paths = ["finq/api/resources/engine_rule/engine_rule.py", "finq/jobs/enforcement/delivery_api/strawbay/sending.py", "tests/fixtures/setting.yaml",
+                         "README.md", "db/migrations/versions/5a248b7f1722_setting.py", "finq/common/constants.py", "docs/old.md"]
+            let kinds: [GitHubPRDetail.Change] = [.modified, .added, .modified, .modified, .added, .modified, .removed]
+            let rows = (0..<files).map { index -> GitHubPRDetail.File in
+                let base = paths[index % paths.count]
+                return GitHubPRDetail.File(path: index < paths.count ? base : "finq/module\(index)/" + (base.split(separator: "/").last.map(String.init) ?? base),
+                                           additions: (index * 7) % 60, deletions: (index * 3) % 20, change: kinds[index % kinds.count])
+            }
+            let log = (0..<commits).map { index in
+                GitHubPRDetail.Commit(oid: String(format: "%07x%06x", 0xe4748c4 + index * 977, index), headline: ["Only send batches when sending is enabled", "Add the setting and its migration", "Review: rename the guard", "Fix the fixture"][index % 4],
+                                      author: index % 3 == 2 ? "elin" : "niklas", date: now.addingTimeInterval(-Double(index) * 5_400 - 3_000), url: url,
+                                      checks: index == commits - 1 ? (checks.contains { $0.status == .failed } ? .failed : checks.contains { $0.status == .running } ? .running : .passed) : .passed)
+            }
+            let full = GitHubPRDetail(url: url, repo: "acme/finq.api", number: number, title: title, body: body, author: "niklas", state: state, isDraft: draft,
+                                      mergeable: mergeable, review: review, base: "develop", head: "NI/QDLY-8315-strawbay-send-guard",
+                                      created: now.addingTimeInterval(-26_000), updated: now.addingTimeInterval(-900), additions: 452, deletions: 46,
+                                      changedFiles: fileTotal ?? files, labels: ["backend", "needs-review"], assignees: ["niklas"], reviewers: reviewers,
+                                      commits: log, commitCount: commits, files: rows, fileCount: fileTotal ?? files, checks: checks, checkCount: checks.count,
+                                      rollup: checks.contains { $0.status == .failed } ? .failed : checks.contains { $0.status == .running } ? .running : .passed)
+            return (name, list, full)
+        }
+        func check(_ name: String, _ status: GitHubPRDetail.CheckStatus, _ seconds: TimeInterval? = nil, workflow: String = "CI") -> GitHubPRDetail.Check {
+            GitHubPRDetail.Check(name: name, workflow: workflow, status: status, started: seconds.map { _ in now.addingTimeInterval(-200) },
+                                 completed: seconds.map { now.addingTimeInterval($0 - 200) }, url: "https://github.com/acme/finq.api/actions/runs/1")
+        }
+        let body = """
+            ## Summary
+            Only send Strawbay batches to the authority when the **sending** setting is on. See `QDLY-8315` and [the spec](https://example.com/spec).
+
+            - [x] Add the setting and its migration
+            - [x] Guard `order_to_pay`
+            - [ ] Backfill the tenants that already send
+              - ask Elin first
+
+            ```python
+            if not setting("strawbay_send_to_kronofogden"):
+                return
+            ```
+
+            | Tenant | Sending |
+            |---|---|
+            | Gaia | on |
+            | Nebula | off |
+
+            ![Settings page](https://github.com/user-attachments/assets/1)
+
+            1. Merge
+            2. Enable per tenant
+            """
+        let long = body + "\n\n" + (1...14).map { "Detail paragraph \($0) about the migration and how it was verified on the test tenant." }.joined(separator: "\n\n")
+        let mixed = [check("e2e / checkout", .failed, 95), check("lint", .passed, 41), check("unit tests (3.12)", .passed, 312), check("build", .running),
+                     check("deploy preview", .pending), check("docs", .skipped, 0), check("snyk", .passed, 20, workflow: "Security")]
+        let reviewers: [GitHubPRDetail.Reviewer] = [.init(name: "sara", state: .changesRequested), .init(name: "elin", state: .pending),
+                                                    .init(name: "backend", isTeam: true, state: .pending), .init(name: "johan", state: .approved),
+                                                    .init(name: "copilot-pull-request-reviewer", state: .commented)]
+        return [
+            detail("open-running", 2462, "QDLY-8315: Only send Strawbay batches to Kronofogden when sending is enabled", review: .required, body: body, checks: mixed, reviewers: reviewers),
+            detail("draft-conflicts", 2439, "QDLY-8315: Store the journal number and date", draft: true, mergeable: .conflicting, body: "", checks: [], commits: 1),
+            detail("merged", 2385, "QDLY-8782: Define API models explicitly", state: .merged, review: .approved, body: "Short description.", checks: [check("lint", .passed, 40), check("tests", .passed, 300)], reviewers: [.init(name: "johan", state: .approved)]),
+            detail("checks-failing", 2460, "QDLY-8785: Recall cases at the authority", review: .changesRequested, body: long, checks: [check("tests", .failed, 280), check("lint", .failed, 12), check("build", .passed, 60), check("e2e", .cancelled, 30)], reviewers: reviewers),
+            detail("many-files", 872, "QDLY-8690: Rating conversion table as a grid of tiers", review: .approved, body: body, checks: [check("lint", .passed, 40)], files: 100, fileTotal: 240, commits: 100),
+        ]
     }
 
     private static var samples: [GitHubKind: [GitHubPR]] {

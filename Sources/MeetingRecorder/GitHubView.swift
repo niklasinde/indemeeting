@@ -5,6 +5,14 @@ struct GitHubView: View {
     @ObservedObject var model: GitHubModel
 
     var body: some View {
+        if model.enabled, let page = model.page {
+            GitHubDetailView(page: page, model: model)
+        } else {
+            list
+        }
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = model.error, model.enabled, model.hasData { ErrorBanner(error: error) }
@@ -139,8 +147,9 @@ private struct PullRequestRow: View {
         .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onTapGesture { open(pr.url) }
+        .onTapGesture { model.open(pr) }
         .contextMenu {
+            Button("Open") { model.open(pr) }
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }

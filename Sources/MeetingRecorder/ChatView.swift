@@ -401,6 +401,33 @@ struct AnswerText: View {
                     }
                 case .paragraph(let text):
                     Text(AttributedString.inlineMarkdown(text)).lineSpacing(3).textSelection(.enabled)
+                case .task(let level, let done, let text):
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Image(systemName: done ? "checkmark.square.fill" : "square").foregroundStyle(done ? Color.accentColor : .secondary)
+                        Text(AttributedString.inlineMarkdown(text)).textSelection(.enabled)
+                    }
+                    .padding(.leading, CGFloat(level) * 18)
+                case .code(let text):
+                    Text(text)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                case .table(let rows):
+                    Text(GitHubLogic.alignedTable(rows))
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .fixedSize()
+                        .padding(10)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+                case .image(let alt, let url):
+                    Button { URL(string: url).map { NSWorkspace.shared.open($0) } } label: {
+                        Label("Image: \(alt.isEmpty ? "untitled" : alt)", systemImage: "photo")
+                    }
+                    .buttonStyle(.link)
+                    .help("Opens in the browser; GitHub images need you to be signed in there")
                 }
             }
         }

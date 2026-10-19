@@ -27,6 +27,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ChatStore.swift \
     Sources/MeetingRecorder/ChatToolbox.swift \
     Sources/MeetingRecorder/GitHubLogic.swift \
+    Sources/MeetingRecorder/GitHubDetail.swift \
     Sources/MeetingRecorder/GitHubStore.swift \
     Sources/Shared/PhoneAPI.swift \
     Sources/MeetingRecorder/PhoneHTTP.swift \
@@ -40,6 +41,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/PluginTests.swift \
     Tests/MeetingRecorderTests/ChatTests.swift \
     Tests/MeetingRecorderTests/GitHubTests.swift \
+    Tests/MeetingRecorderTests/GitHubDetailTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"

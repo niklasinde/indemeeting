@@ -489,8 +489,17 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   to Jira once the site is known from your browsing), Draft, the review decision, comments, `+additions -deletions` and
   the time since the last update. The mark on the right is a green check (checks passed), red cross (failed), amber dot
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
-- **Click** opens the pull request in the browser. Right-click: Copy Link, Copy Title, Open Repository, and Ask About This
-  Pull Request, which opens a general chat with the title and link in the box.
+- **Click** opens the pull request in the app (see below). Right-click: Open, Open in Browser, Copy Link, Copy Title, Open
+  Repository, and Ask About This Pull Request, which opens a general chat with the title and link in the box.
+- **Pull request page:** a back button returns to the list with its tab, filter and search kept. The page shows the
+  state (Open, Draft, Merged, Closed), the Jira ticket from the title or branch (linked once the site is known), the
+  conflict state, the review decision, labels, the base and head branch, the size, reviewers (requested people and teams
+  plus each person's latest review, as initials circles), assignees, the description (Markdown: headings, lists, task
+  lists, fenced code, links; tables as aligned plain text; images as "Image: ..." links that open in the browser, since
+  they need your GitHub sign-in; long descriptions collapse), the checks of the head commit (failed first, with duration;
+  a click opens the run; refreshed every 30 seconds while one is running), the commits (first 100, per-commit check mark)
+  and the files changed (first 100, with a filter; a click opens the pull request's Files tab). It is read only, from one
+  GraphQL query through `gh`, cached per pull request in `github_pr_details` so it reopens instantly.
 - **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
   data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
 - **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks" opens the page.
@@ -499,6 +508,7 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.
 
 `MeetingRecorder --github-prs` runs the same searches once and prints the counts and the newest rows (read only).
+`--github-pr owner/repo#number` fetches one pull request page and prints the parsed summary.
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
 
 ## iPhone access

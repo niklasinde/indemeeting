@@ -506,30 +506,58 @@ extension ChatLogic {
     enum Block: Equatable {
         case heading(String)
         case bullet(level: Int, text: String)
+        case task(level: Int, done: Bool, text: String)
         case numbered(String, text: String)
         case paragraph(String)
+        case code(String)
+        case table([[String]])
+        case image(alt: String, url: String)
     }
 
-    /// The block structure of an answer: headings, bullets (indented by two spaces a level), numbered items and paragraphs.
-    /// Inline Markdown stays in the text.
+    /// The block structure of Markdown: headings, bullets (indented by two spaces a level), task list items, numbered items,
+    /// fenced code, tables, images on a line of their own and paragraphs. Inline Markdown stays in the text.
     static func blocks(_ markdown: String) -> [Block] {
         var blocks: [Block] = []
         var paragraph: [String] = []
+        var code: [String]?
+        var table: [[String]] = []
         func flush() {
             if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))) }
+            if !table.isEmpty { blocks.append(.table(table)) }
             paragraph = []
+            table = []
         }
         for raw in markdown.components(separatedBy: "\n") {
             let indent = raw.prefix { $0 == " " }.count
             let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty {
+            if line.hasPrefix("```") || line.hasPrefix("~~~") {
+                if let lines = code {
+                    blocks.append(.code(lines.joined(separator: "\n")))
+                    code = nil
+                } else {
+                    flush()
+                    code = []
+                }
+            } else if code != nil {
+                code?.append(raw)
+            } else if line.isEmpty {
                 flush()
+            } else if line.hasPrefix("|"), line.count > 1, paragraph.isEmpty {
+                if let cells = tableCells(line) { table.append(cells) } else if table.isEmpty { paragraph.append(line) }
             } else if line.hasPrefix("#"), let heading = marked(line, after: { $0 == "#" }) {
                 flush()
                 blocks.append(.heading(heading))
+            } else if let image = image(line) {
+                flush()
+                blocks.append(image)
             } else if let bullet = ["- ", "* ", "\u{2022} "].first(where: line.hasPrefix) {
                 flush()
-                blocks.append(.bullet(level: indent / 2, text: String(line.dropFirst(bullet.count))))
+                let text = String(line.dropFirst(bullet.count))
+                if let done = ["[ ] ": false, "[x] ": true, "[X] ": true].first(where: { text.hasPrefix($0.key) }) {
+                    blocks.append(.task(level: indent / 2, done: done.value, text: String(text.dropFirst(4))))
+                } else {
+                    blocks.append(.bullet(level: indent / 2, text: text))
+                }
             } else if let digits = Optional(line.prefix { $0.isNumber }), !digits.isEmpty,
                       let rest = marked(String(line.dropFirst(digits.count)), after: { $0 == "." || $0 == ")" }) {
                 flush()
@@ -538,8 +566,21 @@ extension ChatLogic {
                 paragraph.append(line)
             }
         }
+        if let lines = code { blocks.append(.code(lines.joined(separator: "\n"))) }
         flush()
         return blocks
+    }
+
+    /// The cells of a table row; nil for the `---|---` separator, which is dropped.
+    private static func tableCells(_ line: String) -> [String]? {
+        let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        return cells.allSatisfy { $0.allSatisfy { "-: ".contains($0) } } ? nil : cells
+    }
+
+    private static func image(_ line: String) -> Block? {
+        guard line.hasPrefix("!["), line.hasSuffix(")"), let close = line.range(of: "]("),
+              !line[close.upperBound...].dropLast().contains(")") else { return nil }
+        return .image(alt: String(line[line.index(line.startIndex, offsetBy: 2)..<close.lowerBound]), url: String(line[close.upperBound...].dropLast()))
     }
 }
 

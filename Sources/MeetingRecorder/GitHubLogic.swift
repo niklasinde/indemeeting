@@ -210,7 +210,7 @@ enum GitHubLogic {
                         labels: node.labels?.nodes?.compactMap { $0?.name } ?? [])
     }
 
-    private static func review(_ decision: String) -> GitHubPR.Review? {
+    static func review(_ decision: String) -> GitHubPR.Review? {
         switch decision {
         case "APPROVED": return .approved
         case "CHANGES_REQUESTED": return .changesRequested

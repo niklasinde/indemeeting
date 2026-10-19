@@ -18,6 +18,7 @@ final class GitHubModel: ObservableObject {
     @Published private(set) var cachedCount = 0
     @Published var kind = GitHubKind.created
     @Published var filter = GitHubLogic.Filter()
+    @Published private(set) var page: GitHubDetailModel?
 
     var store: MeetingStore?
     private var loop: Task<Void, Never>?
@@ -87,6 +88,17 @@ final class GitHubModel: ObservableObject {
         loadCache()
     }
 
+    func open(_ pr: GitHubPR) {
+        page?.stop()
+        page = GitHubDetailModel(pr: pr, store: store)
+        page?.start()
+    }
+
+    func closePage() {
+        page?.stop()
+        page = nil
+    }
+
     func ask(about pr: GitHubPR) {
         ChatWindow.shared.show(scope: .general)
         ChatWindow.shared.model?.draft = "What should I know about \(pr.repo) #\(pr.number), \"\(pr.title)\"? \(pr.url)"
@@ -108,6 +120,7 @@ final class GitHubModel: ObservableObject {
         self.fetched = fetched
         kind = .created
         filter = GitHubLogic.Filter()
+        page = nil
     }
     #endif
 }
