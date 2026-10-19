@@ -49,6 +49,7 @@ struct GitHubView: View {
                 .padding(.top, 14)
                 .padding(.leading, -8)
                 filters.padding(.top, 10)
+                quickFilters.padding(.top, 8).padding(.leading, -8)
             }
         }
         .padding(.horizontal, RecordingDetail.gutter)
@@ -92,9 +93,36 @@ struct GitHubView: View {
             .fixedSize()
             SearchField(text: $model.filter.query).frame(maxWidth: 240)
             Spacer()
-            Text("Sorted by updated").font(.caption).foregroundStyle(.tertiary)
+            Menu {
+                Picker("Sort by", selection: $model.filter.sort) {
+                    ForEach(GitHubSort.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            } label: {
+                Label(model.filter.sort.rawValue, systemImage: "arrow.up.arrow.down")
+            }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sort the pull requests")
         }
         .controlSize(.small)
+    }
+
+    private var quickFilters: some View {
+        FlowLayout(spacing: 2) {
+            ForEach(GitHubQuickFilter.allCases) { quick in
+                Button { toggle(quick) } label: { Label(quick.rawValue, systemImage: quick.icon) }
+                    .buttonStyle(PillButtonStyle(selected: model.filter.quick.contains(quick)))
+            }
+            Button { model.filter.hideBotOnly.toggle() } label: { Label("Hide bot-only activity", systemImage: "cpu") }
+                .buttonStyle(PillButtonStyle(selected: model.filter.hideBotOnly))
+        }
+        .controlSize(.small)
+    }
+
+    private func toggle(_ quick: GitHubQuickFilter) {
+        if model.filter.quick.contains(quick) { model.filter.quick.remove(quick) } else { model.filter.quick.insert(quick) }
     }
 
     @ViewBuilder private var content: some View {
@@ -109,7 +137,7 @@ struct GitHubView: View {
             GitHubEmptyState(icon: model.refreshing && !model.hasData ? "arrow.clockwise" : "checkmark.circle",
                        title: model.refreshing && !model.hasData ? "Fetching pull requests\u{2026}"
                        : model.filter == GitHubLogic.Filter() ? "No pull requests" : "Nothing matches",
-                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the state, repository or search.") { EmptyView() }
+                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the state, repository, search or quick filters.") { EmptyView() }
         } else {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -172,10 +200,22 @@ private struct PullRequestRow: View {
 
     private var chips: [Chip] {
         var chips: [Chip] = []
+        let signals = GitHubLogic.signals(pr)
         if let ticket = pr.ticket { chips.append(.ticket(ticket, model.directory, short: true)) }
         if pr.isDraft { chips.append(Chip(text: "Draft", icon: "pencil")) }
+        if signals.waitingOnMe { chips.append(Chip(text: "Waiting on you", icon: "person.crop.circle.badge.clock", tint: .orange)) }
         if pr.state == .open, let review = pr.review { chips.append(Self.chip(review)) }
+        if signals.unresolved > 0 {
+            let capped = (pr.activity?.threads ?? 0) > GitHubLogic.threadPageSize
+            chips.append(Chip(text: "\(signals.unresolved)\(capped ? "+" : "") unresolved", icon: "bubble.left.and.exclamationmark.bubble.right", tint: .orange))
+        }
+        if signals.newFeedback > 0 { chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor)) }
+        else if signals.newBotFeedback > 0 { chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu")) }
         if pr.comments > 0 { chips.append(Chip(text: "\(pr.comments)", icon: "bubble.left")) }
+        if let last = signals.lastActor {
+            chips.append(Chip(text: last.actor.isBot ? "bot" : GitHubLogic.initials(last.actor.login), icon: last.actor.isBot ? "cpu" : "person.crop.circle",
+                              help: "Last comment by \(last.actor.login) \(GitHubLogic.updatedText(last.date, now: Date()))"))
+        }
         return chips
     }
 

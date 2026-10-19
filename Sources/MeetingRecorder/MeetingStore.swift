@@ -266,6 +266,7 @@ final class MeetingStore: @unchecked Sendable {
             fetched REAL NOT NULL
         );
         """,
+        "ALTER TABLE github_prs ADD COLUMN discussion TEXT;",
     ]
 
     private static let meetingColumns = """

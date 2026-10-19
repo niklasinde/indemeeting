@@ -39,8 +39,19 @@ enum GitHubPreview {
             }
             model.showSample(prs: samples, directory: directory)
             await shot("created")
+            model.filter.sort = .needsAttention
+            await shot("needs-attention")
+            model.filter.sort = .mostDiscussed
+            await shot("most-discussed", appearances: [.aqua])
+            model.filter = GitHubLogic.Filter(quick: [.newFeedback], hideBotOnly: true, sort: .needsAttention)
+            await shot("quick-filters", appearances: [.aqua])
+            model.filter = GitHubLogic.Filter(quick: [.unresolved], sort: .unresolved)
+            await shot("unresolved-first", appearances: [.aqua])
+            model.filter = GitHubLogic.Filter()
             model.kind = .reviewRequested
+            model.filter.sort = .needsAttention
             await shot("review-requested", appearances: [.aqua])
+            model.filter = GitHubLogic.Filter()
             model.kind = .created
             model.filter.state = .all
             await shot("all-states", appearances: [.aqua])
@@ -179,25 +190,40 @@ enum GitHubPreview {
         let now = Date()
         func pr(_ number: Int, _ repo: String, _ title: String, ago: TimeInterval, state: GitHubPR.State = .open, draft: Bool = false,
                 checks: GitHubPR.Checks = .passed, review: GitHubPR.Review? = nil, add: Int = 40, del: Int = 8, comments: Int = 0,
-                author: String = "niklas") -> GitHubPR {
+                author: String = "niklas", activity: GitHubActivity? = nil) -> GitHubPR {
             GitHubPR(url: "https://github.com/\(repo)/pull/\(number)", number: number, title: title, repo: repo, isDraft: draft, state: state,
                      updated: now.addingTimeInterval(-ago), review: review, checks: checks, author: author, additions: add, deletions: del,
-                     comments: comments)
+                     comments: comments, activity: activity)
+        }
+        func person(_ login: String) -> GitHubActivity.Actor { GitHubActivity.Actor(login: login) }
+        func bot(_ login: String) -> GitHubActivity.Actor { GitHubActivity.Actor(login: login, isBot: true) }
+        func said(_ actor: GitHubActivity.Actor, _ ago: TimeInterval) -> GitHubActivity.Event { GitHubActivity.Event(actor: actor, date: now.addingTimeInterval(-ago)) }
+        func activity(threads: Int = 0, open: [GitHubActivity.Event] = [], reviews: [GitHubActivity.Review] = [], comment: GitHubActivity.Event? = nil,
+                      commit: TimeInterval = 90_000, requested: [String] = [], botAuthor: Bool = false) -> GitHubActivity {
+            GitHubActivity(me: "niklas", authorIsBot: botAuthor, threads: threads, open: open, reviews: reviews, reviewCount: reviews.count, lastComment: comment,
+                           lastCommit: now.addingTimeInterval(-commit), requested: requested)
         }
         return [
             .created: [
                 pr(2462, "acme/finq.api", "QDLY-8786: Send enforcement cases to execution", ago: 600, add: 452, del: 46),
-                pr(2442, "acme/finq.api", "QDLY-8785: Report deductions to the authority through the partner", ago: 3_000, checks: .running, add: 1131, del: 36, comments: 4),
-                pr(2460, "acme/finq.api", "QDLY-8785: Recall cases at the authority", ago: 5_400, checks: .failed, review: .changesRequested, add: 313, del: 30, comments: 2),
-                pr(872, "acme/finq.admin-ui", "QDLY-8690: Rating conversion table as a grid of tiers and risk indicators", ago: 14_000, review: .approved, add: 2661, del: 717, comments: 9),
-                pr(2439, "acme/finq.api", "QDLY-8315: Store the journal number and date on the fields they belong to", ago: 40_000, draft: true, checks: .none, review: .required, add: 65, del: 2),
-                pr(191, "niklas/devops", "Redesign landing page with modern UI and responsive layout", ago: 90_000, draft: true, checks: .none, add: 295, del: 95),
+                pr(2442, "acme/finq.api", "QDLY-8785: Report deductions to the authority through the partner", ago: 3_000, checks: .running, add: 1131, del: 36, comments: 4,
+                   activity: activity(threads: 6, open: [said(person("elin"), 3_000), said(person("elin"), 40_000), said(bot("coderabbitai"), 20_000)], comment: said(person("johan"), 9_000), commit: 30_000)),
+                pr(2460, "acme/finq.api", "QDLY-8785: Recall cases at the authority", ago: 5_400, checks: .failed, review: .changesRequested, add: 313, del: 30, comments: 2,
+                   activity: activity(threads: 4, open: [said(person("sara"), 5_400), said(person("sara"), 6_000)], commit: 20_000)),
+                pr(872, "acme/finq.admin-ui", "QDLY-8690: Rating conversion table as a grid of tiers and risk indicators", ago: 14_000, review: .approved, add: 2661, del: 717, comments: 9,
+                   activity: activity(threads: 34, open: (0..<20).map { said(person("jakob"), 20_000 + Double($0) * 100) }, comment: said(person("niklas"), 13_000), commit: 15_000)),
+                pr(2439, "acme/finq.api", "QDLY-8315: Store the journal number and date on the fields they belong to", ago: 40_000, draft: true, checks: .none, review: .required, add: 65, del: 2,
+                   activity: activity(threads: 3, open: [said(bot("copilot-pull-request-reviewer"), 35_000)], commit: 60_000)),
+                pr(191, "niklas/devops", "Redesign landing page with modern UI and responsive layout", ago: 90_000, draft: true, checks: .none, add: 295, del: 95, activity: activity()),
+                pr(199, "niklas/devops", "[Snyk] Security upgrade cryptography from 45.0.7 to 46.0.5", ago: 120_000, add: 1, del: 1, author: "snyk-bot", activity: activity(botAuthor: true)),
                 pr(2385, "acme/finq.api", "QDLY-8782: Define API models explicitly instead of copy-and-delete", ago: 200_000, state: .merged, review: .approved, add: 113, del: 159),
                 pr(2301, "acme/finq.api", "QDLY-8701: Try the older export format", ago: 400_000, state: .closed, checks: .failed, add: 12, del: 4),
             ],
             .reviewRequested: [
-                pr(2376, "acme/finq.api", "QDLY-8690: Match \"-\" to a rating without risk indicator, accept a tier list", ago: 7_000, review: .required, add: 211, del: 34, comments: 3, author: "elin"),
-                pr(1746, "acme/finq.api", "FIX(QDLY-7998): align receiver address placement with the print-house templates", ago: 90_000, checks: .failed, review: .required, add: 444, del: 38, author: "johan"),
+                pr(2376, "acme/finq.api", "QDLY-8690: Match \"-\" to a rating without risk indicator, accept a tier list", ago: 7_000, review: .required, add: 211, del: 34, comments: 3, author: "elin",
+                   activity: activity(threads: 2, open: [said(person("niklas"), 8_000)], requested: ["niklas"])),
+                pr(1746, "acme/finq.api", "FIX(QDLY-7998): align receiver address placement with the print-house templates", ago: 90_000, checks: .failed, review: .required, add: 444, del: 38, author: "johan",
+                   activity: activity(threads: 1, open: [said(person("johan"), 90_000)], reviews: [GitHubActivity.Review(actor: person("niklas"), state: "COMMENTED", date: now.addingTimeInterval(-200_000))], commit: 80_000)),
             ],
         ]
     }

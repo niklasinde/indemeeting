@@ -479,15 +479,27 @@ token, password or API key; if `gh` is missing the page shows `brew install gh`,
 `gh auth login`, each with a Copy button (the app never runs the interactive login).
 
 This is, together with the optional iPhone access (below), the app's only network use besides model downloads, the Claude
-Code plugin install and the Jira links you click: with the switch on, `gh api graphql` runs a search per tab (at most 50 open pull requests each, plus the
+Code plugin install and the Jira links you click: with the switch on, `gh api graphql` runs a search per tab (at most 50 open pull requests each, with their review threads, latest reviews and last comment: about 12
+GraphQL points per search, roughly 55 per refresh against the 5000 an hour GitHub allows, so avoid the 1 minute interval; plus the
 latest 30 closed or merged ones you created) and `gh auth status` checks the sign-in. Nothing is uploaded; only the
 search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@me`) go to GitHub.
 
 - **Tabs:** Created, Review requested, Assigned and Mentioned, with a state filter (Open by default, Merged, Closed,
   All), a repository menu and a search field; rows are sorted by last update. The header counts the rows ("47 created").
+- **Sort and quick filters:** the sort menu (right of the filters) has Updated (default), Needs attention, Most discussed,
+  Unresolved first and Failing checks first. Pills under the filters narrow the list: Has unresolved comments, New
+  feedback, Changes requested, Failing checks, Waiting on me, and Hide bot-only activity. They combine.
+- **Needs attention** adds one weight per thing on a pull request, in the order of how much it asks of you: a review waiting
+  on you 50, new feedback from people 40, changes requested 30, failing checks 20, unresolved threads 10, plus the number of
+  new comments and unresolved threads (each at most 9) to tell equals apart; the last update decides the rest.
 - **Rows:** `owner / repo #number`, the title, and chips for the Jira ticket (when the title starts with a key; it links
   to Jira once the site is known from your browsing), Draft, the review decision, comments, `+additions -deletions` and
-  the time since the last update. The mark on the right is a green check (checks passed), red cross (failed), amber dot
+  the time since the last update. Open pull requests also show Waiting on you, "3 unresolved" (the first 20 review threads
+  are looked at, so "20+" is a lower bound), "2 new comments", "2 from bots" and who spoke last (initials, or a bot mark).
+  *New comments* are comments and reviews by other people after your last commit, review or reply on your own pull
+  requests, or after your review on someone else's; bots (Copilot, CodeRabbit, Snyk, dependabot, github-actions) are counted
+  apart and never count as new feedback. Waiting on you is a review asked of you, or the author pushing or answering after
+  your review. Bot-only means a bot's pull request or last word with nothing for a person to answer. The mark on the right is a green check (checks passed), red cross (failed), amber dot
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
 - **Click** opens the pull request in the app (see below). Right-click: Open, Open in Browser, Copy Link, Copy Title, Open
   Repository, and Ask About This Pull Request, which opens a general chat with the title and link in the box.
@@ -502,12 +514,14 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   GraphQL query through `gh`, cached per pull request in `github_pr_details` so it reopens instantly.
 - **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
   data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
-- **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks" opens the page.
+- **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks · 2 with new feedback" opens the page.
 - **Timeline:** the tooltip of a pull request address in the Activity timeline shows its title from the cache.
-- **Cache:** the last fetch is stored in `github_prs` in the meeting database, so the page opens instantly and works
+- **Cache:** the last fetch, with the raw discussion data, is stored in `github_prs` in the meeting database, so the page opens instantly and works
   offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.
 
-`MeetingRecorder --github-prs` runs the same searches once and prints the counts and the newest rows (read only).
+`MeetingRecorder --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
+signals, and the GraphQL points used (read only). `--github-pr-threads owner/repo#n` is a probe that prints what the review
+threads of one pull request look like (no UI uses it).
 `--github-pr owner/repo#number` fetches one pull request page and prints the parsed summary.
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
 

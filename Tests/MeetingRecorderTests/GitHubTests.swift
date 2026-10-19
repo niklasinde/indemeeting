@@ -98,7 +98,7 @@ let githubTests: [(name: String, run: () throws -> Void)] = [
         check(arguments.contains("q=author:@me is:pr is:open archived:false sort:updated-desc"), "terms")
         check(arguments.contains("first=50"), "page size")
         check(!arguments.contains { $0.lowercased().contains("token") || $0.lowercased().contains("authorization") }, "no credentials")
-        check(GitHubLogic.query.contains("statusCheckRollup") && GitHubLogic.query.contains("reviewDecision"), "fields")
+        check(GitHubLogic.query(discussion: true).contains("statusCheckRollup") && GitHubLogic.query(discussion: false).contains("reviewDecision"), "fields")
         check(GitHubLogic.authArguments == ["auth", "status", "--hostname", "github.com"], "auth check")
     }),
 

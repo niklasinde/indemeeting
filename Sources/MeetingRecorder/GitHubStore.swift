@@ -6,7 +6,7 @@ extension MeetingStore {
     func githubPRs() throws -> [GitHubKind: [GitHubPR]] {
         try read {
             let rows = try db.query("""
-                SELECT kind, url, number, title, repo, is_draft, state, updated, review, checks, author, additions, deletions, comments, labels
+                SELECT kind, url, number, title, repo, is_draft, state, updated, review, checks, author, additions, deletions, comments, labels, discussion
                 FROM github_prs ORDER BY position
                 """, []) { row -> (GitHubKind, GitHubPR)? in
                 guard let kind = GitHubKind(rawValue: row.string(0)) else { return nil }
@@ -16,7 +16,8 @@ extension MeetingStore {
                                        review: row.optionalString(8).flatMap(GitHubPR.Review.init(rawValue:)),
                                        checks: GitHubPR.Checks(rawValue: row.string(9)) ?? .none, author: row.optionalString(10),
                                        additions: Int(row.int64(11)), deletions: Int(row.int64(12)), comments: Int(row.int64(13)),
-                                       labels: row.string(14).split(separator: "\n").map(String.init)))
+                                       labels: row.string(14).split(separator: "\n").map(String.init),
+                                       activity: row.optionalString(15).flatMap { try? JSONDecoder().decode(GitHubActivity.self, from: Data($0.utf8)) }))
             }
             return Dictionary(grouping: rows.compactMap { $0 }, by: \.0).mapValues { $0.map(\.1) }
         }
@@ -30,11 +31,12 @@ extension MeetingStore {
                 for (position, pr) in rows.enumerated() {
                     try db.run("""
                         INSERT OR REPLACE INTO github_prs (kind, url, position, number, title, repo, is_draft, state, updated, review, checks,
-                            author, additions, deletions, comments, labels, fetched)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            author, additions, deletions, comments, labels, fetched, discussion)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """, [kind.rawValue, pr.url, position, pr.number, pr.title, pr.repo, pr.isDraft, pr.state.rawValue,
                               pr.updated.timeIntervalSince1970, pr.review?.rawValue, pr.checks.rawValue, pr.author, pr.additions,
-                              pr.deletions, pr.comments, pr.labels.joined(separator: "\n"), fetched.timeIntervalSince1970])
+                              pr.deletions, pr.comments, pr.labels.joined(separator: "\n"), fetched.timeIntervalSince1970,
+                              pr.activity.flatMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) }])
                 }
             }
         }

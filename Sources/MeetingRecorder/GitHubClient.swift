@@ -11,6 +11,9 @@ enum GitHubClient {
     struct Fetch {
         var prs: [GitHubKind: [GitHubPR]] = [:]
         var error: GitHubError?
+        /// GraphQL points the searches cost, and what was left of the hourly allowance after the last one.
+        var cost = 0
+        var remaining: Int?
     }
 
     nonisolated static func run(_ cli: URL, _ arguments: [String]) -> Output? {
@@ -53,7 +56,10 @@ enum GitHubClient {
             var failed = false
             for search in GitHubLogic.searches(for: kind) {
                 guard let output = run(cli, GitHubLogic.arguments(for: search)) else { return Fetch(prs: fetch.prs, error: .cliMissing) }
-                let parsed = try? GitHubLogic.parse(output.stdout)
+                let page = try? GitHubLogic.parsePage(output.stdout)
+                let parsed = page?.prs
+                fetch.cost += page?.cost ?? 0
+                fetch.remaining = page?.remaining ?? fetch.remaining
                 if output.status != 0 || parsed == nil {
                     let error = output.status != 0 ? GitHubError.classify(output.stderr) : .failed("unexpected response")
                     fetch.error = fetch.error ?? error
@@ -99,12 +105,14 @@ enum GitHubClient {
             guard let prs = fetch.prs[kind] else { continue }
             let open = prs.filter { $0.state == .open }.count
             print("\(kind.tabTitle): \(prs.count) fetched, \(open) open")
-            for pr in GitHubLogic.filter(prs, .init(state: .all)).prefix(5) {
+            for pr in GitHubLogic.filter(prs, .init(state: .open, sort: .needsAttention)).prefix(8) {
                 print("  \(pr.repo) #\(pr.number) [\(pr.state.rawValue)\(pr.isDraft ? ", draft" : ""), checks \(pr.checks.rawValue), "
                       + "review \(pr.review?.rawValue ?? "none")] \(pr.title)  \(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions))")
+                print("      \(GitHubLogic.signalsText(GitHubLogic.signals(pr), now: Date()))")
             }
         }
         print(GitHubLogic.menuSummary(fetch.prs))
+        print("GraphQL cost: \(fetch.cost) points for the searches, \(fetch.remaining.map(String.init) ?? "?") left of the hourly allowance")
         if let error = fetch.error {
             FileHandle.standardError.write(Data("Failed: \(error.message)\n".utf8))
             exit(1)

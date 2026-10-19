@@ -49,6 +49,7 @@ struct GitHubPR: Equatable, Identifiable {
     var deletions = 0
     var comments = 0
     var labels: [String] = []
+    var activity: GitHubActivity?
 
     var ticket: String? {
         ActivityLogic.ticket(in: title).flatMap { title.hasPrefix($0) ? $0 : nil }
@@ -111,34 +112,55 @@ enum GitHubLogic {
         let kind: GitHubKind
         let terms: String
         let limit: Int
+        var discussion = true
     }
 
     /// Open pull requests for every tab; the ones you created also come with the latest closed and merged.
     static func searches(for kind: GitHubKind) -> [Search] {
         func terms(_ state: String) -> String { "\(kind.qualifier) is:pr is:\(state) archived:false sort:updated-desc" }
         let open = Search(kind: kind, terms: terms("open"), limit: pageSize)
-        return kind == .created ? [open, Search(kind: kind, terms: terms("closed"), limit: closedPageSize)] : [open]
+        return kind == .created ? [open, Search(kind: kind, terms: terms("closed"), limit: closedPageSize, discussion: false)] : [open]
     }
 
-    static let query = """
+    /// Review threads looked at per pull request. The query's cost is mostly this times the page size.
+    static let threadPageSize = 20
+
+    private static let discussionFields = """
+        lastComment: comments(last: 1) { nodes { author { login __typename } createdAt } }
+        reviews { totalCount }
+        latestReviews(first: 10) { nodes { author { login __typename } state submittedAt } }
+        reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
+        reviewThreads(first: \(threadPageSize)) {
+          totalCount
+          nodes { isResolved comments(last: 1) { nodes { author { login __typename } createdAt } } }
+        }
+        """
+
+    /// The search with the discussion fields, or without them for the closed and merged pull requests, which need no attention.
+    static func query(discussion: Bool) -> String {
+        """
         query($q: String!, $first: Int!) {
+          rateLimit { cost remaining }
+          viewer { login }
           search(query: $q, type: ISSUE, first: $first) {
             nodes {
               ... on PullRequest {
                 number title url isDraft state merged updatedAt reviewDecision additions deletions
                 repository { nameWithOwner }
-                author { login }
+                author { login __typename }
                 comments { totalCount }
                 labels(first: 5) { nodes { name } }
-                commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
+                \(discussion ? discussionFields : "")
               }
             }
           }
         }
         """
+    }
 
     static func arguments(for search: Search) -> [String] {
-        ["api", "graphql", "-f", "query=\(query)", "-f", "q=\(search.terms)", "-F", "first=\(search.limit)"]
+        ["api", "graphql", "-f", "query=\(query(discussion: search.discussion))", "-f", "q=\(search.terms)", "-F", "first=\(search.limit)"]
     }
 
     static let authArguments = ["auth", "status", "--hostname", host]
@@ -147,7 +169,12 @@ enum GitHubLogic {
 
     private struct Response: Decodable {
         struct Node: Decodable {
-            struct Named: Decodable { let login: String? }
+            struct Named: Decodable { let login: String?; let __typename: String? }
+            struct Stamped: Decodable { let author: Named?; let createdAt: String? }
+            struct Items<Item: Decodable>: Decodable { let totalCount: Int?; let nodes: [Item?]? }
+            struct LatestReview: Decodable { let author: Named?; let state: String?; let submittedAt: String? }
+            struct Request: Decodable { let requestedReviewer: Named? }
+            struct Thread: Decodable { let isResolved: Bool?; let comments: Items<Stamped>? }
             struct Repository: Decodable { let nameWithOwner: String? }
             struct Count: Decodable { let totalCount: Int? }
             struct Labels: Decodable {
@@ -158,6 +185,7 @@ enum GitHubLogic {
                 struct Item: Decodable {
                     struct Commit: Decodable {
                         struct Rollup: Decodable { let state: String? }
+                        let committedDate: String?
                         let statusCheckRollup: Rollup?
                     }
                     let commit: Commit?
@@ -179,16 +207,31 @@ enum GitHubLogic {
             let comments: Count?
             let labels: Labels?
             let commits: Commits?
+            let lastComment: Items<Stamped>?
+            let reviews: Items<LatestReview>?
+            let latestReviews: Items<LatestReview>?
+            let reviewRequests: Items<Request>?
+            let reviewThreads: Items<Thread>?
         }
         struct Search: Decodable { let nodes: [Node?]? }
-        struct Payload: Decodable { let search: Search? }
+        struct Viewer: Decodable { let login: String? }
+        struct Cost: Decodable { let cost: Int?; let remaining: Int? }
+        struct Payload: Decodable { let search: Search?; let viewer: Viewer?; let rateLimit: Cost? }
         struct Failure: Decodable { let message: String? }
         let data: Payload?
         let errors: [Failure]?
     }
 
+    struct Page: Equatable {
+        var prs: [GitHubPR] = []
+        var cost = 0
+        var remaining: Int?
+    }
+
     /// The pull requests in a GraphQL search response. Results that are not pull requests are skipped.
-    static func parse(_ data: Data) throws -> [GitHubPR] {
+    static func parse(_ data: Data) throws -> [GitHubPR] { try parsePage(data).prs }
+
+    static func parsePage(_ data: Data) throws -> Page {
         let response: Response
         do { response = try JSONDecoder().decode(Response.self, from: data) } catch {
             throw GitHubError.failed("unexpected response")
@@ -196,18 +239,44 @@ enum GitHubLogic {
         guard let nodes = response.data?.search?.nodes else {
             throw GitHubError.classify(response.errors?.compactMap(\.message).joined(separator: "\n") ?? "no data")
         }
-        return nodes.compactMap { $0.flatMap(pullRequest) }
+        let me = response.data?.viewer?.login ?? ""
+        return Page(prs: nodes.compactMap { $0.flatMap { pullRequest($0, me: me) } }, cost: response.data?.rateLimit?.cost ?? 0,
+                    remaining: response.data?.rateLimit?.remaining)
     }
 
-    private static func pullRequest(_ node: Response.Node) -> GitHubPR? {
+    private static func date(_ text: String?) -> Date? { text.flatMap { ISO8601DateFormatter().date(from: $0) } }
+
+    private static func actor(_ named: Response.Node.Named?) -> GitHubActivity.Actor {
+        GitHubActivity.Actor(login: named?.login ?? "ghost", isBot: named?.__typename == "Bot")
+    }
+
+    private static func event(_ stamped: Response.Node.Stamped?) -> GitHubActivity.Event? {
+        stamped.flatMap { stamp in date(stamp.createdAt).map { GitHubActivity.Event(actor: actor(stamp.author), date: $0) } }
+    }
+
+    private static func activity(_ node: Response.Node, me: String) -> GitHubActivity {
+        let open = (node.reviewThreads?.nodes ?? []).compactMap { $0 }.filter { $0.isResolved == false }
+            .compactMap { event($0.comments?.nodes?.compactMap { $0 }.last) }
+        let reviews = (node.latestReviews?.nodes ?? []).compactMap { review -> GitHubActivity.Review? in
+            guard let review, let state = review.state, let submitted = date(review.submittedAt) else { return nil }
+            return GitHubActivity.Review(actor: actor(review.author), state: state, date: submitted)
+        }
+        return GitHubActivity(me: me, authorIsBot: node.author?.__typename == "Bot", threads: node.reviewThreads?.totalCount ?? 0, open: open,
+                              reviews: reviews, reviewCount: node.reviews?.totalCount ?? 0,
+                              lastComment: event(node.lastComment?.nodes?.compactMap { $0 }.last),
+                              lastCommit: date(node.commits?.nodes?.compactMap { $0 }.last?.commit?.committedDate),
+                              requested: (node.reviewRequests?.nodes ?? []).compactMap { $0?.requestedReviewer?.login })
+    }
+
+    private static func pullRequest(_ node: Response.Node, me: String) -> GitHubPR? {
         guard let number = node.number, let title = node.title, let url = node.url, let repo = node.repository?.nameWithOwner,
-              let updated = node.updatedAt.flatMap({ ISO8601DateFormatter().date(from: $0) }) else { return nil }
+              let updated = date(node.updatedAt) else { return nil }
         let rollup = node.commits?.nodes?.compactMap { $0 }.last?.commit?.statusCheckRollup?.state
         return GitHubPR(url: url, number: number, title: title, repo: repo, isDraft: node.isDraft ?? false,
                         state: node.merged == true ? .merged : node.state == "CLOSED" ? .closed : .open, updated: updated,
                         review: node.reviewDecision.flatMap(review), checks: checks(rollup), author: node.author?.login,
                         additions: node.additions ?? 0, deletions: node.deletions ?? 0, comments: node.comments?.totalCount ?? 0,
-                        labels: node.labels?.nodes?.compactMap { $0?.name } ?? [])
+                        labels: node.labels?.nodes?.compactMap { $0?.name } ?? [], activity: activity(node, me: me))
     }
 
     static func review(_ decision: String) -> GitHubPR.Review? {
@@ -266,17 +335,24 @@ enum GitHubLogic {
         var state = StateFilter.open
         var repo: String?
         var query = ""
+        var quick = Set<GitHubQuickFilter>()
+        var hideBotOnly = false
+        var sort = GitHubSort.updated
     }
 
-    /// The pull requests that pass the filter, most recently updated first.
+    /// The pull requests that pass the filter, in the order of its sort.
     static func filter(_ prs: [GitHubPR], _ filter: Filter) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
-        return prs.filter { pr in
+        let passing = prs.filter { pr in
             guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo else { return false }
+            if !filter.quick.isEmpty || filter.hideBotOnly {
+                let signals = signals(pr)
+                guard filter.quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly) else { return false }
+            }
             let haystack = "\(pr.repo) #\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
-        .sorted { ($0.updated, $1.url) > ($1.updated, $0.url) }
+        return sorted(passing, by: filter.sort)
     }
 
     static func repos(in prs: [GitHubPR]) -> [String] {
@@ -310,8 +386,10 @@ enum GitHubLogic {
     static func menuSummary(_ prs: [GitHubKind: [GitHubPR]]) -> String {
         let reviews = (prs[.reviewRequested] ?? []).filter { $0.state == .open }.count
         let failing = (prs[.created] ?? []).filter { $0.state == .open && $0.checks == .failed }.count
+        let feedback = newFeedbackCount(prs[.created] ?? [])
         let parts = [reviews > 0 ? "\(reviews) need\(reviews == 1 ? "s" : "") your review" : nil,
-                     failing > 0 ? "\(failing) failing check\(failing == 1 ? "" : "s")" : nil].compactMap { $0 }
+                     failing > 0 ? "\(failing) failing check\(failing == 1 ? "" : "s")" : nil,
+                     feedback > 0 ? "\(feedback) with new feedback" : nil].compactMap { $0 }
         return "GitHub: " + (parts.isEmpty ? "nothing waiting for you" : parts.joined(separator: " \u{00B7} "))
     }
 
