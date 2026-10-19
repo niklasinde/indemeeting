@@ -145,6 +145,7 @@ struct GitHubView: View {
             if let fetched = model.fetched {
                 Text("Updated \(GitHubLogic.updatedText(fetched, now: Date()))").font(.callout).foregroundStyle(.tertiary)
             }
+            ClaudeRunningIndicator(model: .shared)
             if model.refreshing {
                 ProgressView().controlSize(.small)
             } else {
@@ -264,6 +265,7 @@ private struct PullRequestRow: View {
     @ObservedObject var model: GitHubModel
     let selected: Bool
     let show: (GitHubPR) -> Void
+    @ObservedObject private var claude = GitHubClaudeModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -293,6 +295,16 @@ private struct PullRequestRow: View {
             Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
             Divider()
             Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
+            Menu("Open in Claude") {
+                ForEach(GitHubClaude.Preset.allCases) { preset in
+                    Button(preset.title) { claude.openInClaude(pr, nil, preset) }
+                }
+            }
+            Menu("Ask Claude") {
+                ForEach(GitHubClaude.Preset.headless) { preset in
+                    Button(preset.title) { claude.ask(pr, nil, preset) }
+                }
+            }
         }
         .help(pr.url)
     }
@@ -324,6 +336,9 @@ private struct PullRequestRow: View {
         if signals.newFeedback > 0 { chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor)) }
         else if signals.newBotFeedback > 0 { chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu")) }
         if pr.comments > 0 { chips.append(Chip(text: "\(pr.comments)", icon: "bubble.left")) }
+        if claude.review(for: pr.url) != nil, claude.outdated[pr.url] != true {
+            chips.append(Chip(text: "Reviewed by Claude", icon: "sparkles", help: "Claude has reviewed this pull request here"))
+        }
         if let last = signals.lastActor {
             chips.append(Chip(text: last.actor.isBot ? "bot" : GitHubLogic.initials(last.actor.login), icon: last.actor.isBot ? "cpu" : "person.crop.circle",
                               help: "Last comment by \(last.actor.login) \(GitHubLogic.updatedText(last.date, now: Date()))"))
@@ -454,6 +469,8 @@ struct GitHubSettingsSection: View {
                 .fixedSize()
                 .disabled(!model.enabled)
             }
+            Divider().padding(.leading, 14)
+            ClaudeSettingsRows(model: .shared)
             Divider().padding(.leading, 14)
             SettingsRow("Clear GitHub cache", detail: model.cachedCount == 0 ? "Nothing cached"
                         : "\(model.cachedCount) pull request\(model.cachedCount == 1 ? "" : "s") cached") {

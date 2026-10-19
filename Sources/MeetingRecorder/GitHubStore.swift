@@ -63,6 +63,7 @@ extension MeetingStore {
             let count = try db.query("SELECT count(DISTINCT url) FROM github_prs") { Int($0.int64(0)) }.first ?? 0
             try db.run("DELETE FROM github_prs")
             try db.run("DELETE FROM github_pr_details")
+            try db.run("DELETE FROM github_pr_reviews")
             return count
         }
     }
@@ -84,7 +85,43 @@ extension MeetingStore {
 
     func saveGitHubDetail(_ url: String, json: Data, fetched: Date = Date()) throws {
         try write(notify: Self.githubDidChange) {
-            try db.run("INSERT OR REPLACE INTO github_pr_details (url, json, fetched) VALUES (?, ?, ?)", [url, json, fetched.timeIntervalSince1970])
+            let head = (try? GitHubLogic.parseDetail(json))?.headOid
+            try db.run("INSERT OR REPLACE INTO github_pr_details (url, json, fetched, head_sha) VALUES (?, ?, ?, ?)",
+                       [url, json, fetched.timeIntervalSince1970, head])
+        }
+    }
+
+    func githubReview(_ url: String) throws -> GitHubReview? {
+        try read { try db.query(Self.reviewSelect + " WHERE url = ?", [url], Self.review).first.flatMap { $0 } }
+    }
+
+    func githubReviews() throws -> [GitHubReview] {
+        try read { try db.query(Self.reviewSelect, [], Self.review).compactMap { $0 } }
+    }
+
+    func saveGitHubReview(_ review: GitHubReview) throws {
+        try write(notify: Self.githubDidChange) {
+            try db.run("INSERT OR REPLACE INTO github_pr_reviews (url, head_sha, preset, text, created, duration, cost) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       [review.url, review.headSHA, review.preset.rawValue, review.text, review.created.timeIntervalSince1970,
+                        review.duration, review.cost])
+        }
+    }
+
+    /// Whether each reviewed pull request has had new commits since, by address: the head of the review against the newest one fetched.
+    func githubReviewOutdated() throws -> [String: Bool] {
+        try read {
+            Dictionary(try db.query("""
+                SELECT r.url, r.head_sha, d.head_sha FROM github_pr_reviews r LEFT JOIN github_pr_details d ON d.url = r.url
+                """, []) { ($0.string(0), GitHubClaude.isOutdated(reviewed: $0.optionalString(1), current: $0.optionalString(2))) }) { $1 }
+        }
+    }
+
+    private static let reviewSelect = "SELECT url, head_sha, preset, text, created, duration, cost FROM github_pr_reviews"
+
+    private static func review(_ row: SQLRow) -> GitHubReview? {
+        GitHubClaude.Preset(rawValue: row.string(2)).map {
+            GitHubReview(url: row.string(0), headSHA: row.optionalString(1), preset: $0, text: row.string(3),
+                         created: Date(timeIntervalSince1970: row.double(4)), duration: row.double(5), cost: row.optionalDouble(6))
         }
     }
 }

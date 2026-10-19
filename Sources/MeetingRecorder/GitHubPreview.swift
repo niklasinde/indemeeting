@@ -90,6 +90,22 @@ enum GitHubPreview {
                                        to: output.appendingPathComponent("detail-\(sample.name)-\(appearance == .aqua ? "light" : "dark").png"))
                 }
             }
+            let claudeSample = detailSamples[0]
+            let url = claudeSample.pr.url
+            let review = GitHubReview(url: url, headSHA: "e4748c4", preset: .review, text: "**Verdict: approve.** No blockers.\n\n## Findings\n\n1. **Low.** The guard skips the log line (`sending.py:41`).\n2. **Low.** The migration has no downgrade.",
+                                      created: Date().addingTimeInterval(-600), duration: 149, cost: 1.15)
+            let states: [(String, [String: GitHubClaudeModel.State], [String: GitHubReview], [String: Bool])] = [
+                ("notrun", [:], [:], [:]),
+                ("running", [url: .running(.init(preset: .review, started: Date().addingTimeInterval(-42), text: "Reading the diff.\n\nThe guard in `order_to_pay` looks right.", status: "Bash gh pr diff 2462"))], [:], [:]),
+                ("done", [:], [url: review], [:]),
+                ("outdated", [:], [url: review], [url: true]),
+                ("failed", [url: .failed(.notLoggedIn, .review)], [:], [:]),
+            ]
+            for (name, live, reviews, outdated) in states {
+                GitHubClaudeModel.shared.showSample(live: live, reviews: reviews, outdated: outdated)
+                await renderDetail(claudeSample, directory: directory, appearance: .aqua, to: output.appendingPathComponent("claude-\(name).png"))
+            }
+            await renderSettings(model, appearance: .darkAqua, to: output.appendingPathComponent("claude-settings-dark.png"))
             exit(0)
         }
         NSApplication.shared.run()

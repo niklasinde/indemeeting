@@ -6,6 +6,7 @@ struct GitHubDetailView: View {
     @ObservedObject var page: GitHubDetailModel
     @ObservedObject var model: GitHubModel
     let back: (() -> Void)?
+    @ObservedObject private var claude = GitHubClaudeModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -31,6 +32,13 @@ struct GitHubDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear(perform: claude.load)
+        .alert("Allow Claude reviews?", isPresented: Binding(get: { claude.confirming != nil }, set: { if !$0 { claude.confirming = nil } })) {
+            Button("Allow") { claude.confirmAllowing() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(ClaudeConfirmation.message)
+        }
     }
 }
 
@@ -57,6 +65,7 @@ struct GitHubDetailContent: View {
     let detail: GitHubPRDetail?
     let directory: TicketDirectory
     let ask: () -> Void
+    @ObservedObject private var claude = GitHubClaudeModel.shared
     @State private var bodyExpanded = false
     @State private var allCommits = false
     @State private var fileQuery = ""
@@ -66,6 +75,7 @@ struct GitHubDetailContent: View {
         VStack(alignment: .leading, spacing: 22) {
             header
             actions
+            ClaudeReviewPanel(pr: pr, detail: detail, model: claude)
             if let detail {
                 people(detail)
                 description(detail)
@@ -147,6 +157,9 @@ struct GitHubDetailContent: View {
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
+            OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
+            AskClaudeMenu(pr: pr, detail: detail, model: claude)
+            ClaudeNoteBar(model: claude)
         }
         .controlSize(.small)
     }

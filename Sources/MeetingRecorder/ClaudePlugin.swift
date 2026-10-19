@@ -131,16 +131,21 @@ final class ClaudePluginModel: ObservableObject {
         }
     }
 
+    /// The app's environment with the CLI's folder and the usual tool folders on the PATH, which a menu bar app starts without.
+    nonisolated static func environment(for cli: URL) -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = [cli.deletingLastPathComponent().path, environment["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
+            .compactMap { $0 }.joined(separator: ":")
+        return environment
+    }
+
     nonisolated static func run(_ cli: URL, _ commands: [[String]]) -> String {
         var lines: [String] = []
         for arguments in commands {
             let process = Process()
             process.executableURL = cli
             process.arguments = arguments
-            var environment = ProcessInfo.processInfo.environment
-            environment["PATH"] = [cli.deletingLastPathComponent().path, environment["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
-                .compactMap { $0 }.joined(separator: ":")
-            process.environment = environment
+            process.environment = environment(for: cli)
             let pipe = Pipe()
             process.standardOutput = pipe
             process.standardError = pipe

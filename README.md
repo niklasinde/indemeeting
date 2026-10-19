@@ -531,6 +531,23 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 - **Cache:** the last fetch, with the raw discussion data, is stored in `github_prs` in the meeting database, so the page opens instantly and works
   offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.
 
+- **Open in Claude:** a split button on the pull request page (and its row menu). The main button repeats the preset you used last
+  (Review, Explain, Address review comments, Investigate failing checks, Draft a summary); the menu lists the others and where
+  to open: Terminal, iTerm2, Ghostty, Warp or the Claude app (Settings > Activity > GitHub). Each prompt carries the address,
+  `owner/repo #n`, title, branches and ticket, and says to work read-only. In a terminal the app finds the checkout under `~/git`
+  by its `origin` remote and runs `claude "<prompt>"` there through a `.command` script that reads the prompt from a 0600 file in
+  `~/Library/Application Support/MeetingRecorder/claude-prompts/` (removed when read, and after a day at the latest), so no title
+  is ever quoted into a shell and no Automation permission is needed. Without a checkout it starts in your home folder and says
+  `gh repo clone owner/repo`. The Claude app opens `claude://code/new?q=...&folder=...`; a prompt too long for a link is copied
+  instead. Meetings have the same under Ask > Open in Claude, which points Claude at the MeetingRecorder MCP tools.
+- **Ask Claude:** off until Settings > Activity > GitHub > Allow Claude reviews is on (a one-time confirmation). It runs your
+  `claude -p` here, one pull request at a time, in the checkout (else your home folder), streaming into a Claude review panel on
+  the page. It is read-only: `--permission-mode dontAsk` with only Read, Grep, Glob, `gh pr view|diff|checks|list`,
+  `gh run view|list` and `git log|diff|show|grep|blame` allowed, writes and `gh api` denied, no settings or hooks read, a 10 minute
+  and 5 dollar limit, and Cancel stops it and what it started. The last answer per pull request is kept in `github_pr_reviews`
+  with the commit it read, marked Outdated when new commits arrive, and rows with a fresh one show "Reviewed by Claude". Copy as
+  review comment puts `[AI]` on the first line; the app has no way to post to GitHub. A run costs roughly one dollar of usage.
+
 `MeetingRecorder --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
 signals, and the GraphQL points used (read only). `--github-pr-threads owner/repo#n` is a probe that prints what the review
 threads of one pull request look like (no UI uses it).

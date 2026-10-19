@@ -267,6 +267,18 @@ final class MeetingStore: @unchecked Sendable {
         );
         """,
         "ALTER TABLE github_prs ADD COLUMN discussion TEXT;",
+        """
+        CREATE TABLE github_pr_reviews (
+            url TEXT PRIMARY KEY,
+            head_sha TEXT,
+            preset TEXT NOT NULL,
+            text TEXT NOT NULL,
+            created REAL NOT NULL,
+            duration REAL NOT NULL,
+            cost REAL
+        );
+        """,
+        "ALTER TABLE github_pr_details ADD COLUMN head_sha TEXT;",
     ]
 
     private static let meetingColumns = """

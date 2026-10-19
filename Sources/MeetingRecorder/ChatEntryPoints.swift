@@ -7,11 +7,14 @@ struct AskButton: View {
     let title: String
     let notes: Bool
     @State private var chats: [Chat] = []
+    @State private var claudeProblem: String?
 
     var body: some View {
         Menu {
             Button("New Chat About This Meeting") { ChatWindow.shared.show(scope: .meeting(meeting.id, label: title)) }
             Button("New Chat About My Notes") { ChatWindow.shared.show(scope: .notes(meeting.id, label: title)) }
+            Divider()
+            Button("Open in Claude\u{2026}") { claudeProblem = GitHubClaudeModel.shared.openInClaude(meeting, title: title) }
             if !chats.isEmpty {
                 Divider()
                 ForEach(chats) { chat in Button(chat.title) { ChatWindow.shared.show(chat: chat) } }
@@ -26,6 +29,11 @@ struct AskButton: View {
         .help(notes ? "Ask about these notes" : "Ask about this meeting")
         .onAppear(perform: reload)
         .onReceive(NotificationCenter.default.publisher(for: MeetingStore.chatsDidChange)) { _ in reload() }
+        .alert("Open in Claude", isPresented: Binding(get: { claudeProblem != nil }, set: { if !$0 { claudeProblem = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(claudeProblem ?? "")
+        }
     }
 
     private func reload() {

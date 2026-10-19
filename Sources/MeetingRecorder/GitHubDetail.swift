@@ -74,6 +74,8 @@ struct GitHubPRDetail: Equatable {
     var checks: [Check] = []
     var checkCount = 0
     var rollup = GitHubPR.Checks.none
+    /// The newest commit; missing in a response cached before it was asked for.
+    var headOid: String?
 
     var hasRunningChecks: Bool { checks.contains { $0.status == .running || $0.status == .pending } }
     var ticket: String? { ActivityLogic.ticket(in: title, head) }
@@ -98,7 +100,7 @@ extension GitHubLogic {
               }
               files(first: 100) { totalCount nodes { path additions deletions changeType } }
               lastCommit: commits(last: 1) {
-                nodes { commit { statusCheckRollup { state contexts(first: 100) { totalCount nodes {
+                nodes { commit { oid statusCheckRollup { state contexts(first: 100) { totalCount nodes {
                   __typename
                   ... on CheckRun { name status conclusion startedAt completedAt detailsUrl checkSuite { workflowRun { workflow { name } } } }
                   ... on StatusContext { context state targetUrl }
@@ -148,6 +150,7 @@ extension GitHubLogic {
             struct Node: Decodable {
                 struct Commit: Decodable {
                     struct Rollup: Decodable { let state: String?; let contexts: Names<Context>? }
+                    let oid: String?
                     let statusCheckRollup: Rollup?
                 }
                 let commit: Commit?
@@ -222,7 +225,8 @@ extension GitHubLogic {
         guard let node = response.data?.repository?.pullRequest, let url = node.url, let number = node.number, let title = node.title else {
             throw GitHubError.classify(response.errors?.compactMap(\.message).joined(separator: "\n") ?? "pull request not found")
         }
-        let rollup = node.lastCommit?.nodes?.compactMap { $0 }.last?.commit?.statusCheckRollup
+        let lastCommit = node.lastCommit?.nodes?.compactMap { $0 }.last?.commit
+        let rollup = lastCommit?.statusCheckRollup
         let contexts = rollup?.contexts
         let checks = (contexts?.nodes ?? []).compactMap { $0.flatMap(check) }.sorted { ($0.status.rawValue, $0.name) < ($1.status.rawValue, $1.name) }
         let commits = (node.commits?.nodes ?? []).compactMap { $0?.commit }.map { commit in
@@ -240,7 +244,7 @@ extension GitHubLogic {
             assignees: (node.assignees?.nodes ?? []).compactMap { $0?.login }, reviewers: reviewers(node),
             commits: commits, commitCount: node.commits?.totalCount ?? commits.count,
             files: (node.files?.nodes ?? []).compactMap { $0.flatMap(file) }, fileCount: node.files?.totalCount ?? node.changedFiles ?? 0,
-            checks: checks, checkCount: contexts?.totalCount ?? checks.count, rollup: Self.checks(rollup?.state))
+            checks: checks, checkCount: contexts?.totalCount ?? checks.count, rollup: Self.checks(rollup?.state), headOid: lastCommit?.oid)
     }
 
     /// `acme/api` from `https://github.com/acme/api/pull/7`.
