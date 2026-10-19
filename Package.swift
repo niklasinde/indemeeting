@@ -20,7 +20,7 @@ let package = Package(
     targets: [
         .executableTarget(name: "MeetingRecorder",
                           dependencies: [.product(name: "FluidAudio", package: "FluidAudio")] + (hasWhisper ? ["whisper"] : []),
-                          path: "Sources/MeetingRecorder"),
+                          path: "Sources", sources: ["MeetingRecorder", "Shared"]),
         .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests",
                     swiftSettings: testSettings)
     ] + (hasWhisper ? [.binaryTarget(name: "whisper", path: whisperPath)] : []),

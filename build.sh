@@ -34,7 +34,7 @@ else
     echo "swift build failed, falling back to swiftc (without KB-Whisper)"
     BIN=.build/swiftc/MeetingRecorder
     mkdir -p "$(dirname "$BIN")"
-    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/MeetingRecorder/*.swift -o "$BIN"
+    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/MeetingRecorder/*.swift Sources/Shared/*.swift -o "$BIN"
 fi
 
 rm -rf "$APP"

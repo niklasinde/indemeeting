@@ -251,6 +251,14 @@ final class MeetingStore: @unchecked Sendable {
             PRIMARY KEY (kind, url)
         );
         """,
+        """
+        CREATE TABLE paired_devices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created REAL NOT NULL,
+            last_seen REAL
+        );
+        """,
     ]
 
     private static let meetingColumns = """

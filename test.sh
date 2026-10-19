@@ -28,12 +28,19 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ChatToolbox.swift \
     Sources/MeetingRecorder/GitHubLogic.swift \
     Sources/MeetingRecorder/GitHubStore.swift \
+    Sources/Shared/PhoneAPI.swift \
+    Sources/MeetingRecorder/PhoneHTTP.swift \
+    Sources/MeetingRecorder/PhonePairingLogic.swift \
+    Sources/MeetingRecorder/PhoneSecretStores.swift \
+    Sources/MeetingRecorder/PhoneChatLogic.swift \
+    Sources/MeetingRecorder/PhoneEndpoints.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
     Tests/MeetingRecorderTests/ActivityTests.swift \
     Tests/MeetingRecorderTests/PluginTests.swift \
     Tests/MeetingRecorderTests/ChatTests.swift \
     Tests/MeetingRecorderTests/GitHubTests.swift \
+    Tests/MeetingRecorderTests/PhoneTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

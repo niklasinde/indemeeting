@@ -16,6 +16,10 @@ enum Main {
         #endif
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
         if CommandLine.arguments.contains("--github-prs") { GitHubClient.runFromCommandLine() }
+        if CommandLine.arguments.contains("--serve") { PhoneCommandLine.serve(CommandLine.arguments) }
+        #if DEBUG
+        if PhoneClient.isRequested(CommandLine.arguments) { PhoneClient.run(CommandLine.arguments) }
+        #endif
         if let job = ChatLogic.chatArguments(CommandLine.arguments) { ChatCommandLine.run(job) }
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             let store = MeetingStore.openDefault()
@@ -165,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         GitHubModel.shared.store = store
         GitHubModel.shared.start()
+        PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker

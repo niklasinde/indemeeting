@@ -236,6 +236,7 @@ enum SettingsTab: String, CaseIterable {
     case meetings = "Meetings"
     case activity = "Activity"
     case models = "Models"
+    case iphone = "iPhone"
 
     static let storageKey = "settingsTab"
 }
@@ -266,6 +267,7 @@ struct SettingsView: View {
                     switch tab {
                     case .meetings: meetings
                     case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
+                    case .iphone: PhoneSettingsSection(model: .shared)
                     case .models:
                         ModelOverview(models: models, whisper: whisper, speakers: speakers, tracker: tracker) { anchor in
                             tab = .meetings
