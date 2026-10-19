@@ -40,7 +40,7 @@ final class ActivityProjectsModel: ObservableObject {
         tracker.flush()
         var count = 0
         perform { count = try store?.applyRules(settings) ?? 0 }
-        return count + tracker.backfillLinks()
+        return count + tracker.backfillLinks() + tracker.reevaluateGuesses()
     }
 
     func setColor(_ color: String, of project: Project) {
@@ -74,6 +74,7 @@ struct ActivitySettingsView: View {
     @AppStorage(ActivitySettings.siteModeKey) private var siteMode = ActivitySettings.ListMode.allExceptBlocked
     @AppStorage(ActivitySettings.nonWorkKey) private var nonWork = ActivitySettings.NonWork.keep
     @State private var newProject = ""
+    @State private var settingUp = false
     @State private var rulesChanged = false
     @State private var applied: Int?
     @State private var confirmingDeleteAll = false
@@ -265,6 +266,14 @@ struct ActivitySettingsView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
+                if let store = projects.store {
+                    Divider().padding(.leading, 14)
+                    SettingsRow("Set up projects from your activity", detail: "Suggests projects and rules for the organisations, "
+                                + "repositories, ticket prefixes and websites you spent time on.") {
+                        Button("Set Up\u{2026}") { settingUp = true }
+                    }
+                    .sheet(isPresented: $settingUp, onDismiss: projects.refresh) { ProjectSetupView(store: store) { settingUp = false } }
+                }
             }
         }
     }

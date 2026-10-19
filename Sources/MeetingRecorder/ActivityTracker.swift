@@ -19,6 +19,7 @@ final class ActivityTracker: ObservableObject {
     private var repositoriesScanned = Date.distantPast
     private var branches = BranchIndex()
     private static let backfilledKey = "activityLinksBackfilled"
+    private static let guessesCheckedKey = "projectGuessesChecked"
     private var cleanedUp = Date.distantPast
     private var typing = TypingWatch()
     private let claude = ClaudeSessionScanner()
@@ -68,6 +69,10 @@ final class ActivityTracker: ObservableObject {
             backfillLinks()
             UserDefaults.standard.set(true, forKey: Self.backfilledKey)
         }
+        if store.isAvailable, !UserDefaults.standard.bool(forKey: Self.guessesCheckedKey) {
+            reevaluateGuesses()
+            UserDefaults.standard.set(true, forKey: Self.guessesCheckedKey)
+        }
         tick()
     }
 
@@ -81,6 +86,20 @@ final class ActivityTracker: ObservableObject {
             return count
         } catch {
             FileHandle.standardError.write(Data("Activity links not filled in: \(error.localizedDescription)\n".utf8))
+            return 0
+        }
+    }
+
+    /// Clears the AI project guesses that nothing in their block supports; returns how many changed.
+    @discardableResult
+    func reevaluateGuesses() -> Int {
+        flush()
+        do {
+            let count = try store.clearUnsupportedGuesses()
+            FileHandle.standardError.write(Data("Project guesses cleared for \(count) blocks\n".utf8))
+            return count
+        } catch {
+            FileHandle.standardError.write(Data("Project guesses not re-evaluated: \(error.localizedDescription)\n".utf8))
             return 0
         }
     }

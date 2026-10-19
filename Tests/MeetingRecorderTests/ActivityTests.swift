@@ -1014,4 +1014,153 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(try store.blocks(in: range, prompts: true).first?.key.claudeFocus == "a", "clearing keeps the session")
         check(try store.clearPrompts() == 0, "a second clear changes nothing")
     }),
+
+    ("a breakdown row shows the project of its resolved time, a guess only when it covers most of the row", {
+        let papercut = Project(id: 1, name: "Papercut", color: "#5B8DEF")
+        let waste = Project(id: 2, name: "Waste", color: "#E0665C")
+        let known = [papercut, waste]
+        let hosts = [ProjectRule(id: 1, projectID: 1, field: .host, pattern: "papercut.work"),
+                     ProjectRule(id: 2, projectID: 2, field: .host, pattern: "www.youtube.com")]
+        func api(_ start: TimeInterval, _ minutes: Double, guess: Int64? = nil, project: Int64? = nil) -> ActivityBlock {
+            var b = block(start, start + minutes * 60, app: "PyCharm", repo: "finq.api", branch: "NI/QDLY-8315-fees", ticket: "QDLY-8315", project: project)
+            b.aiProjectID = guess
+            return b
+        }
+        let range = t0..<t0.addingTimeInterval(7200)
+        let realWorld = [api(0, 33)] + (0..<8).map { api(2000 + Double($0) * 60, 1, guess: 1) }
+        check(ActivityLogic.rowProject(realWorld, in: range, rules: hosts, projects: known) == nil, "a small share of guesses shows nothing")
+        let tickets = ActivityLogic.ticketTotals(realWorld, in: range, rules: hosts, projects: known)
+        check(tickets.first?.project == nil && ActivityLogic.workTotals(realWorld, in: range, rules: hosts, projects: known).first?.project == nil, "rows")
+        let mostly = [api(0, 2)] + (0..<8).map { api(2000 + Double($0) * 60, 1, guess: 1) }
+        check(ActivityLogic.rowProject(mostly, in: range, rules: hosts, projects: known) == .init(name: "Papercut", guessed: true), "a majority guess is shown as one")
+        check(ActivityLogic.rowProject([api(0, 4), api(300, 4, guess: 1)], in: range, rules: hosts, projects: known) == nil, "exactly half is not a majority")
+        let manual = [api(0, 2, project: 2)] + (0..<8).map { api(2000 + Double($0) * 60, 1, guess: 1) }
+        check(ActivityLogic.rowProject(manual, in: range, rules: hosts, projects: known) == .init(name: "Waste", guessed: false), "a chosen project beats a larger guess")
+        let ruled = [block(0, 600, app: "Safari", url: "papercut.work/invoices", branch: "x"), api(600, 20, guess: 2)]
+        check(ActivityLogic.rowProject(ruled, in: range, rules: hosts, projects: known) == .init(name: "Papercut", guessed: false), "a rule beats a guess")
+        var idle = block(0, 60, idle: true)
+        idle.projectID = 1
+        check(ActivityLogic.rowProject([idle], in: range, rules: hosts, projects: known) == nil, "idle time is left out")
+    }),
+
+    ("a project guess needs evidence in the block", {
+        let papercut = Project(id: 1, name: "Papercut", color: "#5B8DEF")
+        let known = [papercut, Project(id: 2, name: "Waste", color: "#E0665C")]
+        let papercutRules = [ProjectRule(id: 1, projectID: 1, field: .host, pattern: "papercut.work"),
+                             ProjectRule(id: 2, projectID: 1, field: .repo, pattern: "papercut-api")]
+        func evidence(_ b: ActivityBlock) -> Bool { ActivityAI.hasEvidence(b, for: papercut, rules: papercutRules) }
+        check(!evidence(block(0, 60, repo: "finq.api", branch: "develop")), "another repository")
+        check(!evidence(block(0, 60, app: "Safari", url: "github.com/quiddly-com/finq.api/pull/1", repo: "finq.api")), "another organisation")
+        check(!evidence(block(0, 60, ticket: "QDLY-8315")), "a ticket prefix without a connection")
+        check(evidence(block(0, 60, repo: "papercut-api")), "a repository the project owns")
+        check(evidence(block(0, 60, repo: "papercut")), "the name in the repository")
+        check(evidence(block(0, 60, title: "Invoices \u{2014} Papercut", repo: "web")), "the name in the title")
+        check(!evidence(block(0, 60, title: "Papercutter", repo: "web")), "only whole words")
+        check(evidence(block(0, 60, app: "Slack", title: "general")), "nothing that points elsewhere")
+        check(evidence(block(0, 60, app: "Safari", url: "papercut.work/x", ticket: "QDLY-1")), "a project rule")
+        var guessed = block(0, 60, repo: "finq.api")
+        guessed.aiProjectID = 1
+        check(ActivityAI.vetted(1, for: guessed, projects: known, rules: papercutRules) == nil, "rejected")
+        check(ActivityAI.vetted(1, for: block(0, 60, repo: "papercut"), projects: known, rules: papercutRules) == 1, "kept")
+        check(ActivityAI.vetted(9, for: block(0, 60, repo: "papercut"), projects: known, rules: papercutRules) == nil, "unknown project")
+        check(ActivityAI.prompt(for: block(0, 5, app: "Slack"), projects: known, rules: papercutRules)
+              .hasSuffix("Projects: Papercut (website papercut.work; repository papercut-api), Waste"), "rules in the prompt")
+        check(ActivityAI.instructions.contains("\"none\" unless"), "none is the default")
+    }),
+
+    ("re-evaluating clears only the guesses nothing supports", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        let papercut = try store.addProject("Papercut")
+        try store.addRule(project: papercut.id, field: .host, pattern: "papercut.work")
+        func save(_ b: ActivityBlock, guess: Int64?, project: Int64? = nil) throws -> Int64 {
+            var b = b
+            b.id = 0
+            b.aiProjectID = guess
+            b.projectID = project
+            return try store.saveBlock(b)
+        }
+        let wrong = try save(block(0, 60, repo: "finq.api"), guess: papercut.id)
+        let manual = try save(block(100, 160, repo: "finq.api"), guess: papercut.id, project: papercut.id)
+        let right = try save(block(200, 260, repo: "papercut"), guess: papercut.id)
+        let none = try save(block(300, 360, repo: "finq.api"), guess: nil)
+        check(try store.clearUnsupportedGuesses() == 2, "the wrong guess and the one under a manual choice")
+        let blocks = Dictionary(uniqueKeysWithValues: try store.blocks(in: t0..<t0.addingTimeInterval(1000)).map { ($0.id, $0) })
+        check(blocks[wrong]?.aiProjectID == nil && blocks[right]?.aiProjectID == papercut.id && blocks[none]?.aiProjectID == nil, "guesses")
+        check(blocks[manual]?.projectID == papercut.id, "a manual choice stays")
+        check(try store.clearUnsupportedGuesses() == 0, "a second run changes nothing")
+    }),
+
+    ("rows of the breakdown offer the rules for what they stand for", {
+        let item = ActivityLogic.WorkTotal(name: "NI/QDLY-8315-fees", repo: "finq.api", ticket: "QDLY-8315", project: nil, seconds: 60)
+        check(ActivityLogic.ruleCandidates(for: item) == [.init(field: .branch, pattern: "NI/QDLY-8315-fees"), .init(field: .ticket, pattern: "QDLY"),
+                                                         .init(field: .repo, pattern: "finq.api")], "branch row")
+        let ticket = ActivityLogic.WorkTotal(name: "ISD-1", repo: nil, ticket: "ISD-1", project: nil, seconds: 60)
+        check(ActivityLogic.ruleCandidates(for: ticket) == [.init(field: .ticket, pattern: "ISD")], "ticket row")
+        check(ActivityLogic.ruleCandidates(forTicket: "QDLY-8315") == [.init(field: .ticket, pattern: "QDLY")], "ticket prefix")
+        check(RuleCandidate(field: .branch, pattern: "main").text == "branch \u{201C}main\u{201D}", "text")
+        let key = block(0, 60, app: "Safari", url: "github.com/quiddly-com/finq.api/pull/1", repo: "finq.api").key
+        var linked = key
+        linked.owner = "quiddly-com"
+        check(ActivityLogic.ruleCandidates(linked) == [.init(field: .repo, pattern: "finq.api"), .init(field: .owner, pattern: "quiddly-com")], "code host")
+
+        let day = t0..<t0.addingTimeInterval(7200)
+        let blocks = [block(0, 600, repo: "finq.api"), block(600, 1000, app: "Safari", url: "papercut.work/x", project: 1), block(1000, 1200, idle: true)]
+        let share = ActivityLogic.unassignedShare(blocks, in: day, rules: [])
+        check(abs(share - 0.6) < 0.0001, "unassigned share \(share)")
+        check(ActivityLogic.unassignedShare([], in: day, rules: []) == 0, "no activity")
+        var guessed = block(0, 600)
+        guessed.aiProjectID = 1
+        check(ActivityLogic.unassignedShare([guessed], in: day, rules: []) == 1, "a guess is not an assignment")
+    }),
+
+    ("the setup groups unassigned activity by organisation, repository, ticket prefix and website", {
+        func api(_ start: TimeInterval, _ minutes: Double) -> ActivityBlock {
+            block(start, start + minutes * 60, app: "PyCharm", repo: "finq.api", branch: "NI/QDLY-8315-fees", ticket: "QDLY-8315")
+        }
+        var pull = block(2000, 2600, app: "Safari", url: "github.com/quiddly-com/finq.api/pull/1", repo: "finq.api")
+        pull.key.owner = "quiddly-com"
+        var mine = block(3000, 3400, app: "Safari", url: "github.com/niklasinde/indemeeting/pull/2", repo: "indemeeting")
+        mine.key.owner = "niklasinde"
+        let blocks = [api(0, 20), pull,
+                      block(2600, 3000, app: "Safari", url: "quiddly.atlassian.net/browse/ISD-1", ticket: "ISD-1"),
+                      block(3400, 4600, app: "Xcode", repo: "indemeeting"), mine,
+                      block(5000, 5900, app: "Safari", url: "papercut.work/invoices"),
+                      block(6000, 6100, app: "Slack", url: "app.slack.com/x"), block(7000, 8000, idle: true)]
+        let rules = [ProjectRule(id: 1, projectID: 1, field: .host, pattern: "papercut.work")]
+        let groups = ProjectSetup.groups(blocks, rules: rules)
+        func group(_ field: RuleField, _ pattern: String) -> SetupGroup? { groups.first { $0.field == field && $0.pattern == pattern } }
+        check(group(.repo, "finq.api")?.seconds == 1800 && group(.repo, "finq.api")?.suggestedName == "Quiddly", "repository \(groups)")
+        check(group(.owner, "quiddly-com")?.suggestedName == "Quiddly" && group(.ticket, "QDLY")?.suggestedName == "Quiddly", "organisation and prefix")
+        check(group(.ticket, "ISD")?.suggestedName == "Quiddly" && group(.host, "quiddly.atlassian.net")?.suggestedName == "Quiddly", "service desk")
+        check(group(.repo, "indemeeting")?.seconds == 1600 && group(.repo, "indemeeting")?.suggestedName == "Niklasinde", "own repository")
+        check(group(.host, "papercut.work") == nil, "assigned time is left out")
+        check(group(.host, "app.slack.com") == nil && !groups.contains { $0.field == .host && $0.pattern == "github.com" }, "short visits and code hosts are left out")
+        check(groups.map(\.seconds) == groups.map(\.seconds).sorted(by: >), "longest first")
+        check(ProjectSetup.groups(blocks, rules: rules, minimumSeconds: 60).contains { $0.pattern == "app.slack.com" }, "minimum is adjustable")
+        check(ProjectSetup.suggestedName(for: "quiddly-com") == "Quiddly" && ProjectSetup.suggestedName(for: "www.youtube.com") == "Youtube"
+              && ProjectSetup.suggestedName(for: "finq.admin-ui") == "Finq", "names")
+    }),
+
+    ("the setup creates projects and rules, reusing projects by name and skipping rules that exist", {
+        let existing = [ProjectRule(id: 1, projectID: 1, field: .repo, pattern: "Finq.API")]
+        let plan = ProjectSetup.plan([.init(field: .repo, pattern: "finq.api", name: "Quiddly"), .init(field: .ticket, pattern: "QDLY", name: " Quiddly "),
+                                      .init(field: .host, pattern: "x.com", name: "  ")], rules: existing)
+        check(plan == [.init(field: .ticket, pattern: "QDLY", name: "Quiddly")], "plan \(plan)")
+
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        let inde = try store.addProject("Inde")
+        let made = try store.createProjects([.init(field: .repo, pattern: "finq.api", name: "Quiddly"), .init(field: .owner, pattern: "quiddly-com", name: "quiddly"),
+                                             .init(field: .repo, pattern: "indemeeting", name: "INDE")])
+        check(made == 3, "rules created")
+        let projects = try store.projects()
+        check(projects.map(\.name).sorted() == ["Inde", "Quiddly"], "one project per name \(projects.map(\.name))")
+        let rules = try store.rules()
+        let quiddly = projects.first { $0.name == "Quiddly" }!
+        check(rules.filter { $0.projectID == quiddly.id }.count == 2 && rules.contains { $0.projectID == inde.id && $0.pattern == "indemeeting" }, "rules")
+        check(try store.createProjects([.init(field: .repo, pattern: "finq.api", name: "Quiddly")]) == 0, "again changes nothing")
+    }),
 ]

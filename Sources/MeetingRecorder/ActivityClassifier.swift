@@ -57,6 +57,7 @@ final class ActivityClassifier {
         defer { running = false }
         do {
             let projects = try store.projects()
+            let rules = try store.rules()
             let blocks = try store.unclassifiedBlocks(endedBefore: Date().addingTimeInterval(-Self.settle), limit: Self.batchSize)
             for block in blocks {
                 let key = ActivityAI.cacheKey(block.key)
@@ -64,13 +65,14 @@ final class ActivityClassifier {
                 if let cached = try store.cachedClassification(key) {
                     answer = cached
                 } else {
-                    guard let fresh = try await classify(block, projects: projects) else { continue }
+                    guard let fresh = try await classify(block, projects: projects, rules: rules) else { continue }
                     answer = fresh
                     try store.cacheClassification(key, category: fresh.category, description: fresh.description, project: fresh.project,
                                                   work: fresh.work)
                 }
-                let classification = ActivityAI.classification(category: answer.category, description: answer.description,
+                var classification = ActivityAI.classification(category: answer.category, description: answer.description,
                                                                project: answer.project, work: answer.work, projects: projects)
+                classification.projectID = ActivityAI.vetted(classification.projectID, for: block, projects: projects, rules: rules)
                 var classified = block
                 classified.category = classification.category
                 classified.aiWork = classification.work
@@ -87,10 +89,10 @@ final class ActivityClassifier {
         }
     }
 
-    private func classify(_ block: ActivityBlock, projects: [Project]) async throws -> ActivityAI.Answer? {
+    private func classify(_ block: ActivityBlock, projects: [Project], rules: [ProjectRule]) async throws -> ActivityAI.Answer? {
         #if canImport(FoundationModels)
         let session = LanguageModelSession(model: SystemLanguageModel(useCase: .contentTagging), instructions: ActivityAI.instructions)
-        let response = try await session.respond(to: ActivityAI.prompt(for: block, projects: projects), schema: try Self.schema(projects),
+        let response = try await session.respond(to: ActivityAI.prompt(for: block, projects: projects, rules: rules), schema: try Self.schema(projects),
                                                  options: GenerationOptions(temperature: 0))
         let content = response.content
         return (try content.value(String.self, forProperty: "category"),

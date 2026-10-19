@@ -64,6 +64,19 @@ final class ActivityModel: ObservableObject {
         perform { try store.addRule(project: project, field: field, pattern: pattern) }
     }
 
+    /// Maps what the candidate matches to the project, replacing a rule of another project for the same pattern.
+    func assign(_ candidate: RuleCandidate, to project: Project) {
+        perform {
+            let same = rules.filter { $0.field == candidate.field && $0.pattern.caseInsensitiveCompare(candidate.pattern) == .orderedSame }
+            for rule in same where rule.projectID != project.id { try store.deleteRule(rule.id) }
+            if !same.contains(where: { $0.projectID == project.id }) { try store.addRule(project: project.id, field: candidate.field, pattern: candidate.pattern) }
+        }
+    }
+
+    func assign(_ candidate: RuleCandidate, toNew name: String) {
+        if let project = addProject(name) { assign(candidate, to: project) }
+    }
+
     func isPrivate(_ block: ActivityBlock) -> Bool {
         block.key.redaction != nil || tracker.settings.action(for: block.category) != .keep
     }
@@ -332,6 +345,7 @@ struct DayView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            ProjectSetupHint(model: model)
             WorkBreakdown(model: model, range: model.day)
             if model.blocks.isEmpty {
                 Text(model.isToday ? "Nothing tracked yet today." : "Nothing tracked this day.")
@@ -567,15 +581,7 @@ struct ProjectPicker: View {
         model.projects.first { $0.id == (block.projectID ?? model.project(of: block)?.id) }
     }
 
-    /// The rules that would map blocks like this one, in the order they are tried. A code-host address offers its
-    /// repository and organisation instead of the host, which every repository shares.
-    private var ruleCandidates: [(field: RuleField, pattern: String)] {
-        let key = block.key
-        let host = key.owner == nil ? key.host : nil
-        let fields: [(RuleField, String?)] = [(.branch, key.branch), (.ticket, key.ticketPrefix), (.repo, key.repo), (.owner, key.owner),
-                                              (.host, host), (.app, host == nil && key.repo == nil ? key.appName : nil)]
-        return fields.compactMap { field, pattern in pattern.map { (field, $0) } }
-    }
+    private var ruleCandidates: [RuleCandidate] { ActivityLogic.ruleCandidates(block.key) }
 
     private func create() {
         guard let project = model.addProject(newName) else { return }
@@ -612,6 +618,7 @@ struct WeekView: View {
                 Text(ActivityLogic.hoursText(ActivityLogic.activeSeconds(model.blocks, in: model.range))).font(.system(size: 28, weight: .medium))
                 Text("this week").foregroundStyle(.secondary)
             }
+            ProjectSetupHint(model: model)
             if ordered.isEmpty {
                 Text("Nothing tracked this week.").foregroundStyle(.secondary)
             } else {
@@ -623,12 +630,16 @@ struct WeekView: View {
                 }
                 let workNames = weekNames(work)
                 if !workNames.isEmpty {
-                    table("Branch", days: days, names: Array(workNames.prefix(20)), totals: work, withTotal: false) { _ in nil }
+                    let items = Dictionary(ActivityLogic.workTotals(model.blocks, in: model.range, rules: model.rules, projects: model.projects)
+                        .map { ($0.label, $0) }) { first, _ in first }
+                    table("Branch", days: days, names: Array(workNames.prefix(20)), totals: work, withTotal: false,
+                          candidates: { items[$0].map(ActivityLogic.ruleCandidates(for:)) ?? [] }) { _ in nil }
                 }
                 let ticketNames = weekNames(tickets)
                 if !ticketNames.isEmpty {
                     table("Ticket", days: days, names: Array(ticketNames.prefix(20)), totals: tickets, withTotal: false,
-                          display: { .ticket($0, model.directory, short: false) }) { _ in nil }
+                          display: { .ticket($0, model.directory, short: false) },
+                          candidates: ActivityLogic.ruleCandidates(forTicket:)) { _ in nil }
                 }
                 HStack {
                     Button("Export CSV\u{2026}") { model.exportWeek(markdown: false) }
@@ -645,7 +656,8 @@ struct WeekView: View {
     }
 
     private func table(_ title: String, days: [Range<Date>], names: [String], totals: [[ActivityLogic.Total]], withTotal: Bool,
-                       display: ((String) -> Chip)? = nil, color: @escaping (String) -> Color?) -> some View {
+                       display: ((String) -> Chip)? = nil, candidates: ((String) -> [RuleCandidate])? = nil,
+                       color: @escaping (String) -> Color?) -> some View {
                 Grid(alignment: .trailing, horizontalSpacing: 14, verticalSpacing: 8) {
                     GridRow {
                         Text(title).gridColumnAlignment(.leading)
@@ -663,6 +675,7 @@ struct WeekView: View {
                             HStack(spacing: 6) {
                                 if let color = color(name) { Circle().fill(color).frame(width: 8, height: 8) }
                                 if let chip = display?(name) { ChipLabel(chip: chip) } else { Text(name) }
+                                if let rules = candidates?(name), !rules.isEmpty { AssignProjectButton(model: model, candidates: rules) }
                             }
                             .gridColumnAlignment(.leading)
                             ForEach(Array(totals.enumerated()), id: \.offset) { _, dayTotals in
@@ -749,14 +762,16 @@ struct WorkBreakdown: View {
                         ForEach(work.prefix(8), id: \.label) { item in
                             let branch = item.ticket != item.name
                             row(branch ? branchChip(item) : .ticket(item.name, model.directory, short: false),
-                                link: branch ? item.ticket : nil, project: item.project, seconds: item.seconds)
+                                link: branch ? item.ticket : nil, project: item.project, seconds: item.seconds,
+                                candidates: ActivityLogic.ruleCandidates(for: item))
                         }
                     }
                 }
                 if !tickets.isEmpty {
                     section("By ticket") {
                         ForEach(tickets.prefix(8), id: \.ticket) { total in
-                            row(.ticket(total.ticket, model.directory, short: false), link: nil, project: total.project, seconds: total.seconds)
+                            row(.ticket(total.ticket, model.directory, short: false), link: nil, project: total.project, seconds: total.seconds,
+                                candidates: ActivityLogic.ruleCandidates(forTicket: total.ticket))
                                 .help(total.branches.joined(separator: "\n"))
                         }
                     }
@@ -777,13 +792,22 @@ struct WorkBreakdown: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func row(_ chip: Chip, link ticket: String?, project: String?, seconds: TimeInterval) -> some View {
+    private func row(_ chip: Chip, link ticket: String?, project: ActivityLogic.RowProject?, seconds: TimeInterval,
+                     candidates: [RuleCandidate]) -> some View {
         HStack(spacing: 6) {
             ChipLabel(chip: chip)
             if let ticket { ChipLabel(chip: .ticket(ticket, model.directory, short: true)) }
             Spacer(minLength: 6)
-            if let project { Text(project).foregroundStyle(.tertiary).lineLimit(1) }
+            if let project {
+                HStack(spacing: 3) {
+                    if project.guessed { Image(systemName: "sparkles").font(.system(size: 9)) }
+                    Text(project.name).lineLimit(1)
+                }
+                .foregroundStyle(.tertiary)
+                .help(project.guessed ? "Guessed by Apple Intelligence" : "")
+            }
             Text(ActivityLogic.hoursText(seconds)).foregroundStyle(.secondary).monospacedDigit()
+            AssignProjectButton(model: model, candidates: candidates)
         }
         .font(.callout)
     }

@@ -4,6 +4,9 @@ import SwiftUI
 enum Main {
     static func main() {
         #if DEBUG
+        if let output = ProjectPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { ProjectPreview.run(to: output) }
+        }
         if let output = PreviewRenderer.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }

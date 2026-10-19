@@ -560,7 +560,7 @@ enum ActivityLogic {
             .max { $0.lastPathComponent.count < $1.lastPathComponent.count }
     }
 
-    private static func containsWord(_ text: String, _ word: String) -> Bool {
+    static func containsWord(_ text: String, _ word: String) -> Bool {
         var searchRange = text.startIndex..<text.endIndex
         while let range = text.range(of: word, range: searchRange) {
             let before = range.lowerBound == text.startIndex ? nil : text[text.index(before: range.lowerBound)]
@@ -812,7 +812,7 @@ enum ActivityLogic {
         let name: String
         let repo: String?
         let ticket: String?
-        let project: String?
+        let project: RowProject?
         let seconds: TimeInterval
 
         var label: String { repo.map { "\(name) (\($0))" } ?? name }
@@ -822,7 +822,7 @@ enum ActivityLogic {
     struct TicketTotal: Equatable {
         let ticket: String
         let branches: [String]
-        let project: String?
+        let project: RowProject?
         let seconds: TimeInterval
     }
 
@@ -834,7 +834,7 @@ enum ActivityLogic {
         }
         return groups.map { group, blocks in
             WorkTotal(name: group[0], repo: group[1].isEmpty ? nil : group[1], ticket: blocks.lazy.compactMap { ticket(of: $0.key) }.first,
-                      project: mainProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range))
+                      project: rowProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range))
         }.sorted { $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.label < $1.label }
     }
 
@@ -842,12 +842,34 @@ enum ActivityLogic {
         let groups = Dictionary(grouping: blocks.filter { !$0.key.idle && $0.seconds(in: range) > 0 }) { ticket(of: $0.key) }
         return groups.compactMap { ticket, blocks in
             ticket.map { TicketTotal(ticket: $0, branches: Array(Set(blocks.compactMap(\.key.branch))).sorted(),
-                                     project: mainProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range)) }
+                                     project: rowProject(blocks, in: range, rules: rules, projects: projects), seconds: activeSeconds(blocks, in: range)) }
         }.sorted { $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.ticket < $1.ticket }
     }
 
-    private static func mainProject(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project]) -> String? {
-        projectTotals(blocks, in: range, rules: rules, projects: projects).first { $0.name != unassigned }?.name
+    /// The project a row of the breakdown shows: `guessed` when only the AI's guess says so.
+    struct RowProject: Equatable {
+        let name: String
+        let guessed: Bool
+    }
+
+    /// The rule or manual project with the most time; without one, the guessed project, but only when it covers more
+    /// than half of the row's time.
+    static func rowProject(_ blocks: [ActivityBlock], in range: Range<Date>, rules: [ProjectRule], projects: [Project]) -> RowProject? {
+        var resolved: [Project: TimeInterval] = [:]
+        var guessed: [Project: TimeInterval] = [:]
+        var total: TimeInterval = 0
+        for block in blocks where !block.key.idle {
+            let seconds = block.seconds(in: range)
+            total += seconds
+            guard seconds > 0, let project = project(for: block, rules: rules, projects: projects) else { continue }
+            if projectIsGuessed(block, rules: rules) { guessed[project, default: 0] += seconds } else { resolved[project, default: 0] += seconds }
+        }
+        func longest(_ seconds: [Project: TimeInterval]) -> (project: Project, seconds: TimeInterval)? {
+            seconds.max { $0.value != $1.value ? $0.value < $1.value : $0.key.name > $1.key.name }.map { ($0.key, $0.value) }
+        }
+        if let top = longest(resolved) { return RowProject(name: top.project.name, guessed: false) }
+        if let top = longest(guessed), top.seconds > total / 2 { return RowProject(name: top.project.name, guessed: true) }
+        return nil
     }
 
     static func activeSeconds(_ blocks: [ActivityBlock], in range: Range<Date>) -> TimeInterval {
@@ -931,13 +953,13 @@ enum ActivityLogic {
         if !work.isEmpty {
             lines += ["", "## By branch"] + work.prefix(15).map { item in
                 let names = item.name == item.ticket ? [directory.markdown(item.name)] : [item.label, item.ticket.map(directory.markdown)]
-                return "- " + (names + [item.project, hoursText(item.seconds)]).compactMap { $0 }.joined(separator: " \u{00B7} ")
+                return "- " + (names + [item.project?.name, hoursText(item.seconds)]).compactMap { $0 }.joined(separator: " \u{00B7} ")
             }
         }
         let tickets = ticketTotals(blocks, in: range, rules: rules, projects: projects)
         if !tickets.isEmpty {
             lines += ["", "## By ticket"] + tickets.prefix(15).map { total in
-                "- " + [directory.markdown(total.ticket), total.project, hoursText(total.seconds)].compactMap { $0 }.joined(separator: " \u{00B7} ")
+                "- " + [directory.markdown(total.ticket), total.project?.name, hoursText(total.seconds)].compactMap { $0 }.joined(separator: " \u{00B7} ")
                     + (total.branches.isEmpty ? "" : " (\(total.branches.joined(separator: ", ")))")
             }
         }
@@ -1100,8 +1122,9 @@ enum ActivityAI {
     static let instructions = """
         You label short records of what someone was doing on their Mac. Use only the given app, window title, address, \
         repository and text. category: the single best match from the list. description: at most eight words saying what \
-        was being done, e.g. "Reviewing the reminder fee pull request", in English. project: exactly one of the listed project \
-        names when the record clearly belongs to it, otherwise "none". work: true when it is part of someone's job (code, \
+        was being done, e.g. "Reviewing the reminder fee pull request", in English. project: "none" unless the record clearly \
+        belongs to a listed project, meaning its name or one of the repositories, organisations, ticket prefixes or websites \
+        listed for it appears in the record; otherwise choose exactly that project name. work: true when it is part of someone's job (code, \
         tickets, documents, meetings, work email or chat, anything for the listed projects), false for entertainment, \
         shopping, social media, news and private errands.
         """
@@ -1116,7 +1139,7 @@ enum ActivityAI {
         return ([key.appBundle ?? key.appName ?? "", title, key.url ?? "", key.repo ?? ""] + session).joined(separator: "|")
     }
 
-    static func prompt(for block: ActivityBlock, projects: [Project]) -> String {
+    static func prompt(for block: ActivityBlock, projects: [Project], rules: [ProjectRule] = []) -> String {
         let key = block.key
         var lines = ["App: \(key.appName ?? key.appBundle ?? "unknown")"]
         if let title = key.windowTitle { lines.append("Window: \(title)") }
@@ -1127,8 +1150,30 @@ enum ActivityAI {
         if let session = block.claudeFocusSession { lines.append("Claude Code session: \(session.title)") }
         if let prompt = block.claudePrompt { lines.append("Last request to Claude: \(prompt)") }
         if let excerpt = block.typedExcerpt { lines.append("Text being written: \(ActivityLogic.truncate(excerpt, to: 200))") }
-        lines.append("Projects: " + (projects.isEmpty ? "none" : projects.map(\.name).joined(separator: ", ")))
+        lines.append("Projects: " + (projects.isEmpty ? "none" : projects.map { describe($0, rules: rules) }.joined(separator: ", ")))
         return lines.joined(separator: "\n")
+    }
+
+    private static func describe(_ project: Project, rules: [ProjectRule]) -> String {
+        let evidence = rules.filter { $0.projectID == project.id }.map { "\($0.field.label.lowercased()) \($0.pattern)" }
+        return evidence.isEmpty ? project.name : "\(project.name) (\(evidence.joined(separator: "; ")))"
+    }
+
+    /// Whether the block gives a reason to think it belongs to the project: one of the project's rules matches it, its
+    /// text mentions the project's name, or it names no repository, organisation or ticket prefix that could belong elsewhere.
+    static func hasEvidence(_ block: ActivityBlock, for project: Project, rules: [ProjectRule]) -> Bool {
+        let key = block.key
+        if rules.contains(where: { $0.projectID == project.id && $0.matches(key) }) { return true }
+        let name = project.name.lowercased()
+        let texts = [key.windowTitle, key.url, key.repo, key.owner, key.branch, key.ticket, block.claudeFocusSession?.title]
+        if texts.contains(where: { $0.map { ActivityLogic.containsWord($0.lowercased(), name) } ?? false }) { return true }
+        return key.repo == nil && key.owner == nil && key.ticketPrefix == nil
+    }
+
+    /// The guessed project when the block gives a reason for it, else nil.
+    static func vetted(_ id: Int64?, for block: ActivityBlock, projects: [Project], rules: [ProjectRule]) -> Int64? {
+        guard let id, let project = projects.first(where: { $0.id == id }), hasEvidence(block, for: project, rules: rules) else { return nil }
+        return id
     }
 
     static var projectChoices: (_ projects: [Project]) -> [String] { { ["none"] + $0.map(\.name) } }

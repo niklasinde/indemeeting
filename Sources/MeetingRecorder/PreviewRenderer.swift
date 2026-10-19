@@ -215,7 +215,7 @@ enum PreviewRenderer {
     }
 
     @MainActor
-    private static func save(_ window: NSWindow, to url: URL) {
+    static func save(_ window: NSWindow, to url: URL) {
         guard let view = window.contentView?.superview else { return }
         view.layoutSubtreeIfNeeded()
         guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }

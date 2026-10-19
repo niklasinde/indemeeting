@@ -86,6 +86,23 @@ extension MeetingStore {
         }
     }
 
+    /// Clears the AI project guess of blocks that give no reason for it (`ActivityAI.hasEvidence`); rule and manual
+    /// projects stay. Returns how many blocks changed.
+    @discardableResult
+    func clearUnsupportedGuesses() throws -> Int {
+        let projects = try projects()
+        let rules = try rules()
+        let guessed = try read { try db.query("SELECT \(Self.blockColumns) FROM activity_blocks WHERE ai_project_id IS NOT NULL", [], Self.block) }
+        let ids = guessed.filter { ActivityAI.vetted($0.aiProjectID, for: $0, projects: projects, rules: rules) == nil }.map(\.id)
+        return try stride(from: 0, to: ids.count, by: 500).reduce(0) { count, start in
+            let chunk = Array(ids[start..<min(start + 500, ids.count)])
+            return try write(notify: Self.activityDidChange) {
+                try db.run("UPDATE activity_blocks SET ai_project_id = NULL WHERE id IN (\(Self.placeholders(chunk.count)))", chunk.map { $0 as SQLValue })
+                return try count + changes()
+            }
+        }
+    }
+
     /// Applies the rules to the blocks already stored (see `ActivitySettings.review`): blocks outside them are made
     /// private, other or other site, or removed. What a block has already lost is not brought back. Returns how many changed.
     @discardableResult
@@ -246,6 +263,20 @@ extension MeetingStore {
 
     func deleteRule(_ id: Int64) throws {
         try write(notify: Self.activityDidChange) { try db.run("DELETE FROM project_rules WHERE id = ?", [id]) }
+    }
+
+    /// Creates the projects the choices name (an existing project of the same name is reused) and their rules; returns the
+    /// number of rules created.
+    @discardableResult
+    func createProjects(_ choices: [SetupChoice]) throws -> Int {
+        let choices = ProjectSetup.plan(choices, rules: try rules())
+        var projects = Dictionary(try projects().map { ($0.name.lowercased(), $0) }) { first, _ in first }
+        for choice in choices {
+            let project = try projects[choice.name.lowercased()] ?? addProject(choice.name)
+            projects[choice.name.lowercased()] = project
+            try addRule(project: project.id, field: choice.field, pattern: choice.pattern)
+        }
+        return choices.count
     }
 
     /// Remembers the Jira site of the page's project and the ticket title the page shows; writes only what is new.
