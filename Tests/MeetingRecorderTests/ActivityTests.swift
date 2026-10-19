@@ -664,7 +664,7 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         defer { try? FileManager.default.removeItem(at: folder) }
         let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
         open.id = try store.saveBlock(open)
-        let read = try store.blocks(in: t0..<t0.addingTimeInterval(100)).first
+        let read = try store.blocks(in: t0..<t0.addingTimeInterval(100), prompts: true).first
         check(read?.key.claudeFocus == "a" && read?.claudePrompt == "fix it" && read?.key.claude.count == 2, "focus and prompt round-trip")
     }),
 
@@ -976,5 +976,42 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
         check(try store.backfillLinks(branches: BranchIndex()) == 0, "a second run changes nothing")
         try store.redact(blockIDs: [github.id], as: .private)
         check(try store.blocks(in: t0..<t0.addingTimeInterval(60))[0].key.owner == nil, "private blocks lose the owner")
+    }),
+
+    ("prompts are only captured, read and counted while the switch is on", {
+        var settings = ActivitySettings()
+        check(!settings.storePrompts && !ActivitySettings(UserDefaults(suiteName: "prompts-off")!).storePrompts, "off by default")
+        var s = sample(0, app: "Claude", title: "Claude", claude: [ClaudeSession(id: "a", folder: "/x", title: "T")])
+        s.claudeFocus = "a"
+        s.claudePrompt = "fix it"
+        check(ActivityLogic.filtered(s, settings: settings)!.claudePrompt == nil, "capture drops the prompt when off")
+        settings.storePrompts = true
+        settings.claude = false
+        check(ActivityLogic.filtered(s, settings: settings)!.claudePrompt == nil, "and when Claude sessions are off")
+        settings.claude = true
+        check(ActivityLogic.filtered(s, settings: settings)!.claudePrompt == "fix it", "capture keeps it when on")
+
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        var block = ActivityLogic.collapse(nil, with: s).open
+        block.id = try store.saveBlock(block)
+        var plain = ActivityLogic.collapse(nil, with: sample(100, app: "Safari", title: "News")).open
+        plain.id = try store.saveBlock(plain)
+        let range = t0..<t0.addingTimeInterval(200)
+
+        let off = try store.blocks(in: range, prompts: false)
+        check(off.allSatisfy { $0.claudePrompt == nil } && off.first?.claudeFocusSession?.title == "T", "reads hide prompts but keep sessions")
+        check(try store.unclassifiedBlocks(endedBefore: t0.addingTimeInterval(1000), limit: 10, prompts: false).allSatisfy { $0.claudePrompt == nil },
+              "the classifier does not see them")
+        check(!ActivityAI.prompt(for: off[0], projects: []).contains("Last request"), "the categorisation prompt leaves it out")
+        let context = { try ActivityLogic.contextMarkdown(blocks: store.blocks(in: range, prompts: $0), meetings: [], range: range,
+                                                          rules: [], projects: [], directory: store.ticketDirectory()) }
+        check(try !context(false).contains("fix it") && context(true).contains("fix it"), "the context shows it only when on")
+
+        check(try store.storedPromptCount() == 1, "counts blocks with a prompt")
+        check(try store.clearPrompts() == 1 && store.storedPromptCount() == 0, "clearing reports and removes them")
+        check(try store.blocks(in: range, prompts: true).first?.key.claudeFocus == "a", "clearing keeps the session")
+        check(try store.clearPrompts() == 0, "a second clear changes nothing")
     }),
 ]

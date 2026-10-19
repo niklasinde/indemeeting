@@ -120,6 +120,12 @@ struct ActivityBlock: Equatable, Identifiable {
     }
 
     var host: String? { key.host }
+
+    var withoutPrompt: ActivityBlock {
+        var block = self
+        block.claudePrompt = nil
+        return block
+    }
 }
 
 /// What a block was for, as guessed by Apple Intelligence from the app, title, address and text.
@@ -213,6 +219,7 @@ struct ActivitySettings: Equatable {
     static let urlsKey = "activityCaptureURLs"
     static let gitKey = "activityCaptureGit"
     static let claudeKey = "activityCaptureClaude"
+    static let promptsKey = "activityStorePrompts"
     static let idleKey = "activityIdleSeconds"
     static let retentionKey = "activityRetentionDays"
     /// The blocked apps; the key predates the allowlist.
@@ -241,7 +248,7 @@ struct ActivitySettings: Equatable {
     static let claudeLookback: TimeInterval = 120
 
     static let defaults: [String: Any] = [
-        enabledKey: false, pausedKey: false, titlesKey: true, urlsKey: true, gitKey: true, claudeKey: true,
+        enabledKey: false, pausedKey: false, titlesKey: true, urlsKey: true, gitKey: true, claudeKey: true, promptsKey: false,
         idleKey: 120, retentionKey: 90, excludedKey: defaultExcluded, typingKey: false, classifyKey: true,
         excludedCategoriesKey: [String](), removeBlockedKey: false, allowedAppsKey: [String](), blockedSitesKey: [String](),
         allowedSitesKey: [String](), appModeKey: ListMode.allExceptBlocked.rawValue, siteModeKey: ListMode.allExceptBlocked.rawValue,
@@ -274,6 +281,7 @@ struct ActivitySettings: Equatable {
     var urls = true
     var git = true
     var claude = true
+    var storePrompts = false
     var idleSeconds: TimeInterval = 120
     var retentionDays = 90
     var blockedApps = defaultExcluded
@@ -301,6 +309,7 @@ struct ActivitySettings: Equatable {
         urls = defaults.bool(forKey: Self.urlsKey)
         git = defaults.bool(forKey: Self.gitKey)
         claude = defaults.bool(forKey: Self.claudeKey)
+        storePrompts = defaults.bool(forKey: Self.promptsKey)
         idleSeconds = defaults.double(forKey: Self.idleKey)
         retentionDays = defaults.integer(forKey: Self.retentionKey)
         blockedApps = defaults.stringArray(forKey: Self.excludedKey) ?? Self.defaultExcluded
@@ -318,6 +327,13 @@ struct ActivitySettings: Equatable {
         classify = defaults.bool(forKey: Self.classifyKey)
         excludedCategories = (defaults.stringArray(forKey: Self.excludedCategoriesKey) ?? []).compactMap(ActivityCategory.init)
         removeBlocked = defaults.bool(forKey: Self.removeBlockedKey)
+    }
+
+    /// Whether prompts are stored, read from the app's own defaults so the command line and the MCP server agree with it.
+    static var promptsStored: Bool {
+        let app = "com.niklasinde.MeetingRecorder"
+        let defaults = Bundle.main.bundleIdentifier == app ? UserDefaults.standard : UserDefaults(suiteName: app) ?? .standard
+        return defaults.bool(forKey: promptsKey)
     }
 
     func blocks(appName: String?, bundle: String?) -> Bool { Self.lists(blockedApps, appName: appName, bundle: bundle) }
@@ -494,10 +510,10 @@ enum ActivityLogic {
             sample.owner = nil
         }
         if !settings.claude {
-            sample.claudePrompt = nil
             sample.claude = []
             sample.claudeFocus = nil
         }
+        if !settings.claude || !settings.storePrompts { sample.claudePrompt = nil }
         return sample
     }
 

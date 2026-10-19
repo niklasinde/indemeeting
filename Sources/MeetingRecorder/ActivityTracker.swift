@@ -151,6 +151,12 @@ final class ActivityTracker: ObservableObject {
         if away { tick() } else { flush() }
     }
 
+    /// Writes and forgets the open block first, so it does not write its prompt back.
+    func clearStoredPrompts() throws -> Int {
+        flush()
+        return try store.clearPrompts()
+    }
+
     private func settingsChanged() {
         let changed = ActivitySettings(.standard)
         guard changed != settings else { return }
@@ -199,7 +205,7 @@ final class ActivityTracker: ObservableObject {
               let session = activity.first(where: { $0.session.id == id })?.session ?? open?.key.claude.first(where: { $0.id == id }) else { return }
         sample.claudeFocus = id
         if !sample.claude.contains(session) { sample.claude.append(session) }
-        sample.claudePrompt = activity.first { $0.session.id == id }?.lastPrompt
+        if settings.storePrompts { sample.claudePrompt = activity.first { $0.session.id == id }?.lastPrompt }
         if settings.git, let checkout = ActivityLogic.claudeCheckout(cwd: session.folder) {
             sample.repo = checkout.repo
             sample.branch = ActivityLogic.branch(ofRepository: checkout.checkout)

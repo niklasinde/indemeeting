@@ -13,10 +13,25 @@ extension MeetingStore {
         typed_excerpt = NULL, ai_description = NULL, claude_focus = NULL, claude_prompt = NULL, repo_owner = NULL
         """
 
-    func blocks(in range: Range<Date>) throws -> [ActivityBlock] {
+    /// Stored prompts are left out unless `prompts` is on, so nothing built from the blocks can show one.
+    func blocks(in range: Range<Date>, prompts: Bool = ActivitySettings.promptsStored) throws -> [ActivityBlock] {
         try read {
             try db.query("SELECT \(Self.blockColumns) FROM activity_blocks WHERE end > ? AND start < ? ORDER BY start",
                          [range.lowerBound.timeIntervalSince1970, range.upperBound.timeIntervalSince1970], Self.block)
+        }
+        .map { prompts ? $0 : $0.withoutPrompt }
+    }
+
+    func storedPromptCount() throws -> Int {
+        try read { try db.query("SELECT COUNT(*) FROM activity_blocks WHERE claude_prompt IS NOT NULL AND claude_prompt <> ''") { Int($0.int64(0)) }.first ?? 0 }
+    }
+
+    /// Removes the stored prompts from every block; returns how many blocks had one.
+    @discardableResult
+    func clearPrompts() throws -> Int {
+        try write(notify: Self.activityDidChange) {
+            try db.run("UPDATE activity_blocks SET claude_prompt = NULL WHERE claude_prompt IS NOT NULL AND claude_prompt <> ''")
+            return try changes()
         }
     }
 
@@ -54,13 +69,14 @@ extension MeetingStore {
     }
 
     /// Finished, non-idle blocks that have no category yet, oldest first.
-    func unclassifiedBlocks(endedBefore date: Date, limit: Int) throws -> [ActivityBlock] {
+    func unclassifiedBlocks(endedBefore date: Date, limit: Int, prompts: Bool = ActivitySettings.promptsStored) throws -> [ActivityBlock] {
         try read {
             try db.query("""
                 SELECT \(Self.blockColumns) FROM activity_blocks
                 WHERE category IS NULL AND idle = 0 AND app_name IS NOT NULL AND end < ? ORDER BY end DESC LIMIT ?
                 """, [date.timeIntervalSince1970, limit], Self.block)
         }
+        .map { prompts ? $0 : $0.withoutPrompt }
     }
 
     func setClassification(ofBlock id: Int64, _ classification: ActivityAI.Classification) throws {

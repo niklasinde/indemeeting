@@ -382,7 +382,10 @@ Every 5 seconds while the Mac is awake, unlocked and you have touched the keyboa
   files written to in the last 2 minutes count as working. The
   session's working folder comes from the `cwd` of its first user message and its title from the custom title you gave
   it (`<session>/custom-title.json` or a `custom-title` line), else the first line you typed. These form a parallel
-  lane: a block can have a Claude session running while you are in another app.
+  lane: a block can have a Claude session running while you are in another app. The first 120 characters of the prompt
+  you last sent are kept only with "Store last prompt" (Settings > Activity > Capture, off by default); while it is off
+  no prompt is stored, shown, sent to Apple Intelligence or included in the context summary and MCP tools. Turning it
+  off offers to delete stored prompts, and "Clear stored prompts" removes them any time.
 - Optionally ("Text you're writing", off by default) up to 300 characters around the insertion point of the focused
   text field or area, kept once the text has not changed for 5 seconds. Secure text fields are never read and nothing
   is read while secure keyboard entry is on (a password prompt) or in an excluded app. No keystrokes are counted or
@@ -462,7 +465,8 @@ What it adds:
 
 Privacy: everything stays on the Mac. Prompt text, tool input and tool output are never written; only the prompt's
 length is. `MEETING_RECORDER_HOOK_PROMPTS=1` in Claude Code's environment keeps the first 500 characters of each
-prompt (otherwise the app reads your last prompt from the transcript, as without the plugin).
+prompt (otherwise the app reads your last prompt from the transcript, as without the plugin). Either way the app
+stores a prompt in the activity database only while "Store last prompt" is on.
 
 ## Permissions
 
