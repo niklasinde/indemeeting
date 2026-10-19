@@ -4,11 +4,13 @@ struct MCPTool {
     let name: String
     let description: String
     let properties: [String: [String: Any]]
+    var required: [String] = []
     let run: ([String: Any]) throws -> String
 
     var listing: [String: Any] {
         ["name": name, "description": description, "annotations": ["readOnlyHint": true, "openWorldHint": false],
-         "inputSchema": ["type": "object", "properties": properties, "additionalProperties": false]]
+         "inputSchema": ["type": "object", "properties": properties, "additionalProperties": false]
+            .merging(required.isEmpty ? [:] : ["required": required]) { $1 }]
     }
 }
 
@@ -157,15 +159,15 @@ extension MCPServer {
                                           meeting.title, meeting.duration.map(ActivityLogic.hoursText)].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
-    private static func number(_ value: Any?) -> Double? {
+    static func number(_ value: Any?) -> Double? {
         (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
     }
 
-    private static func count(_ value: Any?) -> Int {
+    static func count(_ value: Any?) -> Int {
         min(max(Int(number(value) ?? 10), 1), 50)
     }
 
-    private static func date(_ text: String) throws -> Date {
+    static func date(_ text: String) throws -> Date {
         guard let date = try? Date.ISO8601FormatStyle(timeZone: .current).year().month().day().dateSeparator(.dash).parse(text) else {
             throw MCPToolError("week_start must be YYYY-MM-DD, not \(text)")
         }

@@ -93,6 +93,9 @@ struct RecordingDetail: View {
                     .font(.system(size: 20, weight: .medium))
                     .onSubmit { editor.save() }
                     .disabled(!library.canEdit)
+                if !entry.inProgress, let meeting = library.meeting(of: entry) {
+                    AskButton(meeting: meeting, title: library.title(of: entry), notes: library.tab == .notes)
+                }
                 if !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
             }
             HStack(spacing: 8) {
@@ -155,14 +158,28 @@ struct RecordingDetail: View {
     }
 
     private func scrolling<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        ScrollView {
-            content()
-                .frame(maxWidth: 680, alignment: .leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Self.gutter)
-                .padding(.top, 8)
-                .padding(.bottom, 28)
+        let content = content()
+        return ScrollViewReader { proxy in
+            ScrollView {
+                content
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Self.gutter)
+                    .padding(.top, 8)
+                    .padding(.bottom, 28)
+            }
+            .task(id: library.seekTarget) { await scroll(proxy) }
         }
+    }
+
+    /// Scrolls the transcript to the paragraph holding the moment a chat answer pointed at.
+    private func scroll(_ proxy: ScrollViewProxy) async {
+        guard let target = library.seekTarget, library.tab == .transcript else { return }
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let rows = SpeakerLogic.rows(library.content(of: entry)?.segments ?? [])
+        guard let row = rows.last(where: { $0.paragraph.start <= target }) ?? rows.first else { return }
+        withAnimation { proxy.scrollTo(row.paragraph.start, anchor: .top) }
+        library.seekTarget = nil
     }
 }
 
@@ -285,6 +302,7 @@ struct TranscriptView: View {
                             .lineSpacing(3)
                             .textSelection(.enabled)
                     }
+                    .id(row.paragraph.start)
                 }
             }
         }

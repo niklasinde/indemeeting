@@ -27,6 +27,16 @@ final class MainWindow {
         window.show()
     }
 
+    func show(meeting id: Int64, at time: TimeInterval?) {
+        guard let url = library.meetingURL(id: id) else { return }
+        show(selecting: url)
+        guard let time else { return }
+        library.tab = .transcript
+        library.seekTarget = time
+        playback.load(url)
+        playback.seek(to: time)
+    }
+
     func showActivity() {
         library.start()
         library.showsActivity = true
@@ -61,6 +71,8 @@ final class RecordingLibrary: ObservableObject {
     @Published var confirmingDelete = false
     /// The Activity page is shown instead of the selected meeting.
     @Published var showsActivity = false
+    /// A moment in the selected meeting that the transcript should scroll to.
+    @Published var seekTarget: TimeInterval?
     /// The meeting being recorded, listed before its file exists.
     @Published var recording: URL? { didSet { if oldValue != recording { rebuild() } } }
     @Published private var meetings: [String: Meeting] = [:]
@@ -84,6 +96,10 @@ final class RecordingLibrary: ObservableObject {
     func select(_ entry: RecordingEntry) {
         showsActivity = false
         selection = entry.id
+    }
+
+    func meetingURL(id: Int64) -> URL? {
+        (try? store.meeting(id: id)).flatMap { $0 }.map { folder.appendingPathComponent($0.audioFile) }
     }
 
     var databaseError: DatabaseUnavailable? { store.openError }
@@ -401,6 +417,9 @@ struct MainView: View {
                     .help(Diarizer.isReady ? "Tell the speakers apart again without transcribing"
                           : "Download \(SpeakerModel.name) in Settings first")
                 Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
+                if let id = library.meeting(of: entry)?.id {
+                    Button("Ask About This Meeting\u{2026}") { ChatWindow.shared.show(scope: .meeting(id, label: library.title(of: entry))) }
+                }
                 Divider()
                 Button("Delete\u{2026}", role: .destructive) { library.confirmingDelete = true }
                 Divider()
@@ -443,6 +462,7 @@ struct Sidebar: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 8)
             activityRow
+            chatRow
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
@@ -479,6 +499,20 @@ struct Sidebar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .help("What you worked on, by day and week")
+    }
+
+    private var chatRow: some View {
+        Button { ChatWindow.shared.show() } label: {
+            Label("Chat", systemImage: "bubble.left.and.text.bubble.right")
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .help("Ask about your meetings and work (\u{2318}\u{21E7}A)")
     }
 
     private func row(_ entry: RecordingEntry, group: DateGroup) -> some View {
@@ -606,6 +640,13 @@ struct ContinueButton: View {
         }
         .disabled(recorder.isBusy)
         .help("Record more of this meeting; it is added to the end of the same recording")
+    }
+}
+
+struct ChatCommand: View {
+    var body: some View {
+        Button("Chat") { ChatWindow.shared.show() }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
     }
 }
 

@@ -206,6 +206,29 @@ final class MeetingStore: @unchecked Sendable {
         CREATE TABLE tickets (key TEXT PRIMARY KEY, title TEXT, site TEXT, updated REAL NOT NULL);
         CREATE TABLE jira_sites (prefix TEXT PRIMARY KEY, site TEXT NOT NULL, updated REAL NOT NULL);
         """,
+        """
+        CREATE TABLE chats (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            created REAL NOT NULL,
+            updated REAL NOT NULL,
+            scope_kind TEXT NOT NULL DEFAULT 'general',
+            scope_id INTEGER,
+            scope_from REAL,
+            scope_to REAL,
+            scope_label TEXT
+        );
+        CREATE INDEX chats_scope ON chats(scope_kind, scope_id);
+        CREATE TABLE chat_messages (
+            id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            text TEXT NOT NULL,
+            tool_note TEXT,
+            created REAL NOT NULL
+        );
+        CREATE INDEX chat_messages_chat ON chat_messages(chat_id);
+        """,
     ]
 
     private static let meetingColumns = """
@@ -463,7 +486,13 @@ final class MeetingStore: @unchecked Sendable {
     }
 
     func delete(_ audioFile: String) throws {
-        try write { try db.run("DELETE FROM meetings WHERE audio_file = ?", [audioFile]) }
+        try write {
+            try db.run("""
+                DELETE FROM chats WHERE scope_kind IN ('meeting', 'notes')
+                AND scope_id = (SELECT id FROM meetings WHERE audio_file = ?)
+                """, [audioFile])
+            try db.run("DELETE FROM meetings WHERE audio_file = ?", [audioFile])
+        }
     }
 
     // MARK: Internals (on the queue)

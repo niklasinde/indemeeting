@@ -208,6 +208,10 @@ struct ActivityView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Activity").font(.system(size: 20, weight: .medium))
                 Spacer()
+                Button { ChatWindow.shared.show(scope: model.mode == .day ? .day(containing: model.date) : .week(containing: model.date)) } label: {
+                    Label("Ask", systemImage: "bubble.left.and.text.bubble.right")
+                }
+                .help("Ask about this \(model.mode.rawValue.lowercased())")
                 Button { model.copyContext() } label: {
                     Label(model.copied ? "Copied" : "Copy Context", systemImage: model.copied ? "checkmark" : "doc.on.doc")
                 }
@@ -483,6 +487,10 @@ struct BlockMenu: View {
     var body: some View {
         let settings = model.tracker.settings
         let app = block.key.idle ? nil : block.key.appName
+        if !block.key.idle {
+            Button("Ask About This\u{2026}") { ChatWindow.shared.show(scope: .block(block)) }
+            Divider()
+        }
         Button("Delete") { model.delete(block) }
         if let app, !settings.blocks(appName: app, bundle: block.key.appBundle) {
             Button("Delete and Stop Tracking \(app)") { model.deleteAndStopTracking(block) }
@@ -542,6 +550,7 @@ struct ProjectPicker: View {
                 Button("Create", action: create).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             Divider()
+            Button { ChatWindow.shared.show(scope: .block(block)) } label: { Label("Ask About This", systemImage: "bubble.left.and.text.bubble.right") }
             Button(role: .destructive) { model.delete(block) } label: { Label("Delete", systemImage: "trash") }
         }
         .padding(16)

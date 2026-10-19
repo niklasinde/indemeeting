@@ -9,6 +9,7 @@ enum Main {
         }
         #endif
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
+        if let job = ChatLogic.chatArguments(CommandLine.arguments) { ChatCommandLine.run(job) }
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             let store = MeetingStore.openDefault()
             if let error = store.openError {
@@ -119,6 +120,7 @@ struct MeetingRecorderApp: App {
         }
         .commands {
             CommandGroup(after: .saveItem) { ExportCommand(library: delegate.mainWindow.library) }
+            CommandGroup(after: .windowList) { ChatCommand() }
             CommandGroup(replacing: .appSettings) { SettingsButton() }
         }
     }
@@ -153,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
             self?.toggleRecording()
         }
+        ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
         SettingsWindow.shared.speakers.store = store
@@ -255,6 +258,8 @@ struct MenuContent: View {
             Button("Open summary") { openApp(meeting) }
         }
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
+        Button("Chat\u{2026}") { ChatWindow.shared.show() }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
         Menu("Languages: \(listened.summary)") {
             ForEach(MeetingLanguage.allCases) { language in
                 Toggle(language.displayName, isOn: listened.isListening(language)).disabled(listened.isOnly(language))

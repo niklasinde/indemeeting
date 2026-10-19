@@ -67,6 +67,7 @@ enum PreviewRenderer {
             }
             window.orderOut(nil)
             await renderSettings(to: output, store: store)
+            await renderChat(to: output, store: store)
             let unavailable = MeetingStore.openDefault(at: URL(fileURLWithPath: "/dev/null/meetings.sqlite"))
             let (brokenLibrary, _, brokenWindow) = makeWindow(store: unavailable, folder: folder)
             try? await Task.sleep(nanoseconds: 1_500_000_000)
@@ -92,6 +93,56 @@ enum PreviewRenderer {
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
         return (library, activity, window)
+    }
+
+    @MainActor
+    private static func renderChat(to output: URL, store: MeetingStore) async {
+        guard let standup = ((try? store.meetings()) ?? []).first(where: { $0.title.contains("standup") }) else { return }
+        let model = ChatModel(store: store)
+        model.start()
+        func capture(_ name: String, appearances: [NSAppearance.Name] = [.aqua, .darkAqua]) async {
+            for appearance in appearances {
+                let window = ChatWindow.makeWindow(ChatView(model: model))
+                window.appearance = NSAppearance(named: appearance)
+                window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+                window.orderBack(nil)
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                save(window, to: output.appendingPathComponent("chat-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+                window.orderOut(nil)
+            }
+        }
+        func conversation(_ title: String, _ scope: ChatScope, _ messages: [(ChatRole, String, String?)]) -> Chat? {
+            guard let chat = try? store.createChat(title: title, scope: scope) else { return nil }
+            for (role, text, note) in messages { _ = try? store.addMessage(chat: chat.id, role: role, text: text, toolNote: note) }
+            return chat
+        }
+        let date = ActivityLogic.dateText(standup.created)
+        let meetingLine = "- id \(standup.id) \u{00B7} \(date) 09:31 \u{00B7} \(standup.title) \u{00B7} 18 min"
+        let general = conversation("Decisions in the last standup", .general, [
+            (.user, "What did we decide in the last standup?", nil),
+            (.tool, "", "Searched meetings for \u{201C}standup\u{201D}\n\(meetingLine)"),
+            (.tool, "", "Read \u{201C}\(standup.title)\u{201D}\n\(meetingLine)"),
+            (.assistant, "In the standup on \(date) the team decided:\n\n- **Release 4.12** goes out on Tuesday if validation is done.\n- **Johan** sends his rounding fix for review today.\n- Two tickets stay blocked until **test data** is set up.\n\nThe summary does not say who books the walkthrough with the customer team.", nil),
+        ])
+        let scoped = conversation("Release plan", .meeting(standup.id, label: standup.title), [
+            (.user, "Who said the release is on Tuesday?", nil),
+            (.tool, "", "Searched this meeting for \u{201C}release\u{201D}\n[2:26] Speaker 1: Om valideringen blir klar kan vi släppa fyra punkt tolv på tisdag.\n[2:43] Du: Jag skriver release notes, de ska vara klara på måndag."),
+            (.assistant, "Speaker 1 said it at 2:26: the release can go out on Tuesday if validation is finished. You added at 2:43 that you will have the release notes ready on Monday.", nil),
+            (.user, "And what is still open?", nil),
+            (.tool, "", ChatModel.freshContextNote),
+            (.assistant, "Two tickets are still blocked until test data is in place (Speaker 2, 1:37).", nil),
+        ])
+        model.newChat()
+        await capture("empty")
+        model.newChat(scope: .meeting(standup.id, label: standup.title))
+        await capture("meeting-empty", appearances: [.aqua])
+        if let general { model.open(general) }
+        await capture("conversation")
+        if let scoped { model.open(scoped) }
+        await capture("meeting-conversation", appearances: [.aqua])
+        model.forcedUnavailable = SummaryNotice(.appleIntelligenceOff)
+        model.newChat()
+        await capture("unavailable", appearances: [.aqua])
     }
 
     @MainActor

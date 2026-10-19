@@ -169,8 +169,8 @@ enum SettingsLink: Equatable {
 }
 
 struct SummaryNotice: Equatable {
-    let title: String
-    let message: String
+    var title: String
+    var message: String
     var details: String?
     var settings: SettingsLink?
     var canSummarise = true

@@ -428,6 +428,49 @@ The data lives in the meeting database: `activity_blocks` (start, end, app, titl
 ticket, Claude sessions, idle, manual project, typed excerpt, category, AI description and AI project guess),
 `projects`, `project_rules` and `activity_ai_cache`. Deleting a project clears the blocks that pointed at it.
 
+## Chat
+
+A chat with Apple's on-device model (`SystemLanguageModel`), grounded in your own meetings and activity. Nothing leaves
+the Mac. Open it from the menu-bar menu, the **Chat** row in the main window's sidebar, or **⌘⇧A**.
+
+**Scoped chats.** A chat is about one thing, or about everything:
+
+- **Ask** on a meeting (next to Continue Recording) starts a chat about the meeting, or about its notes while the Notes
+  tab is open; the arrow lists the chats already held about it and the button shows how many. **Ask About This Meeting**
+  is also in the more menu.
+- **Ask About This** on an activity block (right-click, or in the project popover) and **Ask** in the Activity header for
+  the day or week.
+- The chip in the chat header names the subject; the × on it makes the chat general. Without a subject the chat may look
+  at all meetings and activity.
+
+**How answers are grounded.** The context window is small, so the model gets a short overview of the subject (title, time,
+speakers, action items, summary, notes; trimmed to a share of `SystemLanguageModel.contextSize`) and looks up the rest with
+tools. The general chat uses the MCP server's tools (`search_meetings`, `get_meeting`, `recent_meetings`, `activity_context`,
+`time_report`) plus `meetings_on`, `open_action_items` and `activity_on`. A meeting chat has `search_in_meeting` (transcript
+lines with speaker and time), `read_transcript` (a time range), `get_notes` and `scan_transcript`, which reads the whole
+transcript part by part in separate sessions and returns what is relevant, so broad questions (decisions, action items,
+open questions) do not depend on one call seeing everything. An activity chat has `block_details` and `blocks_in_range`.
+Every result is cut to about 1,500 tokens. Each lookup shows in the transcript as a note ("Searched meetings for
+“release”") that expands to what it returned; meetings it found are links, and in a meeting chat the times in an answer
+open the recording at that moment (the transcript scrolls there and the player seeks; it does not start playing).
+
+When the context window overflows, the question is asked again in a fresh session seeded with a recap of the latest
+turns, and the transcript says "Started a fresh context". The same recap seeds a stored chat when it is reopened. The
+model answers in the language of the question. If Apple Intelligence is unavailable the chat shows the same notice and
+**Open Settings** button as summaries.
+
+**Stored chats.** Chats, their messages and the notes of what was looked up are in `meetings.sqlite` (`chats`,
+`chat_messages`); the text that was read to answer is not stored. Chats about a meeting are deleted with it. Settings >
+Meetings > Chat has **Delete All Chats**. Chat titles come from the model, or from the first 40 characters of the question.
+
+**Command line.** `MeetingRecorder --chat "<question>" [--meeting <id>] [--day <YYYY-MM-DD>] [--data-dir <folder>]` prints the
+lookups and the streamed answer and exits, reading the database without writing, for example against a copy of the data
+folder:
+
+```sh
+MeetingRecorder --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
+```
+
 ## Claude Code plugin
 
 `plugin/` is a Claude Code plugin, published from this repository as the `indemeeting` marketplace. Install it from

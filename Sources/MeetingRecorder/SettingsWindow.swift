@@ -357,6 +357,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            ChatSettingsSection()
         }
     }
 

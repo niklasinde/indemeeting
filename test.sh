@@ -22,10 +22,14 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ClaudeEvents.swift \
     Sources/MeetingRecorder/ClaudePlugin.swift \
     Sources/MeetingRecorder/MCPServer.swift \
+    Sources/MeetingRecorder/ChatLogic.swift \
+    Sources/MeetingRecorder/ChatStore.swift \
+    Sources/MeetingRecorder/ChatToolbox.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
     Tests/MeetingRecorderTests/ActivityTests.swift \
     Tests/MeetingRecorderTests/PluginTests.swift \
+    Tests/MeetingRecorderTests/ChatTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"
