@@ -501,9 +501,9 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   apart and never count as new feedback. Waiting on you is a review asked of you, or the author pushing or answering after
   your review. Bot-only means a bot's pull request or last word with nothing for a person to answer. The mark on the right is a green check (checks passed), red cross (failed), amber dot
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
-- **Layout:** the list (tabs, filters, sort, quick filters and rows) is on the left, 320 to 560 points wide (420 by default);
-  drag the divider to resize it, the width is remembered. The pull request page is on the right, or "Select a pull request"
-  while nothing is selected. In a wide window the page is centred in its column, at most 1000 points wide, with its text at most
+- **Layout:** the list (tabs, filters, sort, quick filters and rows) is on the left, 360 to 560 points wide (420 by default; a stored width outside that goes back to the default);
+  drag the divider to resize it, the width is remembered. Below 781 points the list and the page take turns, with a back button.
+  The pull request page is on the right, or "Select a pull request" while nothing is selected. In a wide window the page is centred in its column, at most 1000 points wide, with its text at most
   760 points wide so lines stay near 100 characters; the file, check and commit lists use the whole column. From 2200 points
   the rows add a line with the author, the update time and the changes. When the area right of the sidebar is narrower than 780 points (a window narrower than about
   1000) the two take turns instead: a click shows the page full width with a "Pull requests" back button.
