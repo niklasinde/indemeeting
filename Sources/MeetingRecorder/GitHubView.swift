@@ -8,6 +8,7 @@ struct GitHubView: View {
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
+    @ObservedObject private var actions = GitHubActionsModel.shared
 
     enum Pane { case list, detail }
     static let defaultListWidth = 420.0
@@ -27,6 +28,9 @@ struct GitHubView: View {
             }
         }
         .background { openShortcut }
+        .overlay(alignment: .bottom) { ActionBannerView(model: actions) }
+        .animation(.default, value: actions.banner)
+        .sheet(item: $actions.sheet) { GitHubActionSheet(sheet: $0, model: actions) }
         .onAppear {
             terminals.toggleFocus = { toggleTerminalFocus() }
             model.loadCache()
@@ -124,6 +128,9 @@ struct GitHubView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = model.error, model.enabled, model.hasData { ErrorBanner(error: error) }
+            if model.marked.count > 1 {
+                MarkedBar(count: model.marked.count, model: actions, close: { actions.beginBulk(.close, model.markedPRs) }, clear: model.clearMarks)
+            }
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -254,7 +261,7 @@ struct GitHubView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(model.visible) { pr in
-                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, show: show)
+                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url), show: show)
                             Divider().padding(.horizontal, Self.gutter)
                         }
                     }
@@ -268,6 +275,11 @@ struct GitHubView: View {
                 .onKeyPress(.downArrow) { step(.next) }
                 .onKeyPress(.return) {
                     if model.page != nil { enterDetail() }
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard !model.marked.isEmpty else { return .ignored }
+                    model.clearMarks()
                     return .handled
                 }
                 .onChange(of: model.selectedURL) { if let url = model.selectedURL { proxy.scrollTo(url) } }
@@ -290,9 +302,11 @@ private struct PullRequestRow: View {
     let pr: GitHubPR
     @ObservedObject var model: GitHubModel
     let selected: Bool
+    let marked: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
+    @ObservedObject private var actions = GitHubActionsModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -309,11 +323,11 @@ private struct PullRequestRow: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 6).fill(selected ? Color.primary.opacity(0.08) : .clear))
+        .background(RoundedRectangle(cornerRadius: 6).fill(marked ? Color.accentColor.opacity(0.18) : selected ? Color.primary.opacity(0.08) : .clear))
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .onTapGesture { show(pr) }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { open(pr.url) })
+        .onTapGesture { click() }
+        .simultaneousGesture(TapGesture(count: 2).onEnded { if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty { open(pr.url) } })
         .contextMenu {
             Button("Show Details") { show(pr) }
             Button("Open in Browser") { open(pr.url) }
@@ -322,6 +336,7 @@ private struct PullRequestRow: View {
             Button("Copy Branch") { model.store?.githubHeadBranch(pr.url).map(GitHubModel.copy) }
                 .disabled(model.store?.githubHeadBranch(pr.url) == nil)
             Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
+            GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
             Divider()
             Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
             Menu("Open in Claude") {
@@ -390,6 +405,15 @@ private struct PullRequestRow: View {
 
     private func open(_ url: String) {
         URL(string: url).map { NSWorkspace.shared.open($0) }
+    }
+
+    /// Command adds or removes the row from the marked ones, shift marks the rows up to it; a plain click selects it alone.
+    private func click() {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) { model.toggleMark(pr) } else if flags.contains(.shift) { model.markRange(to: pr) } else {
+            model.clearMarks()
+            show(pr)
+        }
     }
 
     private func showComments(_ scope: GitHubCommentsFilter.Scope) {
@@ -510,6 +534,8 @@ struct GitHubSettingsSection: View {
             }
             Divider().padding(.leading, 14)
             ClaudeSettingsRows(model: .shared)
+            Divider().padding(.leading, 14)
+            ActionSettingsRows(model: .shared)
             Divider().padding(.leading, 14)
             SettingsRow("Clear GitHub cache", detail: model.cachedCount == 0 ? "Nothing cached"
                         : "\(model.cachedCount) pull request\(model.cachedCount == 1 ? "" : "s") cached") {

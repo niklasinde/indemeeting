@@ -132,6 +132,35 @@ extension MeetingStore {
         }
     }
 
+    // MARK: Actions
+
+    @discardableResult
+    func saveGitHubAction(_ record: GitHubActionRecord) throws -> Int64 {
+        try write(notify: Self.githubDidChange) {
+            try db.run("INSERT INTO github_actions (at, action, repo, number, title, command, result, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                       [record.at.timeIntervalSince1970, record.action.rawValue, record.repo, record.number, record.title, record.command,
+                        record.succeeded ? "success" : "failed", record.error])
+            return try db.lastInsertID
+        }
+    }
+
+    /// The newest actions first.
+    func githubActions(limit: Int = GitHubActions.recentLimit) throws -> [GitHubActionRecord] {
+        try read {
+            try db.query("SELECT id, at, action, repo, number, title, command, result, error FROM github_actions ORDER BY id DESC LIMIT ?",
+                         [limit]) { row -> GitHubActionRecord? in
+                guard let action = GitHubAction(rawValue: row.string(2)) else { return nil }
+                return GitHubActionRecord(id: row.int64(0), at: Date(timeIntervalSince1970: row.double(1)), action: action, repo: row.string(3),
+                                          number: Int(row.int64(4)), title: row.string(5), command: row.string(6),
+                                          succeeded: row.string(7) == "success", error: row.optionalString(8))
+            }.compactMap { $0 }
+        }
+    }
+
+    func clearGitHubActions() throws {
+        try write(notify: Self.githubDidChange) { try db.run("DELETE FROM github_actions") }
+    }
+
     private static let reviewSelect = "SELECT url, head_sha, preset, text, created, duration, cost FROM github_pr_reviews"
 
     private static func review(_ row: SQLRow) -> GitHubReview? {

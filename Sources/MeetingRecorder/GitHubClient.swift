@@ -16,8 +16,9 @@ enum GitHubClient {
         var remaining: Int?
     }
 
-    nonisolated static func run(_ cli: URL, _ arguments: [String]) -> Output? {
+    nonisolated static func run(_ cli: URL, _ arguments: [String], directory: URL? = nil) -> Output? {
         let process = Process()
+        process.currentDirectoryURL = directory
         process.executableURL = cli
         process.arguments = arguments
         var environment = ProcessInfo.processInfo.environment

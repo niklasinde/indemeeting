@@ -287,6 +287,19 @@ final class MeetingStore: @unchecked Sendable {
             fetched REAL NOT NULL
         );
         """,
+        """
+        CREATE TABLE github_actions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            at REAL NOT NULL,
+            action TEXT NOT NULL,
+            repo TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            command TEXT NOT NULL,
+            result TEXT NOT NULL,
+            error TEXT
+        );
+        """,
     ]
 
     private static let meetingColumns = """

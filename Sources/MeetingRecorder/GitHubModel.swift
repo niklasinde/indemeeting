@@ -21,11 +21,14 @@ final class GitHubModel: ObservableObject {
     @Published var filter = GitHubLogic.Filter()
     @Published private(set) var page: GitHubDetailModel?
     @Published private(set) var selectedURL = UserDefaults.standard.string(forKey: selectionKey)
+    /// The rows picked with command- and shift-click, for an action on several at once.
+    @Published private(set) var marked = Set<String>()
 
     var store: MeetingStore?
     private var loop: Task<Void, Never>?
     private let settle = Debouncer()
     private var prefetching = Set<String>()
+    private var patches: [String: GitHubActions.Patch] = [:]
 
     var interval: Int {
         let stored = UserDefaults.standard.integer(forKey: Self.intervalKey)
@@ -74,6 +77,7 @@ final class GitHubModel: ObservableObject {
         error = fetch.error
         if !fetch.prs.isEmpty {
             prs.merge(fetch.prs) { $1 }
+            prs = GitHubActions.overlay(prs, patches, now: Date())
             fetched = Date()
             try? store?.saveGitHubPRs(fetch.prs)
         }
@@ -81,7 +85,7 @@ final class GitHubModel: ObservableObject {
     }
 
     func loadCache() {
-        prs = (try? store?.githubPRs()) ?? [:]
+        prs = GitHubActions.overlay((try? store?.githubPRs()) ?? [:], patches, now: Date())
         fetched = (try? store?.githubFetched()) ?? nil
         directory = (try? store?.ticketDirectory()) ?? TicketDirectory()
         cachedCount = Set(prs.values.flatMap { $0.map(\.url) }).count
@@ -119,9 +123,35 @@ final class GitHubModel: ObservableObject {
 
     /// Keeps the selection through a change of tab, filter, sort or refresh while its pull request is listed; otherwise clears it.
     func reconcile() {
+        marked = GitHubActions.pruned(marked, in: visible)
         guard hasData else { return }
         guard let url = GitHubSelection.preserved(selectedURL, in: visible) else { return select(nil) }
         if page == nil { select(visible.first { $0.url == url }) }
+    }
+
+    // MARK: Marking and actions
+
+    var markedPRs: [GitHubPR] { visible.filter { marked.contains($0.url) } }
+
+    func toggleMark(_ pr: GitHubPR) { marked = GitHubActions.toggled(pr.url, in: marked, selected: selectedURL) }
+
+    func markRange(to pr: GitHubPR) { marked = GitHubActions.marked(through: pr.url, from: selectedURL, in: visible, adding: marked) }
+
+    func clearMarks() { if !marked.isEmpty { marked = [] } }
+
+    /// Shows what a confirmed action did before GitHub's search catches up.
+    func applied(_ request: GitHubActionRequest) {
+        guard let patch = GitHubActions.patch(for: request.action, now: Date()) else { return }
+        if patch.state != nil { patches[request.url] = patch }
+        prs = prs.mapValues { rows in rows.map { $0.url == request.url ? GitHubActions.apply(patch, to: $0) : $0 } }
+        if page?.pr.url == request.url { page?.apply(patch) }
+    }
+
+    func refreshAfterAction() {
+        Task {
+            await refresh()
+            page?.start()
+        }
     }
 
     private func settled() {
@@ -170,6 +200,8 @@ final class GitHubModel: ObservableObject {
         page = nil
         selectedURL = nil
     }
+
+    func showMarked(_ urls: Set<String>) { marked = urls }
 
     func showSample(selecting pr: GitHubPR?, detail: GitHubPRDetail?) {
         page = pr.map { GitHubDetailModel(pr: $0, sample: detail) }

@@ -135,6 +135,7 @@ enum GitHubPreview {
                                              comments: GitHubCommentsModel(pr: commentPR, sample: sampleComments, filter: GitHubCommentsFilter(scope: .unresolved)),
                                              directory: directory, ask: {}, lazyComments: false),
                          appearance: .aqua, to: output.appendingPathComponent("comments-page-light.png"))
+            await renderActions(model: model, window: window, directory: directory, shot: shot, output: output)
             exit(0)
         }
         NSApplication.shared.run()
@@ -174,6 +175,105 @@ enum GitHubPreview {
         try? await Task.sleep(nanoseconds: 1_200_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    @MainActor
+    private static func renderActions(model: GitHubModel, window: NSWindow, directory: TicketDirectory,
+                                      shot: (String, [NSAppearance.Name]) async -> Void, output: URL) async {
+        let actions = GitHubActionsModel.shared
+        let folder = output.deletingLastPathComponent().appendingPathComponent("ghactions-preview", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let both: [NSAppearance.Name] = [.aqua, .darkAqua]
+        func name(_ base: String, _ appearance: NSAppearance.Name) -> URL {
+            folder.appendingPathComponent("\(base)-\(appearance == .aqua ? "light" : "dark").png")
+        }
+        let failing = samples[.reviewRequested]![1]
+        let approve = GitHubActionDraft(request: GitHubActionRequest(.approve, pr: failing).with(comment: "Looks right to me, thanks for the quick fix.", deleteBranch: false),
+                                        pr: failing, target: GitHubActionTarget(pr: failing))
+        let closing = samples[.created]![0]
+        var closeTarget = GitHubActionTarget(pr: closing)
+        closeTarget.head = "NI/QDLY-8315-strawbay-send-guard"
+        closeTarget.base = "develop"
+        let close = GitHubActionDraft(request: GitHubActionRequest(.close, pr: closing).with(comment: "Superseded by the new batch sender.", deleteBranch: true),
+                                      pr: closing, target: closeTarget)
+        let own = samples[.created]![1]
+        let blocked = GitHubActionDraft(request: GitHubActionRequest(.approve, pr: own), pr: own, target: GitHubActionTarget(pr: own))
+        let checking = GitHubActionDraft(request: GitHubActionRequest(.approve, pr: failing), pr: failing, target: GitHubActionTarget(pr: failing), checking: true)
+        let sheets: [(String, AnyView)] = [
+            ("approve-failing-checks", AnyView(ActionConfirmSheet(draft: approve, confirm: {}, cancel: {}))),
+            ("close-delete-branch", AnyView(ActionConfirmSheet(draft: close, confirm: {}, cancel: {}))),
+            ("approve-own-blocked", AnyView(ActionConfirmSheet(draft: blocked, confirm: {}, cancel: {}))),
+            ("approve-checking", AnyView(ActionConfirmSheet(draft: checking, confirm: {}, cancel: {}))),
+            ("explain", AnyView(ActionExplainSheet(continueAction: {}, cancel: {}))),
+        ]
+        for (base, view) in sheets {
+            for appearance in both { await renderSheet(view, appearance: appearance, to: name(base, appearance)) }
+        }
+        let snyk = stalePRs
+        let bulk: [(String, [GitHubBulk.Outcome?], Bool, Bool)] = [
+            ("bulk-close", [], false, false),
+            ("bulk-close-progress", [.done, .done, nil, nil, nil], true, false),
+            ("bulk-close-result", [.done, .done, .failed(.branchProtection("Base branch policy prohibits the merge")), .done, .skipped("Already closed")], false, true),
+        ]
+        for (base, outcomes, running, finished) in bulk {
+            let draft = GitHubBulkDraft(.close, prs: snyk, offersBranchDelete: true)
+            draft.showSample(outcomes: outcomes, running: running, finished: finished)
+            for appearance in both { await renderSheet(BulkActionSheet(draft: draft, confirm: {}, cancel: {}), appearance: appearance, to: name(base, appearance)) }
+        }
+        let now = Date()
+        func record(_ action: GitHubAction, _ pr: GitHubPR, ago: TimeInterval, error: GitHubActionError? = nil) -> GitHubActionRecord {
+            GitHubActionRecord(id: Int64(1_000 - ago), at: now.addingTimeInterval(-ago), request: GitHubActionRequest(action, pr: pr), succeeded: error == nil, error: error?.message)
+        }
+        let records = [record(.close, snyk[0], ago: 40), record(.close, snyk[1], ago: 45), record(.approve, failing, ago: 900),
+                       record(.approve, own, ago: 4_000, error: .ownPullRequest), record(.reopen, samples[.created]![8], ago: 9_000),
+                       record(.close, samples[.created]![8], ago: 12_000), record(.comment, failing, ago: 90_000)]
+        try? model.store?.clearGitHubActions()
+        for record in records.reversed() { _ = try? model.store?.saveGitHubAction(record) }
+        actions.showSample(enabled: true, records: records)
+        model.showSample(prs: samples, directory: directory)
+        for appearance in both { await renderSettings(model, appearance: appearance, to: name("settings-actions", appearance)) }
+        actions.showSample(enabled: false)
+        await renderSettings(model, appearance: .aqua, to: name("settings-actions-off", .aqua))
+        let sample = detailSamples[0]
+        for (base, enabled) in [("page-actions", true), ("page-actions-off", false)] {
+            actions.showSample(enabled: enabled)
+            for appearance in both {
+                await renderDetail(sample, directory: directory, appearance: appearance, to: name(base, appearance))
+            }
+        }
+        actions.showSample(enabled: true, banner: .init(text: GitHubActions.successText(GitHubActionRequest(.close, pr: snyk[0])), reopen: [GitHubActionRequest(.reopen, pr: snyk[0])]))
+        model.showSample(prs: samples, directory: directory)
+        model.showMarked(Set(samples[.created]!.prefix(4).map(\.url)))
+        await shot("list-marked", both)
+        actions.showSample(enabled: true, banner: .init(text: GitHubActions.successText(GitHubActionRequest(.approve, pr: failing))))
+        await shot("banner-approved", [.aqua])
+        actions.showSample(enabled: true, banner: .init(text: GitHubActions.failureText(GitHubActionRequest(.approve, pr: own), .ownPullRequest), isError: true,
+                                                         details: GitHubActions.commandLine(GitHubActionRequest(.approve, pr: own))))
+        await shot("banner-error", [.aqua])
+        actions.showSample(enabled: false)
+        model.showMarked([])
+    }
+
+    @MainActor
+    private static func renderSheet(_ view: some View, appearance: NSAppearance.Name, to url: URL) async {
+        let controller = NSHostingController(rootView: view.background(Color(nsColor: .windowBackgroundColor)))
+        controller.sizingOptions = .preferredContentSize
+        let window = NSWindow(contentViewController: controller)
+        window.appearance = NSAppearance(named: appearance)
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        PreviewRenderer.save(window, to: url)
+        window.orderOut(nil)
+    }
+
+    static var stalePRs: [GitHubPR] {
+        let now = Date()
+        let bumps = [("cryptography", "45.0.7", "46.0.5"), ("urllib3", "2.2.1", "2.5.0"), ("jinja2", "3.1.4", "3.1.6"), ("requests", "2.31.0", "2.32.4"), ("werkzeug", "3.0.1", "3.0.6")]
+        return bumps.enumerated().map { index, bump in
+            GitHubPR(url: "https://github.com/niklas/devops/pull/\(180 + index)", number: 180 + index, title: "[Snyk] Security upgrade \(bump.0) from \(bump.1) to \(bump.2)",
+                     repo: "niklas/devops", state: .open, updated: now.addingTimeInterval(-Double(index + 3) * 86_400 * 20), checks: .passed, author: "snyk-bot", additions: 1, deletions: 1)
+        }
     }
 
     static var commentSamples: GitHubComments {

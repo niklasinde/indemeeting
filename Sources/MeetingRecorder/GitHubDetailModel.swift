@@ -48,6 +48,14 @@ final class GitHubDetailModel: ObservableObject {
         poll = nil
     }
 
+    /// Shows the result of an action until the fetch that follows it.
+    func apply(_ patch: GitHubActions.Patch) {
+        guard var shown = detail else { return }
+        patch.state.map { shown.state = $0 }
+        patch.review.map { shown.review = $0 }
+        detail = shown
+    }
+
     private func refresh() async {
         loading = true
         let cli = GitHubLogic.findCLI(), repo = pr.repo, number = pr.number

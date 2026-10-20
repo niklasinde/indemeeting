@@ -252,7 +252,7 @@ enum GitHubClaude {
     /// the user's own allow rules nor their hooks (which would add turns and speak the answer) apply.
     static let deniedTools = ["Edit", "Write", "NotebookEdit", "WebFetch", "Bash(gh pr review:*)", "Bash(gh pr comment:*)",
                               "Bash(gh pr merge:*)", "Bash(gh pr edit:*)", "Bash(gh pr close:*)", "Bash(gh pr create:*)",
-                              "Bash(gh pr ready:*)", "Bash(gh issue:*)", "Bash(gh api:*)", "Bash(gh run rerun:*)",
+                              "Bash(gh pr ready:*)", "Bash(gh pr reopen:*)", "Bash(gh issue:*)", "Bash(gh api:*)", "Bash(gh run rerun:*)",
                               "Bash(gh run cancel:*)", "Bash(git push:*)", "Bash(git commit:*)", "Bash(git checkout:*)",
                               "Bash(git reset:*)", "Bash(git config:*)", "Bash(git * --output*)"]
 

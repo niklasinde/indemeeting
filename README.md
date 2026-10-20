@@ -571,7 +571,29 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   `gh run view|list` and `git log|diff|show|grep|blame` allowed, writes and `gh api` denied, no settings or hooks read, a 10 minute
   and 5 dollar limit, and Cancel stops it and what it started. The last answer per pull request is kept in `github_pr_reviews`
   with the commit it read, marked Outdated when new commits arrive, and rows with a fresh one show "Reviewed by Claude". Copy as
-  review comment puts `[AI]` on the first line; the app has no way to post to GitHub. A run costs roughly one dollar of usage.
+  review comment puts `[AI]` on the first line; Ask Claude cannot post to GitHub. A run costs roughly one dollar of usage.
+
+### Actions
+
+The only way this app writes to GitHub, through the signed-in `gh` (no token is handled). **Off by default**: Settings > Activity > GitHub >
+Allow actions on GitHub (approve, close). While off, the row menu shows no actions and the page shows Review and Close disabled.
+
+- **What:** Approve (optional comment), Request changes and Comment (comment required), Close (optional comment, optional Also delete
+  the branch, off by default) and Reopen. On the page: Review menu and Close. In the list: the row menu (Approve, Close). Command-click
+  or shift-click marks several rows; Close N pull requests runs them one at a time with a pause, shows each result, keeps a failure and
+  goes on, and stops at errors that would repeat (signed out, rate limit, offline).
+- **Every action asks first.** A sheet shows the pull request, title, author, state, checks and review decision, the comment and the
+  exact `gh` command (copyable). The state is fetched again when the sheet opens. Approve needs a click on its button (Return
+  cancels); Close may use Return. Your own pull request cannot be approved, closed or merged ones cannot be approved or closed, drafts
+  and failing checks warn. The first use shows a one-time explanation.
+- **Undo:** a close can be reopened from the result banner for 30 seconds and from Settings > Recent actions; that reopen is the undo of
+  something you just confirmed and does not ask again. An approval cannot be undone here; dismiss it on GitHub.
+- **Log:** every action, successful or not, is written to `github_actions` (time, action, repo, number, title, command, result, error),
+  shown as Recent actions (last 50) and clearable. Errors from `gh` are classified (signed out, missing scope, SAML, branch protection,
+  own pull request, already closed, offline, rate limit) and never retried.
+- **Nothing else can write:** not Claude (headless runs deny `gh pr review|close|reopen|merge|comment|edit|create|ready`, `gh api`; the
+  embedded terminal and Open in Claude only start Claude), not the chat tools, the MCP server, the phone API, command-line flags or
+  deep links (there is no URL scheme). The tests read the sources and fail if any of them can reach the code that runs the commands.
 
 `MeetingRecorder --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
 signals, and the GraphQL points used (read only). `--github-pr-threads owner/repo#n` is a probe that prints what the review

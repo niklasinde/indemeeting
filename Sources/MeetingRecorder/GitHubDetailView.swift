@@ -91,6 +91,7 @@ struct GitHubDetailContent: View {
     static let commentsAnchor = "comments"
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
+    @ObservedObject private var pageActions = GitHubActionsModel.shared
     @State private var bodyExpanded = false
     @State private var allCommits = false
     @State private var fileQuery = ""
@@ -187,6 +188,7 @@ struct GitHubDetailContent: View {
             OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
             TerminalToggle(key: pr.url, model: terminals)
             AskClaudeMenu(pr: pr, detail: detail, model: claude)
+            GitHubActionButtons(pr: pr, detail: detail, model: pageActions)
             ClaudeNoteBar(model: claude)
         }
         .controlSize(.small)
