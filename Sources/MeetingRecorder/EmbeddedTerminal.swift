@@ -54,7 +54,7 @@ enum EmbeddedTerminal {
     enum Placement: Equatable { case right, below }
 
     static let rightFromWidth = 1500.0
-    static let rightRange = 360.0...900.0
+    static let rightRange = 480.0...720.0
     static let belowRange = 160.0...700.0
     static let minimumPageWidth = 420.0
     static let minimumPageHeight = 200.0

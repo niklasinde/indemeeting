@@ -29,8 +29,6 @@ struct GitHubDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     GitHubDetailContent(pr: page.pr, detail: page.detail, comments: page.comments, directory: model.directory, ask: { model.ask(about: page.pr) })
-                        .frame(maxWidth: 760, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, RecordingDetail.gutter)
                         .padding(.bottom, 28)
                 }
@@ -39,7 +37,8 @@ struct GitHubDetailView: View {
                 .onChange(of: page.detail != nil) { scrollToComments(proxy) }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: GitHubLayout.pageWidth, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .onAppear(perform: claude.load)
         .alert("Allow Claude reviews?", isPresented: Binding(get: { claude.confirming != nil }, set: { if !$0 { claude.confirming = nil } })) {
             Button("Allow") { claude.confirmAllowing() }
@@ -99,21 +98,22 @@ struct GitHubDetailContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
-            header
-            actions
-            ClaudeReviewPanel(pr: pr, detail: detail, model: claude)
+            header.readingWidth()
+            actions.readingWidth()
+            ClaudeReviewPanel(pr: pr, detail: detail, model: claude).readingWidth()
             if let detail {
-                people(detail)
-                description(detail)
+                people(detail).readingWidth()
+                description(detail).readingWidth()
                 checks(detail)
                 commits(detail)
                 files(detail)
-                GitHubCommentsSection(model: comments, lazy: lazyComments).id(Self.commentsAnchor)
+                GitHubCommentsSection(model: comments, lazy: lazyComments).id(Self.commentsAnchor).readingWidth()
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Fetching the pull request\u{2026}").foregroundStyle(.secondary)
                 }
+                .readingWidth()
             }
         }
     }
@@ -363,6 +363,11 @@ private struct DetailRow<Content: View>: View {
             .onTapGesture { url.map(open) }
             .help(url ?? "")
     }
+}
+
+private extension View {
+    /// Prose lines stop at the reading width; the lists beside them keep the whole page column.
+    func readingWidth() -> some View { frame(maxWidth: GitHubLayout.readingWidth, alignment: .leading) }
 }
 
 struct Note: View {

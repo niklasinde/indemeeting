@@ -41,7 +41,9 @@ enum TerminalCheck {
         terminals.showSample(prs[2].url, title: "Failing checks \u{00B7} finq.api #2460", directory: home, output: canned, running: false)
         window.setFrameOrigin(NSPoint(x: 0, y: 40))
         window.makeKeyAndOrderFront(nil)
-        for (name, size) in [("right", NSSize(width: 1800, height: 900)), ("below", NSSize(width: 1300, height: 900)), ("narrow", NSSize(width: 860, height: 760))] {
+        for (name, size) in [("1440", NSSize(width: 1440, height: 900)), ("1728", NSSize(width: 1728, height: 960)),
+                             ("2048", NSSize(width: 2048, height: 1080)), ("2560", NSSize(width: 2560, height: 1300)),
+                             ("780", NSSize(width: 780, height: 760))] {
             window.setContentSize(size)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 window.appearance = NSAppearance(named: appearance)

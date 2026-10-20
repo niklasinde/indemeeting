@@ -503,7 +503,9 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
 - **Layout:** the list (tabs, filters, sort, quick filters and rows) is on the left, 320 to 560 points wide (420 by default);
   drag the divider to resize it, the width is remembered. The pull request page is on the right, or "Select a pull request"
-  while nothing is selected. When the area right of the sidebar is narrower than 780 points (a window narrower than about
+  while nothing is selected. In a wide window the page is centred in its column, at most 1000 points wide, with its text at most
+  760 points wide so lines stay near 100 characters; the file, check and commit lists use the whole column. From 2200 points
+  the rows add a line with the author, the update time and the changes. When the area right of the sidebar is narrower than 780 points (a window narrower than about
   1000) the two take turns instead: a click shows the page full width with a "Pull requests" back button.
 - **Selecting:** a click selects and shows the page at once, from the cache. Up and Down (also with Command) move through the
   filtered and sorted list and keep the row in view, Return moves to the page (Escape back to the list), double-click or
@@ -548,7 +550,7 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   instead. Meetings have the same under Ask > Open in Claude, which points Claude at the MeetingRecorder MCP tools.
 - **In this app (embedded terminal):** the first group of the Open in Claude menu is Open in; "In this app" runs the interactive
   `claude "<prompt>"` in a terminal pane on the pull request page instead of another app. Nothing starts on selection, only on the click.
-  The pane sits to the right of the page in a window at least 1500 pt wide and below it otherwise, with a draggable edge, and a toolbar
+  The pane sits to the right of the page in a window at least 1500 pt wide and below it otherwise, 480 to 720 points wide to the right (the width is remembered), with a draggable edge, and a toolbar
   with Restart, Stop (Ctrl-C, then SIGHUP and SIGKILL for what stays), Copy all output, Hide and Close. There is one session per pull request:
   other sessions keep running while you browse (a green dot on the row, a count in the list header, a Terminal button with a dot on the
   page) and selecting the pull request again shows the same terminal with its scrollback. The session runs through `/bin/zsh -l -c`

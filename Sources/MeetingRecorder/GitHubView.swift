@@ -3,7 +3,7 @@ import SwiftUI
 
 struct GitHubView: View {
     @ObservedObject var model: GitHubModel
-    @AppStorage("githubListWidth") private var listWidth = Self.defaultListWidth
+    @AppStorage("githubListWidth") private var listWidth = GitHubLayout.defaultListWidth
     @State private var showsDetail = false
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
@@ -11,18 +11,13 @@ struct GitHubView: View {
     @ObservedObject private var actions = GitHubActionsModel.shared
 
     enum Pane { case list, detail }
-    static let defaultListWidth = 420.0
-    static let listWidths = 320.0...560.0
-    static let minimumDetailWidth = 420.0
-    /// Below this the list and the page take turns instead of sitting side by side.
-    static let compactBelow = 780.0
 
     var body: some View {
         GeometryReader { proxy in
             if !model.showsList {
-                listPane
-            } else if proxy.size.width < Self.compactBelow {
-                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }, total: proxy.size.width) } else { listPane }
+                listPane(width: proxy.size.width)
+            } else if proxy.size.width < GitHubLayout.compactBelow {
+                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }, total: proxy.size.width) } else { listPane(width: proxy.size.width) }
             } else {
                 split(width: proxy.size.width)
             }
@@ -42,16 +37,12 @@ struct GitHubView: View {
     }
 
     private func split(width: CGFloat) -> some View {
-        let list = Self.listWidth(listWidth, in: width)
+        let list = GitHubLayout.listWidth(listWidth, in: width)
         return HStack(spacing: 0) {
-            listPane.frame(width: list)
+            listPane(width: width).frame(width: list)
             splitter(current: list, total: width)
             detailPane(back: nil, total: width)
         }
-    }
-
-    static func listWidth(_ stored: Double, in total: Double) -> Double {
-        min(max(stored, listWidths.lowerBound), min(listWidths.upperBound, total - minimumDetailWidth))
     }
 
     private func splitter(current: Double, total: Double) -> some View {
@@ -64,7 +55,7 @@ struct GitHubView: View {
                         .onChanged { drag in
                             let start = dragStart ?? current
                             dragStart = start
-                            listWidth = Self.listWidth(start + drag.translation.width, in: total)
+                            listWidth = GitHubLayout.listWidth(start + drag.translation.width, in: total)
                         }
                         .onEnded { _ in dragStart = nil })
             }
@@ -124,14 +115,14 @@ struct GitHubView: View {
         focus = .list
     }
 
-    private var listPane: some View {
+    private func listPane(width: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = model.error, model.enabled, model.hasData { ErrorBanner(error: error) }
             if model.marked.count > 1 {
                 MarkedBar(count: model.marked.count, model: actions, close: { actions.beginBulk(.close, model.markedPRs) }, clear: model.clearMarks)
             }
-            content
+            content(showsMetadata: GitHubLayout.showsRowMetadata(width: width))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -243,7 +234,7 @@ struct GitHubView: View {
         if model.filter.quick.contains(quick) { model.filter.quick.remove(quick) } else { model.filter.quick.insert(quick) }
     }
 
-    @ViewBuilder private var content: some View {
+    @ViewBuilder private func content(showsMetadata: Bool) -> some View {
         if !model.enabled {
             GitHubEmptyState(icon: "arrow.triangle.branch", title: "Your pull requests, in one place",
                        text: "Reads your pull requests through the GitHub CLI. Nothing is uploaded.") {
@@ -261,7 +252,8 @@ struct GitHubView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(model.visible) { pr in
-                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url), show: show)
+                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
+                                           showsMetadata: showsMetadata, show: show)
                             Divider().padding(.horizontal, Self.gutter)
                         }
                     }
@@ -303,6 +295,7 @@ private struct PullRequestRow: View {
     @ObservedObject var model: GitHubModel
     let selected: Bool
     let marked: Bool
+    let showsMetadata: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
@@ -319,6 +312,7 @@ private struct PullRequestRow: View {
                 StatusMark(pr: pr)
             }
             Text(pr.title).lineLimit(2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+            if showsMetadata { metadata }
             details
         }
         .padding(.vertical, 8)
@@ -353,14 +347,26 @@ private struct PullRequestRow: View {
         .help(pr.url)
     }
 
+    /// Wide windows only: who opened it and when it changed, in the room the width leaves.
+    private var metadata: some View {
+        Text([pr.author, GitHubLogic.updatedText(pr.updated, now: Date()), GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)]
+            .compactMap { $0 }.joined(separator: " \u{00B7} "))
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .monospacedDigit()
+            .lineLimit(1)
+    }
+
     private var details: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             FlowChips(chips)
-            Spacer(minLength: 0)
-            Text("\(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)) \u{00B7} \(GitHubLogic.updatedText(pr.updated, now: Date()))")
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize()
+            if !showsMetadata {
+                Spacer(minLength: 0)
+                Text("\(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)) \u{00B7} \(GitHubLogic.updatedText(pr.updated, now: Date()))")
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
         .font(.caption)
         .foregroundStyle(.tertiary)
