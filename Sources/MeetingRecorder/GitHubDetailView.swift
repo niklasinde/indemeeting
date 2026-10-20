@@ -139,7 +139,7 @@ struct GitHubDetailContent: View {
                 HStack(spacing: 6) {
                     BranchChip(name: detail.base)
                     Image(systemName: "arrow.left").font(.caption).foregroundStyle(.tertiary)
-                    BranchChip(name: detail.head)
+                    BranchChip(name: detail.head, copyable: !detail.head.isEmpty)
                 }
             }
         }
@@ -182,6 +182,7 @@ struct GitHubDetailContent: View {
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
+            if let branch = detail?.head, !branch.isEmpty { CopyBranchMenu(branch: branch, number: pr.number, repo: pr.repo) }
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
             OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
             TerminalToggle(key: pr.url, model: terminals)
@@ -364,16 +365,61 @@ struct Note: View {
     var body: some View { Text(text).font(.caption).foregroundStyle(.tertiary).padding(.top, 6) }
 }
 
-private struct BranchChip: View {
-    let name: String
+/// Copies the head branch on the main click; the menu has the name and the commands that check it out.
+private struct CopyBranchMenu: View {
+    let branch: String
+    let number: Int
+    let repo: String
+    @State private var copied = false
 
     var body: some View {
-        Text(name)
+        Menu {
+            Button("Copy branch name") { copy(branch) }
+            Button("Copy git checkout command") { copy(GitHubLogic.gitCheckoutCommand(branch)) }
+            Button("Copy gh checkout command") { copy(GitHubLogic.ghCheckoutCommand(number: number, repo: repo)) }
+        } label: {
+            Label(copied ? "Copied" : "Copy Branch", systemImage: copied ? "checkmark" : "arrow.triangle.branch")
+        } primaryAction: {
+            copy(branch)
+        }
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("Copy \(branch)")
+    }
+
+    private func copy(_ text: String) {
+        GitHubModel.copy(text)
+        copied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            copied = false
+        }
+    }
+}
+
+private struct BranchChip: View {
+    let name: String
+    var copyable = false
+    @State private var copied = false
+
+    var body: some View {
+        Text(copied ? "Copied" : name)
             .font(.system(.caption, design: .monospaced))
             .lineLimit(1)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                guard copyable else { return }
+                GitHubModel.copy(name)
+                copied = true
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_500_000_000)
+                    copied = false
+                }
+            }
+            .help(copyable ? "Click to copy branch" : "")
     }
 }
 

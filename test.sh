@@ -30,6 +30,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/GitHubDetail.swift \
     Sources/MeetingRecorder/GitHubActivity.swift \
     Sources/MeetingRecorder/GitHubComments.swift \
+    Sources/MeetingRecorder/GitHubBranch.swift \
     Sources/MeetingRecorder/GitHubCommentsLogic.swift \
     Sources/MeetingRecorder/GitHubStore.swift \
     Sources/MeetingRecorder/GitHubSelection.swift \
@@ -52,6 +53,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/GitHubSelectionTests.swift \
     Tests/MeetingRecorderTests/GitHubActivityTests.swift \
     Tests/MeetingRecorderTests/GitHubCommentsTests.swift \
+    Tests/MeetingRecorderTests/GitHubBranchTests.swift \
     Tests/MeetingRecorderTests/GitHubClaudeTests.swift \
     Tests/MeetingRecorderTests/EmbeddedTerminalTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \

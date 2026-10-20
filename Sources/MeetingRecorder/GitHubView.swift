@@ -319,6 +319,8 @@ private struct PullRequestRow: View {
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
+            Button("Copy Branch") { model.store?.githubHeadBranch(pr.url).map(GitHubModel.copy) }
+                .disabled(model.store?.githubHeadBranch(pr.url) == nil)
             Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
             Divider()
             Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
