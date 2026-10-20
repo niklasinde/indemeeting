@@ -5,6 +5,7 @@ struct GitHubPRDetail: Equatable {
     enum ReviewState: Int { case changesRequested, pending, commented, approved, dismissed }
     enum Change: String { case added, modified, removed, renamed, copied, changed }
     enum CheckStatus: Int { case failed, running, pending, cancelled, passed, skipped }
+    enum MergeState: String { case clean = "CLEAN", blocked = "BLOCKED", unstable = "UNSTABLE", dirty = "DIRTY", behind = "BEHIND", draft = "DRAFT", hasHooks = "HAS_HOOKS", unknown = "UNKNOWN" }
 
     struct Reviewer: Equatable {
         let name: String
@@ -76,6 +77,9 @@ struct GitHubPRDetail: Equatable {
     var rollup = GitHubPR.Checks.none
     /// The newest commit; missing in a response cached before it was asked for.
     var headOid: String?
+    var mergeState = MergeState.unknown
+    /// What the repository allows, in the order it is preferred; empty when GitHub did not say.
+    var mergeMethods: [GitHubMergeMethod] = []
 
     var hasRunningChecks: Bool { checks.contains { $0.status == .running || $0.status == .pending } }
     var ticket: String? { ActivityLogic.ticket(in: title, head) }
@@ -86,8 +90,9 @@ extension GitHubLogic {
         query($owner: String!, $name: String!, $number: Int!) {
           rateLimit { cost remaining }
           repository(owner: $owner, name: $name) {
+            mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed
             pullRequest(number: $number) {
-              number title body url isDraft state merged mergeable reviewDecision baseRefName headRefName createdAt updatedAt
+              number title body url isDraft state merged mergeable mergeStateStatus reviewDecision baseRefName headRefName createdAt updatedAt
               additions deletions changedFiles
               author { login }
               labels(first: 20) { nodes { name } }
@@ -183,6 +188,7 @@ extension GitHubLogic {
             let state: String?
             let merged: Bool?
             let mergeable: String?
+            let mergeStateStatus: String?
             let reviewDecision: String?
             let baseRefName: String?
             let headRefName: String?
@@ -200,7 +206,12 @@ extension GitHubLogic {
             let files: Names<FileNode>?
             let lastCommit: LastCommit?
         }
-        struct Repository: Decodable { let pullRequest: PullRequest? }
+        struct Repository: Decodable {
+            let mergeCommitAllowed: Bool?
+            let squashMergeAllowed: Bool?
+            let rebaseMergeAllowed: Bool?
+            let pullRequest: PullRequest?
+        }
         struct Payload: Decodable { let repository: Repository? }
         struct Failure: Decodable { let message: String? }
         let data: Payload?
@@ -222,7 +233,8 @@ extension GitHubLogic {
     static func parseDetail(_ data: Data) throws -> GitHubPRDetail {
         let response: DetailResponse
         do { response = try JSONDecoder().decode(DetailResponse.self, from: data) } catch { throw GitHubError.failed("unexpected response") }
-        guard let node = response.data?.repository?.pullRequest, let url = node.url, let number = node.number, let title = node.title else {
+        let settings = response.data?.repository
+        guard let node = settings?.pullRequest, let url = node.url, let number = node.number, let title = node.title else {
             throw GitHubError.classify(response.errors?.compactMap(\.message).joined(separator: "\n") ?? "pull request not found")
         }
         let lastCommit = node.lastCommit?.nodes?.compactMap { $0 }.last?.commit
@@ -244,7 +256,10 @@ extension GitHubLogic {
             assignees: (node.assignees?.nodes ?? []).compactMap { $0?.login }, reviewers: reviewers(node),
             commits: commits, commitCount: node.commits?.totalCount ?? commits.count,
             files: (node.files?.nodes ?? []).compactMap { $0.flatMap(file) }, fileCount: node.files?.totalCount ?? node.changedFiles ?? 0,
-            checks: checks, checkCount: contexts?.totalCount ?? checks.count, rollup: Self.checks(rollup?.state), headOid: lastCommit?.oid)
+            checks: checks, checkCount: contexts?.totalCount ?? checks.count, rollup: Self.checks(rollup?.state), headOid: lastCommit?.oid,
+            mergeState: GitHubPRDetail.MergeState(rawValue: node.mergeStateStatus ?? "") ?? .unknown,
+            mergeMethods: GitHubMergeMethod.allowed(squash: settings?.squashMergeAllowed, merge: settings?.mergeCommitAllowed,
+                                                    rebase: settings?.rebaseMergeAllowed))
     }
 
     /// `acme/api` from `https://github.com/acme/api/pull/7`.

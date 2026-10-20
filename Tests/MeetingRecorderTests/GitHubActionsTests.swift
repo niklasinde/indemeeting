@@ -103,7 +103,7 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
 
     ("a comment with quotes, dollar signs, backticks, Swedish letters and newlines reaches gh as one argument", {
         let text = "He said \"hi\" and 'bye' $HOME `uname` $(whoami) \u{00E5}\u{00E4}\u{00F6} \u{00C5}\u{00C4}\u{00D6}\nsecond line; rm -rf / && echo -n"
-        for action in [GitHubAction.approve, .requestChanges, .comment, .close, .reopen] {
+        for action in [GitHubAction.approve, .requestChanges, .comment, .merge, .close, .reopen] {
             let fake = try FakeGH()
             defer { fake.remove() }
             let ask = request(action, comment: text)
@@ -166,7 +166,7 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         check(approve.facts.contains { $0.label == "Author" && $0.value == "elin" }, "author")
         check(approve.facts.contains { $0.label == "Checks" && $0.value == "Failing" && $0.tone == .bad }, "checks")
         check(approve.facts.contains { $0.label == "Review" && $0.tone == .normal }, "review decision")
-        check(approve.warnings == ["Checks are failing"], "warning line")
+        check(approve.warnings.map(\.text) == [GitHubActions.checksFailing], "warning line")
         check(approve.command == "gh pr review 2442 --repo acme/finq.api --approve --body Nice", "the exact command: \(approve.command)")
         check(approve.comment == "Nice", "the comment")
         check(!approve.confirmIsDefault, "approving needs a deliberate click, Return does not do it")
@@ -331,7 +331,7 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         check(!GitHubActions.isEnabled(defaults), "and off again")
         GitHubActions.setExplained(defaults)
         check(GitHubActions.isExplained(defaults), "explained")
-        check(GitHubActions.settingNote == "Runs gh on your behalf. Every action asks you to confirm first.", "the note")
+        check(GitHubActions.settingNote == "Runs gh on your behalf. Every action, merging included, asks you to confirm first.", "the note")
         check(GitHubActions.disabledHelp.contains("Settings"), "the tooltip says where to turn it on")
     }),
 
@@ -410,7 +410,8 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
     ("nothing outside the GitHub views and models can reach the code that writes", {
         let all = try sources()
         check(all.count > 50, "the sources were found: \(all.count)")
-        let writing = ["\"--approve\"", "\"--request-changes\"", "\"--delete-branch\"", "\"pr\", \"review\"", "\"pr\", \"close\"", "\"pr\", \"reopen\""]
+        let writing = ["\"--approve\"", "\"--request-changes\"", "\"--delete-branch\"", "\"pr\", \"review\"", "\"pr\", \"close\"", "\"pr\", \"reopen\"",
+                       "\"pr\", \"merge\"", "\"--squash\"", "\"--merge\"", "\"--rebase\"", "\"--auto\"", "\"--admin\""]
         for (name, text) in all {
             for needle in writing where text.contains(needle) { check(name == "GitHubActions.swift", "\(needle) appears in \(name)") }
         }
@@ -433,5 +434,157 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         let plist = try String(contentsOf: sourceFolder.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist"), encoding: .utf8)
         check(!plist.contains("CFBundleURLTypes"), "no URL scheme that a link could use")
         check(all.values.allSatisfy { !$0.contains("onOpenURL") && !$0.contains("handleGetURLEvent") }, "no deep link handler")
+    }),
+
+    ("merge runs gh pr merge with one flag for the method, never auto-merge or an admin bypass", {
+        for method in GitHubMergeMethod.allCases {
+            var ask = request(.merge)
+            ask.method = method
+            check(GitHubActions.arguments(ask) == ["pr", "merge", "2442", "--repo", "acme/finq.api", method.flag], "\(method) without options")
+        }
+        var full = request(.merge, comment: "Thanks, \u{00E5}\u{00E4}\u{00F6}", deleteBranch: true)
+        full.method = .rebase
+        check(GitHubActions.arguments(full) == ["pr", "merge", "2442", "--repo", "acme/finq.api", "--rebase", "--delete-branch", "--body", "Thanks, \u{00E5}\u{00E4}\u{00F6}"], "all options")
+        check(GitHubActions.commandLine(full) == "gh pr merge 2442 --repo acme/finq.api --rebase --delete-branch --body 'Thanks, \u{00E5}\u{00E4}\u{00F6}'", "the command line")
+        check(!GitHubActions.arguments(request(.merge, comment: "  ")).contains("--body"), "a blank body is not sent")
+        check(!GitHubActions.arguments(request(.merge)).contains("--delete-branch"), "the branch stays by default")
+        for action in GitHubAction.allCases {
+            check(!GitHubActions.arguments(request(action, comment: "x", deleteBranch: true)).contains { $0 == "--auto" || $0 == "--admin" }, "\(action) has no auto or admin")
+        }
+    }),
+
+    ("the merge method is the first one the repository allows, and only allowed ones are offered", {
+        check(GitHubMergeMethod.allowed(squash: true, merge: true, rebase: true) == [.squash, .merge, .rebase], "all allowed in order")
+        check(GitHubMergeMethod.allowed(squash: false, merge: true, rebase: nil) == [.merge], "unknown and disabled are not offered")
+        check(GitHubMergeMethod.allowed(squash: nil, merge: nil, rebase: nil).isEmpty, "nothing known")
+        check(GitHubMergeMethod.choose(.squash, from: [.merge, .rebase]) == .merge, "squash not allowed falls to merge")
+        check(GitHubMergeMethod.choose(.rebase, from: [.squash, .rebase]) == .rebase, "a choice that is allowed stays")
+        check(GitHubMergeMethod.choose(.squash, from: []) == .squash, "nothing allowed keeps the choice")
+    }),
+
+    ("merge is refused when merged, closed, drafted, conflicting, unknown, or the method is not allowed", {
+        func ready(_ change: (inout GitHubActionTarget) -> Void = { _ in }) -> GitHubActionTarget {
+            var t = target()
+            t.mergeable = .mergeable
+            t.mergeMethods = [.squash, .merge, .rebase]
+            t.mergeState = .clean
+            t.base = "develop"
+            change(&t)
+            return t
+        }
+        check(!isBlocked(GitHubActions.preflight(request(.merge), ready())), "a ready pull request")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.state = .merged })), "merged")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.state = .closed })), "closed")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.isDraft = true })), "draft")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.mergeable = .conflicting })), "conflicts")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.mergeable = .unknown })), "mergeable not known after the refresh")
+        check(isBlocked(GitHubActions.preflight(request(.merge), ready { $0.mergeMethods = [] })), "no methods known")
+        var rebase = request(.merge)
+        rebase.method = .rebase
+        check(isBlocked(GitHubActions.preflight(rebase, ready { $0.mergeMethods = [.squash, .merge] })), "rebase not allowed")
+        check(!isBlocked(GitHubActions.preflight(request(.merge), ready { $0.author = "niklas"; $0.viewer = "Niklas" })), "your own pull request can be merged")
+    }),
+
+    ("failing, running and blocked checks warn, and stay allowed after confirmation", {
+        func ready(_ change: (inout GitHubActionTarget) -> Void) -> GitHubActionTarget {
+            var t = target()
+            t.mergeable = .mergeable
+            t.mergeMethods = [.squash]
+            change(&t)
+            return t
+        }
+        check(warnings(GitHubActions.preflight(request(.merge), ready { _ in })).isEmpty, "clean has no warning")
+        check(warnings(GitHubActions.preflight(request(.merge), ready { $0.checks = .failed })) == [GitHubActions.checksFailing], "failing")
+        check(warnings(GitHubActions.preflight(request(.merge), ready { $0.checks = .running })) == ["Checks are still running"], "running")
+        check(warnings(GitHubActions.preflight(request(.merge), ready { $0.mergeState = .blocked })).count == 1, "blocked by protection")
+        check(warnings(GitHubActions.preflight(request(.merge), ready { $0.mergeState = .unstable })) == ["Some checks are not passing."], "unstable")
+        let failing = GitHubActions.confirmation(for: request(.merge), target: ready { $0.checks = .failed })
+        check(failing.canConfirm && failing.warnings.contains { $0.text == GitHubActions.checksFailing && $0.tone == .bad }, "red line, still confirmable")
+    }),
+
+    ("the merge sheet shows the base, conflicts, review requirement, the command, and no Return default", {
+        var t = target()
+        t.mergeable = .mergeable
+        t.mergeMethods = [.squash, .merge]
+        t.base = "develop"
+        t.head = "NI/QDLY-1"
+        t.review = .required
+        t.checks = .passed
+        let c = GitHubActions.confirmation(for: request(.merge), target: t)
+        check(c.confirmTitle == "Merge pull request" && !c.confirmIsDefault && c.canConfirm, "merge needs a click")
+        check(c.facts.contains { $0.label == "Base" && $0.value == "develop" }, "base")
+        check(c.facts.contains { $0.label == "Conflicts" && $0.value == "No conflicts" && $0.tone == .good }, "conflicts")
+        check(c.facts.contains { $0.label == "Review" && $0.value == "Review required" && $0.tone == .warning }, "the requirement")
+        check(c.offersBranchDelete && c.commentLabel == "Commit body (optional)", "branch and body")
+        check(c.mergeMethods == [.squash, .merge], "the methods offered")
+        check(c.command == "gh pr merge 2442 --repo acme/finq.api --squash", "the command: \(c.command)")
+        var conflicting = t
+        conflicting.mergeable = .conflicting
+        let blocked = GitHubActions.confirmation(for: request(.merge), target: conflicting)
+        check(!blocked.canConfirm && blocked.blocker?.contains("conflicts") == true, "conflicts hold confirm back")
+        check(!GitHubActions.confirmation(for: request(.merge), target: { var d = t; d.state = .merged; return d }()).canConfirm, "merged holds it back")
+    }),
+
+    ("merge errors from gh are classified, and a conflict is not mistaken for protection", {
+        let fixtures: [(String, GitHubActionError)] = [
+            ("GraphQL: Pull request is not mergeable: the merge commit cannot be cleanly created", .conflicts),
+            ("Pull request acme/api#7 has merge conflicts", .conflicts),
+            ("GraphQL: Squash merges are not allowed on this repository.", .methodNotAllowed),
+            ("GraphQL: Merge commits are not allowed on this repository.", .methodNotAllowed),
+            ("GraphQL: Rebase merges are not allowed on this repository.", .methodNotAllowed),
+            ("GraphQL: Pull request is not mergeable: 2 of 2 required status checks are expected", .branchProtection("GraphQL: Pull request is not mergeable: 2 of 2 required status checks are expected")),
+            ("GraphQL: Pull request is not mergeable", .branchProtection("GraphQL: Pull request is not mergeable")),
+            ("GraphQL: Pull request is already merged", .alreadyClosed),
+        ]
+        for (stderr, expected) in fixtures { check(GitHubActionError.classify(stderr) == expected, "\(stderr) -> \(GitHubActionError.classify(stderr))") }
+        check(GitHubActionError.conflicts.message.contains("conflicts") && GitHubActionError.methodNotAllowed.message.contains("merge method"), "messages")
+    }),
+
+    ("a fake gh merge runs once with the exact arguments, whatever gh answers", {
+        let merged = "\u{2713} Merged pull request acme/finq.api#2442"
+        let cases: [(Int32, String, String, GitHubActionError?)] = [
+            (0, merged, "", nil),
+            (1, "", "GraphQL: Pull request is not mergeable: the merge commit cannot be cleanly created", .conflicts),
+            (1, "", "GraphQL: Pull request is not mergeable: the base branch policy prohibits the merge", .branchProtection("GraphQL: Pull request is not mergeable: the base branch policy prohibits the merge")),
+            (1, "", "GraphQL: Squash merges are not allowed on this repository.", .methodNotAllowed),
+            (1, "", "HTTP 403: Resource protected by organization SAML enforcement.", .sso),
+            (1, "", "HTTP 403: API rate limit exceeded for user ID 1", .rateLimited),
+        ]
+        for (status, stdout, stderr, expected) in cases {
+            let fake = try FakeGH(exit: status, stdout: stdout, stderr: stderr)
+            defer { fake.remove() }
+            var ask = request(.merge, comment: "Ship it")
+            ask.method = .squash
+            let result = GitHubActionRunner.perform(ask, cli: fake.cli)
+            check(fake.calls == 1, "gh ran once: \(fake.calls)")
+            check(fake.arguments == GitHubActions.arguments(ask), "the arguments are the command's: \(fake.arguments)")
+            check(!fake.arguments.contains("--auto") && !fake.arguments.contains("--admin"), "no auto-merge, no admin bypass")
+            if let expected { check(result == .failure(expected), "\(stderr) -> \(result)") } else { check(result == .success(merged), "success: \(result)") }
+        }
+    }),
+
+    ("a merge shows as merged before GitHub's search does, and the audit log keeps it", {
+        let now = Date(timeIntervalSince1970: 1_792_400_000)
+        let open = pr(1)
+        let patch = GitHubActions.patch(for: .merge, now: now)!
+        check(patch.state == .merged && patch.review == nil, "merged, no review change")
+        check(GitHubActions.apply(patch, to: open).state == .merged, "applied")
+        let fetched: [GitHubKind: [GitHubPR]] = [.created: [open]]
+        check(GitHubActions.overlay(fetched, [open.url: patch], now: now.addingTimeInterval(10))[.created]?[0].state == .merged, "held over the fetch")
+        check(GitHubActions.overlay(fetched, [open.url: patch], now: now.addingTimeInterval(500)) == fetched, "and it lapses")
+        check(GitHubActions.successText(request(.merge)) == "Merged finq.api #2442 \u{00B7} GitHub can't undo a merge; you can revert it with a new PR", "the result text")
+        check(GitHubActions.failureText(request(.merge), .conflicts) == "Could not merge finq.api #2442. The branch has merge conflicts. Resolve them on the branch, then try again.", "the failure text")
+
+        let directory = try folder()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try MeetingStore.open(at: directory.appendingPathComponent("meetings.sqlite"))
+        var ask = request(.merge, comment: "Thanks")
+        ask.method = .merge
+        _ = try store.saveGitHubAction(GitHubActionRecord(at: now, request: ask, succeeded: true))
+        _ = try store.saveGitHubAction(GitHubActionRecord(at: now, request: request(.merge), succeeded: false, error: "The branch has merge conflicts."))
+        let rows = try store.githubActions()
+        check(rows.count == 2 && rows[1].action == .merge && rows[1].command == "gh pr merge 2442 --repo acme/finq.api --merge --body Thanks", "the audit row: \(rows.map(\.command))")
+        check(rows[1].succeeded && !rows[0].succeeded, "results kept")
+        check(GitHubActionRecord.reopenable(rows, now: now).isEmpty, "a merge cannot be reopened from the log")
     }),
 ]

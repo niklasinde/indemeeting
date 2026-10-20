@@ -597,16 +597,24 @@ then whose text names the pull request's address, and stores its name. Nothing i
 ### Actions
 
 The only way this app writes to GitHub, through the signed-in `gh` (no token is handled). **Off by default**: Settings > Activity > GitHub >
-Allow actions on GitHub (approve, close). While off, the row menu shows no actions and the page shows Review and Close disabled.
+Allow actions on GitHub (approve, merge, close). While off, the row menu shows no actions and the page shows Review, Merge and Close disabled.
 
-- **What:** Approve (optional comment), Request changes and Comment (comment required), Close (optional comment, optional Also delete
-  the branch, off by default) and Reopen. On the page: Review menu and Close. In the list: the row menu (Approve, Close). Command-click
+- **What:** Approve (optional comment), Request changes and Comment (comment required), Merge, Close (optional comment, optional Also
+  delete the branch, off by default) and Reopen. On the page: Review menu, Merge and Close. In the list: the row menu (Approve, Merge
+  for an open pull request, Close). Command-click
   or shift-click marks several rows; Close N pull requests runs them one at a time with a pause, shows each result, keeps a failure and
   goes on, and stops at errors that would repeat (signed out, rate limit, offline).
 - **Every action asks first.** A sheet shows the pull request, title, author, state, checks and review decision, the comment and the
   exact `gh` command (copyable). The state is fetched again when the sheet opens. Approve needs a click on its button (Return
   cancels); Close may use Return. Your own pull request cannot be approved, closed or merged ones cannot be approved or closed, drafts
   and failing checks warn. The first use shows a one-time explanation.
+- **Merge:** `gh pr merge <n> --repo <owner/repo> --squash|--merge|--rebase [--delete-branch] [--body <text>]`. The method defaults to
+  the first one the repository allows (squash, merge commit, rebase); methods it does not allow are not offered. The sheet shows the base
+  branch, conflicts, checks and the review requirement, and refuses drafts, merged or closed pull requests, conflicts, an unknown
+  mergeability and a method the repository does not allow. Failing checks and unsatisfied protection warn and stay allowed. Merge needs
+  a click (Return cancels). Guardrails: never `--auto` (no auto-merge), never `--admin` (no bypass of branch protection), no keyboard
+  shortcut, no drag-and-drop and no bulk merge. A merge cannot be undone on GitHub; the result says so, and it can only be reverted
+  with a new pull request.
 - **Undo:** a close can be reopened from the result banner for 30 seconds and from Settings > Recent actions; that reopen is the undo of
   something you just confirmed and does not ask again. An approval cannot be undone here; dismiss it on GitHub.
 - **Log:** every action, successful or not, is written to `github_actions` (time, action, repo, number, title, command, result, error),

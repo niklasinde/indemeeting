@@ -188,4 +188,14 @@ let githubDetailTests: [(name: String, run: () throws -> Void)] = [
         _ = try store.clearGitHubCache()
         check(try store.githubDetail(url) == nil, "cleared")
     }),
+    ("the merge state and the methods the repository allows are read from the detail", {
+        let bare = try GitHubLogic.parseDetail(detailJSON())
+        check(bare.mergeState == .unknown && bare.mergeMethods.isEmpty, "not known without the settings")
+        let json = String(decoding: detailJSON(), as: UTF8.self)
+            .replacingOccurrences(of: #""repository":{"pullRequest":{"#, with: #""repository":{"squashMergeAllowed":false,"mergeCommitAllowed":true,"rebaseMergeAllowed":true,"pullRequest":{"#)
+            .replacingOccurrences(of: #""mergeable":"MERGEABLE""#, with: #""mergeable":"MERGEABLE","mergeStateStatus":"BLOCKED""#)
+        let detail = try GitHubLogic.parseDetail(Data(json.utf8))
+        check(detail.mergeState == .blocked, "blocked by protection")
+        check(detail.mergeMethods == [.merge, .rebase], "squash is not offered: \(detail.mergeMethods)")
+    }),
 ]

@@ -17,9 +17,14 @@ final class GitHubActionDraft: ObservableObject, Identifiable {
         self.pr = pr
         request = GitHubActionRequest(action, pr: pr)
         target = GitHubActionTarget(pr: pr, detail: detail)
+        adoptMergeMethod()
     }
 
     var confirmation: GitHubActionConfirmation { GitHubActions.confirmation(for: request, target: target) }
+
+    private func adoptMergeMethod() {
+        request.method = GitHubMergeMethod.choose(request.method, from: target.mergeMethods)
+    }
 
     func refresh() async {
         let cli = GitHubLogic.findCLI(), repo = pr.repo, number = pr.number, needsViewer = target.viewer == nil
@@ -29,6 +34,7 @@ final class GitHubActionDraft: ObservableObject, Identifiable {
         switch result {
         case .success(let fetched):
             target = GitHubActionTarget(pr: pr, detail: fetched.detail, viewer: viewer ?? target.viewer)
+            adoptMergeMethod()
         case .failure(let error):
             note = "Could not check the current state (\(error.message)). The last fetched state is shown."
         }
@@ -42,6 +48,7 @@ final class GitHubActionDraft: ObservableObject, Identifiable {
         self.target = target
         self.checking = checking
         self.running = running
+        adoptMergeMethod()
     }
     #endif
 }

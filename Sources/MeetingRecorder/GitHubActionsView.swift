@@ -96,6 +96,7 @@ struct ActionConfirmSheet: View {
 
     var body: some View {
         let confirmation = draft.confirmation
+        let blocker = draft.checking ? nil : confirmation.blocker
         VStack(alignment: .leading, spacing: 14) {
             Text(confirmation.title).font(.title3.weight(.semibold))
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 4) {
@@ -107,14 +108,20 @@ struct ActionConfirmSheet: View {
                 }
             }
             .font(.callout)
-            if let blocker = confirmation.blocker {
+            if let blocker {
                 Label(blocker, systemImage: "xmark.octagon.fill").foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             }
-            ForEach(confirmation.warnings, id: \.self) { warning in
-                Label(warning, systemImage: "exclamationmark.triangle.fill").foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+            ForEach(confirmation.warnings, id: \.text) { warning in
+                Label(warning.text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(warning.tone.color).fixedSize(horizontal: false, vertical: true)
             }
-            if confirmation.blocker == nil {
-                CommentField(label: confirmation.commentRequired ? "Comment (required)" : "Comment (optional)", text: $draft.request.comment)
+            if blocker == nil {
+                if confirmation.mergeMethods.count > 1 {
+                    Picker("Merge method", selection: $draft.request.method) {
+                        ForEach(confirmation.mergeMethods) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                CommentField(label: confirmation.commentLabel, text: $draft.request.comment)
                 if confirmation.offersBranchDelete {
                     Toggle("Also delete the branch", isOn: $draft.request.deleteBranch)
                 }
@@ -299,6 +306,9 @@ struct GitHubActionButtons: View {
         .fixedSize()
         .disabled(!model.enabled)
         .help(model.enabled ? "Approve, request changes or comment. You confirm first." : GitHubActions.disabledHelp)
+        Button("Merge\u{2026}") { model.begin(.merge, pr, detail: detail) }
+            .disabled(!model.enabled || state != .open)
+            .help(model.enabled ? "Merge this pull request. You confirm first; GitHub cannot undo a merge." : GitHubActions.disabledHelp)
         if state == .closed {
             Button("Reopen\u{2026}") { model.begin(.reopen, pr, detail: detail) }
                 .disabled(!model.enabled)
@@ -321,6 +331,7 @@ struct GitHubRowActions: View {
         if GitHubActions.listShowsActions(enabled: model.enabled) {
             Divider()
             Button("Approve\u{2026}") { model.begin(.approve, pr) }.disabled(pr.state != .open)
+            if targets.count == 1, pr.state == .open { Button("Merge\u{2026}") { model.begin(.merge, pr) } }
             if targets.count > 1 {
                 Button("Close \(targets.count) Pull Requests\u{2026}") { model.beginBulk(.close, targets) }
             } else if pr.state == .closed {
@@ -361,7 +372,7 @@ struct ActionSettingsRows: View {
 
     var body: some View {
         Group {
-            SettingsRow("Allow actions on GitHub (approve, close)", detail: GitHubActions.settingNote) {
+            SettingsRow("Allow actions on GitHub (approve, merge, close)", detail: GitHubActions.settingNote) {
                 Toggle("Allow actions on GitHub", isOn: Binding(get: { model.enabled }, set: model.setEnabled)).labelsHidden().toggleStyle(.switch)
             }
             Divider().padding(.leading, 14)

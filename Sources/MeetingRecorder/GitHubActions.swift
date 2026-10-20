@@ -1,7 +1,33 @@
 import Foundation
 
+enum GitHubMergeMethod: String, CaseIterable, Identifiable {
+    case squash, merge, rebase
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .squash: return "Squash"
+        case .merge: return "Merge commit"
+        case .rebase: return "Rebase"
+        }
+    }
+
+    var flag: String { "--\(rawValue)" }
+
+    /// The methods the repository allows, in the order they are offered.
+    static func allowed(squash: Bool?, merge: Bool?, rebase: Bool?) -> [GitHubMergeMethod] {
+        [(GitHubMergeMethod.squash, squash), (.merge, merge), (.rebase, rebase)].compactMap { $1 == true ? $0 : nil }
+    }
+
+    /// The method asked for when it is allowed, otherwise the first one the repository allows.
+    static func choose(_ current: GitHubMergeMethod, from allowed: [GitHubMergeMethod]) -> GitHubMergeMethod {
+        allowed.contains(current) ? current : allCases.first { allowed.contains($0) } ?? current
+    }
+}
+
 enum GitHubAction: String, CaseIterable, Identifiable {
-    case approve, requestChanges = "request_changes", comment, close, reopen
+    case approve, requestChanges = "request_changes", comment, merge, close, reopen
 
     var id: String { rawValue }
 
@@ -10,6 +36,7 @@ enum GitHubAction: String, CaseIterable, Identifiable {
         case .approve: return "Approve"
         case .requestChanges: return "Request changes"
         case .comment: return "Comment"
+        case .merge: return "Merge"
         case .close: return "Close"
         case .reopen: return "Reopen"
         }
@@ -20,6 +47,7 @@ enum GitHubAction: String, CaseIterable, Identifiable {
         case .approve: return "Approve pull request"
         case .requestChanges: return "Request changes"
         case .comment: return "Post comment"
+        case .merge: return "Merge pull request"
         case .close: return "Close pull request"
         case .reopen: return "Reopen pull request"
         }
@@ -30,6 +58,7 @@ enum GitHubAction: String, CaseIterable, Identifiable {
         case .approve: return "Approved"
         case .requestChanges: return "Requested changes on"
         case .comment: return "Commented on"
+        case .merge: return "Merged"
         case .close: return "Closed"
         case .reopen: return "Reopened"
         }
@@ -37,6 +66,8 @@ enum GitHubAction: String, CaseIterable, Identifiable {
 
     var isReview: Bool { self == .approve || self == .requestChanges || self == .comment }
     var commentRequired: Bool { self == .requestChanges || self == .comment }
+    /// Return confirms these; the others need a deliberate click, and Return cancels.
+    var returnConfirms: Bool { self == .comment || self == .close || self == .reopen }
 }
 
 /// One thing to do to one pull request, with the text the person wrote. It is the only input of the `gh` command line.
@@ -48,6 +79,7 @@ struct GitHubActionRequest: Equatable {
     let url: String
     var comment = ""
     var deleteBranch = false
+    var method = GitHubMergeMethod.squash
 
     init(_ action: GitHubAction, pr: GitHubPR) {
         self.action = action
@@ -89,6 +121,9 @@ struct GitHubActionTarget: Equatable {
     var review: GitHubPR.Review?
     var head: String?
     var base: String?
+    var mergeable = GitHubPRDetail.Mergeable.unknown
+    var mergeState = GitHubPRDetail.MergeState.unknown
+    var mergeMethods: [GitHubMergeMethod] = []
 
     init() {}
 
@@ -101,6 +136,9 @@ struct GitHubActionTarget: Equatable {
         review = detail?.review ?? pr.review
         head = detail.flatMap { $0.head.isEmpty ? nil : $0.head }
         base = detail.flatMap { $0.base.isEmpty ? nil : $0.base }
+        mergeable = detail?.mergeable ?? .unknown
+        mergeState = detail?.mergeState ?? .unknown
+        mergeMethods = detail?.mergeMethods ?? []
     }
 
     var isOwn: Bool {
@@ -118,6 +156,8 @@ enum GitHubActionError: Error, Equatable {
     case ownPullRequest
     case alreadyClosed
     case alreadyOpen
+    case conflicts
+    case methodNotAllowed
     case offline
     case rateLimited
     case failed(String)
@@ -132,6 +172,8 @@ enum GitHubActionError: Error, Equatable {
         case .ownPullRequest: return "GitHub does not let you review your own pull request."
         case .alreadyClosed: return "The pull request is already closed or merged."
         case .alreadyOpen: return "The pull request is already open."
+        case .conflicts: return "The branch has merge conflicts. Resolve them on the branch, then try again."
+        case .methodNotAllowed: return "The repository does not allow that merge method. Choose another one and try again."
         case .offline: return "GitHub cannot be reached. Nothing was changed; try again when you are online."
         case .rateLimited: return "GitHub's rate limit is reached. Nothing was changed; try again in a few minutes."
         case .failed(let detail): return "GitHub returned an error: \(detail)"
@@ -151,8 +193,10 @@ enum GitHubActionError: Error, Equatable {
         if has("already closed", "already merged", "closed pull request", "merged pull request", "pull request is closed",
                "pull request is merged", "can't be reopened", "cannot be reopened") { return .alreadyClosed }
         if has("already open") { return .alreadyOpen }
+        if has("merge conflict", "has conflicts", "cleanly created") { return .conflicts }
+        if has("merge commits are not allowed", "squash merges are not allowed", "rebase merges are not allowed", "merge method") { return .methodNotAllowed }
         if has("protected branch", "branch protection", "base branch policy", "required status check", "review is required",
-               "approving review", "cannot delete branch", "can not delete branch", "merge queue") { return .branchProtection(firstLine) }
+               "approving review", "cannot delete branch", "can not delete branch", "merge queue", "not mergeable") { return .branchProtection(firstLine) }
         if has("not logged in", "gh auth login", "bad credentials", "http 401", "requires authentication", "no oauth token") { return .notLoggedIn }
         if has("scope", "resource not accessible", "http 403", "forbidden", "insufficient", "must have push access", "permission") { return .missingScope }
         if has("error connecting", "no such host", "could not resolve", "network is unreachable", "timeout", "timed out",
@@ -183,15 +227,22 @@ struct GitHubActionConfirmation: Equatable {
     let confirmTitle: String
     let reference: String
     let prTitle: String
+    struct Warning: Equatable {
+        let text: String
+        var tone = Tone.warning
+    }
+
     var facts: [Fact] = []
-    var warnings: [String] = []
+    var warnings: [Warning] = []
     var blocker: String?
     let command: String
     let comment: String
     let commentRequired: Bool
     let needsComment: Bool
     let offersBranchDelete: Bool
-    /// Return confirms a close; for an approval the person has to click, and Return cancels.
+    let mergeMethods: [GitHubMergeMethod]
+    let commentLabel: String
+    /// Return confirms a close; for an approval or a merge the person has to click, and Return cancels.
     let confirmIsDefault: Bool
 
     var canConfirm: Bool { blocker == nil && !needsComment }
@@ -201,11 +252,12 @@ enum GitHubActions {
     static let enabledKey = "githubActionsEnabled"
     static let explainedKey = "githubActionsExplained"
     static let disabledHelp = "Turn on \u{201C}Allow actions on GitHub\u{201D} in Settings \u{2192} GitHub first."
-    static let settingNote = "Runs gh on your behalf. Every action asks you to confirm first."
-    static let explanation = "The app can now approve and close pull requests, and comment on them, by running the GitHub CLI (gh) with your own "
+    static let settingNote = "Runs gh on your behalf. Every action, merging included, asks you to confirm first."
+    static let explanation = "The app can now approve, merge and close pull requests, and comment on them, by running the GitHub CLI (gh) with your own "
         + "sign-in. It never does so by itself, and nothing else in the app can: not Claude, not the terminal here, not the chat, not the "
         + "iPhone. Each action opens a sheet that shows the exact command and waits for your click. Every action is written to a local "
-        + "log in Settings \u{2192} GitHub. Approvals cannot be undone from here."
+        + "log in Settings \u{2192} GitHub. Approvals cannot be undone from here, and a merge cannot be undone at all: GitHub only lets you revert it "
+        + "with a new pull request. Merges never skip branch protection and never wait for automatic merging."
     static let reopenWindow: TimeInterval = 30
     static let undoWindow: TimeInterval = 86_400
     static let overlayLifetime: TimeInterval = 120
@@ -233,6 +285,9 @@ enum GitHubActions {
             return ["pr", "review", String(request.number)] + base + ["--request-changes", "--body", comment]
         case .comment:
             return ["pr", "review", String(request.number)] + base + ["--comment", "--body", comment]
+        case .merge:
+            return ["pr", "merge", String(request.number)] + base + [request.method.flag] + (request.deleteBranch ? ["--delete-branch"] : [])
+                + (comment.isEmpty ? [] : ["--body", comment])
         case .close:
             return ["pr", "close", String(request.number)] + base + (comment.isEmpty ? [] : ["--comment", comment])
                 + (request.deleteBranch ? ["--delete-branch"] : [])
@@ -262,6 +317,16 @@ enum GitHubActions {
             if target.viewer?.isEmpty ?? true { warnings.append("Could not tell who you are signed in as; GitHub refuses reviews of your own pull request.") }
         case .comment:
             break
+        case .merge:
+            if target.state != .open { return .blocked("This pull request is already \(target.state.rawValue).") }
+            if target.isDraft { return .blocked("A draft pull request cannot be merged. Mark it ready for review first.") }
+            if target.mergeable == .conflicting { return .blocked("This pull request has merge conflicts. Resolve them on the branch first.") }
+            if target.mergeable == .unknown { return .blocked("GitHub has not said yet whether this pull request can merge. Check again in a moment.") }
+            if target.mergeMethods.isEmpty { return .blocked("Could not tell which merge methods this repository allows.") }
+            if !target.mergeMethods.contains(request.method) { return .blocked("This repository does not allow \(request.method.title.lowercased()) merges.") }
+            if target.mergeState == .blocked { warnings.append("Required reviews or checks are not satisfied yet, so GitHub may refuse the merge.") }
+            if target.mergeState == .unstable { warnings.append("Some checks are not passing.") }
+            warnings += checkWarnings(target)
         case .close:
             if target.state != .open { return .blocked("This pull request is already \(target.state.rawValue).") }
         case .reopen:
@@ -270,11 +335,19 @@ enum GitHubActions {
         }
         if target.isDraft, request.action.isReview { warnings.append("This pull request is a draft.") }
         if request.action == .approve {
-            if target.checks == .failed { warnings.append("Checks are failing") }
-            if target.checks == .running { warnings.append("Checks are still running") }
+            warnings += checkWarnings(target)
             if target.review == .changesRequested { warnings.append("Changes were requested in an earlier review") }
         }
         return .allowed(warnings: warnings)
+    }
+
+    static let checksFailing = "Checks are failing"
+
+    private static func checkWarnings(_ target: GitHubActionTarget) -> [String] {
+        var warnings: [String] = []
+        if target.checks == .failed { warnings.append(checksFailing) }
+        if target.checks == .running { warnings.append("Checks are still running") }
+        return warnings
     }
 
     /// Whether `--delete-branch` is worth offering: not for the branches a repository keeps. An unknown head is offered; GitHub refuses
@@ -286,26 +359,35 @@ enum GitHubActions {
     }
 
     static func confirmation(for request: GitHubActionRequest, target: GitHubActionTarget) -> GitHubActionConfirmation {
+        let merging = request.action == .merge
         var facts = [GitHubActionConfirmation.Fact(label: "Pull request", value: request.reference),
                      GitHubActionConfirmation.Fact(label: "Title", value: request.title)]
         let author = target.author ?? "unknown"
         facts.append(.init(label: "Author", value: target.isOwn ? "\(author) (you)" : author, tone: target.isOwn ? .bad : .normal))
         let state = target.isDraft && target.state == .open ? "Open \u{00B7} draft" : target.state.rawValue.capitalized
         facts.append(.init(label: "State", value: state, tone: target.state == .open ? .normal : .bad))
-        if request.action.isReview {
+        if merging {
+            facts.append(.init(label: "Base", value: target.base ?? "unknown"))
+            facts.append(.init(label: "Conflicts", value: GitHubLogic.mergeText(target.mergeable) ?? "Not known yet",
+                               tone: target.mergeable == .conflicting ? .bad : target.mergeable == .mergeable ? .good : .normal))
+        }
+        if request.action.isReview || merging {
             facts.append(.init(label: "Checks", value: checksText(target.checks), tone: tone(target.checks)))
+            let wantsApproval = target.review == .changesRequested || (merging && target.review == .required)
             facts.append(.init(label: "Review", value: target.review.map(GitHubLogic.reviewText) ?? "No decision yet",
-                               tone: target.review == .changesRequested ? .warning : target.review == .approved ? .good : .normal))
+                               tone: wantsApproval ? .warning : target.review == .approved ? .good : .normal))
         }
         var confirmation = GitHubActionConfirmation(
             title: request.action.confirmTitle, confirmTitle: request.action.confirmTitle, reference: request.reference, prTitle: request.title,
             facts: facts, command: commandLine(request), comment: request.trimmedComment, commentRequired: request.action.commentRequired,
             needsComment: request.action.commentRequired && request.trimmedComment.isEmpty,
-            offersBranchDelete: request.action == .close && target.state == .open && branchDeletable(head: target.head, base: target.base),
-            confirmIsDefault: request.action != .approve && request.action != .requestChanges)
+            offersBranchDelete: (request.action == .close || merging) && target.state == .open && branchDeletable(head: target.head, base: target.base),
+            mergeMethods: target.mergeMethods, commentLabel: merging ? "Commit body (optional)" : request.action.commentRequired ? "Comment (required)" : "Comment (optional)",
+            confirmIsDefault: request.action.returnConfirms)
         switch preflight(request, target) {
         case .blocked(let reason): confirmation.blocker = reason
-        case .allowed(let warnings): confirmation.warnings = warnings
+        case .allowed(let warnings):
+            confirmation.warnings = warnings.map { .init(text: $0, tone: $0 == checksFailing ? .bad : .warning) }
         }
         return confirmation
     }
@@ -335,6 +417,7 @@ enum GitHubActions {
         switch request.action {
         case .approve, .requestChanges: return base + " \u{00B7} Undo isn't possible \u{2014} it can be dismissed on GitHub"
         case .comment: return base + " \u{00B7} The comment can be deleted on GitHub"
+        case .merge: return "Merged \(request.shortReference) \u{00B7} GitHub can't undo a merge; you can revert it with a new PR"
         case .close, .reopen: return base
         }
     }
@@ -356,6 +439,7 @@ enum GitHubActions {
         switch action {
         case .approve: return Patch(review: .approved, expires: expires)
         case .requestChanges: return Patch(review: .changesRequested, expires: expires)
+        case .merge: return Patch(state: .merged, expires: expires)
         case .close: return Patch(state: .closed, expires: expires)
         case .reopen: return Patch(state: .open, expires: expires)
         case .comment: return nil

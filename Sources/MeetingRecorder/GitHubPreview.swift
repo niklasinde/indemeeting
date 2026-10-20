@@ -202,6 +202,21 @@ enum GitHubPreview {
     }
 
     @MainActor
+    private static func mergeDraft(_ pr: GitHubPR, conflicts: Bool = false, failing: Bool = false) -> GitHubActionDraft {
+        var target = GitHubActionTarget(pr: pr)
+        target.base = "develop"
+        target.head = "NI/QDLY-8315-strawbay-send-guard"
+        target.mergeMethods = [.squash, .merge, .rebase]
+        target.mergeable = conflicts ? .conflicting : .mergeable
+        target.mergeState = conflicts ? .dirty : failing ? .blocked : .clean
+        target.isDraft = false
+        target.checks = failing ? .failed : .passed
+        target.review = failing ? .required : .approved
+        let request = GitHubActionRequest(.merge, pr: pr).with(comment: "Squashes the review fixes", deleteBranch: false)
+        return GitHubActionDraft(request: request, pr: pr, target: target)
+    }
+
+    @MainActor
     private static func renderActions(model: GitHubModel, window: NSWindow, directory: TicketDirectory,
                                       shot: (String, [NSAppearance.Name]) async -> Void, output: URL) async {
         let actions = GitHubActionsModel.shared
@@ -228,6 +243,9 @@ enum GitHubPreview {
             ("close-delete-branch", AnyView(ActionConfirmSheet(draft: close, confirm: {}, cancel: {}))),
             ("approve-own-blocked", AnyView(ActionConfirmSheet(draft: blocked, confirm: {}, cancel: {}))),
             ("approve-checking", AnyView(ActionConfirmSheet(draft: checking, confirm: {}, cancel: {}))),
+            ("merge-ready", AnyView(ActionConfirmSheet(draft: mergeDraft(samples[.created]![2]), confirm: {}, cancel: {}))),
+            ("merge-conflicts", AnyView(ActionConfirmSheet(draft: mergeDraft(samples[.created]![3], conflicts: true), confirm: {}, cancel: {}))),
+            ("merge-failing-checks", AnyView(ActionConfirmSheet(draft: mergeDraft(samples[.created]![4], failing: true), confirm: {}, cancel: {}))),
             ("explain", AnyView(ActionExplainSheet(continueAction: {}, cancel: {}))),
         ]
         for (base, view) in sheets {
