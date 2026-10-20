@@ -135,6 +135,7 @@ enum GitHubPreview {
                                              comments: GitHubCommentsModel(pr: commentPR, sample: sampleComments, filter: GitHubCommentsFilter(scope: .unresolved)),
                                              directory: directory, ask: {}, lazyComments: false),
                          appearance: .aqua, to: output.appendingPathComponent("comments-page-light.png"))
+            await renderResume(store: store, sample: claudeSample, directory: directory, output: output)
             await renderActions(model: model, window: window, directory: directory, shot: shot, output: output)
             exit(0)
         }
@@ -154,6 +155,29 @@ enum GitHubPreview {
         try? await Task.sleep(nanoseconds: 1_000_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    /// A pull request with a saved session: the header with its Resumable chip, and the Open in Claude menu's items.
+    @MainActor
+    private static func renderResume(store: MeetingStore, sample: (name: String, pr: GitHubPR, detail: GitHubPRDetail), directory: TicketDirectory,
+                                     output: URL) async {
+        let projects = output.appendingPathComponent("resume-projects", isDirectory: true)
+        let work = output.appendingPathComponent("resume-work", isDirectory: true).path
+        let id = "3f1c9a52-7d2e-4b8a-9c1d-5e6f7a8b9c0d"
+        ClaudeTranscripts.projectsFolder = projects
+        let transcripts = ClaudeTranscripts.folder(cwd: work, root: projects)
+        try? FileManager.default.createDirectory(at: transcripts, withIntermediateDirectories: true)
+        try? Data("{}\n".utf8).write(to: transcripts.appendingPathComponent(id + ".jsonl"))
+        try? store.saveGitHubSession(GitHubClaudeSession(url: sample.pr.url, id: id, cwd: work, kind: .interactive, preset: .review,
+                                                         title: "Review this pull request", updated: Date()))
+        GitHubClaudeModel.shared.load()
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            let suffix = appearance == .aqua ? "light" : "dark"
+            await render(GitHubDetailContent(pr: sample.pr, detail: sample.detail, comments: GitHubCommentsModel(pr: sample.pr, sample: nil),
+                                             directory: directory, ask: {}),
+                         appearance: appearance, to: output.appendingPathComponent("resume-page-\(suffix).png"))
+            await render(ResumeMenuPreview(), appearance: appearance, to: output.appendingPathComponent("resume-menu-\(suffix).png"))
+        }
     }
 
     @MainActor
@@ -466,6 +490,26 @@ enum GitHubPreview {
                    activity: activity(threads: 1, open: [said(person("johan"), 90_000)], reviews: [GitHubActivity.Review(actor: person("niklas"), state: "COMMENTED", date: now.addingTimeInterval(-200_000))], commit: 80_000)),
             ],
         ]
+    }
+}
+/// The items of "Open in Claude" for a pull request with a saved session, as the menu lists them, with the submenu opened.
+private struct ResumeMenuPreview: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Open in: In this app").foregroundStyle(.secondary)
+            Divider().padding(.vertical, 4)
+            Label("Resume previous session", systemImage: "checkmark").font(.body)
+            Label("Start new session", systemImage: "chevron.right").font(.body)
+            ForEach(GitHubClaude.Preset.allCases) { preset in
+                Text(preset.title).padding(.leading, 26)
+            }
+            Divider().padding(.vertical, 4)
+            Label("Forget session", systemImage: "trash").font(.body)
+        }
+        .padding(10)
+        .frame(width: 300, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.15)))
     }
 }
 #endif

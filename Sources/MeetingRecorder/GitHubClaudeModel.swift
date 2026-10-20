@@ -11,6 +11,10 @@ final class GitHubClaudeModel: ObservableObject {
     static let presetKey = "githubClaudePreset"
     static let rememberKey = "githubClaudeRemember"
     static let modelKey = "githubClaudeModel"
+    static let rememberSessionsKey = "githubClaudeRememberSessions"
+    /// How long after a terminal starts its transcript is looked for, and how often.
+    static let captureWindow: TimeInterval = 4 * 3600
+    static let capturePoll: UInt64 = 2_000_000_000
 
     nonisolated static let repositoriesRoot = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("git")
 
@@ -42,12 +46,15 @@ final class GitHubClaudeModel: ObservableObject {
     @Published private(set) var live: [String: State] = [:]
     @Published private(set) var reviews: [String: GitHubReview] = [:]
     @Published private(set) var outdated: [String: Bool] = [:]
+    /// The interactive session to resume per pull request, only while its transcript is still on this Mac.
+    @Published private(set) var sessions: [String: GitHubClaudeSession] = [:]
     @Published private(set) var note: Note?
     @Published var confirming: Job?
 
     private var queue: [Job] = []
     private var process: ClaudeProcess?
     private var running: String?
+    private var captures: [String: Task<Void, Never>] = [:]
     private let defaults = UserDefaults.standard
     private var store: MeetingStore? { GitHubModel.shared.store }
 
@@ -59,6 +66,11 @@ final class GitHubClaudeModel: ObservableObject {
     var remember: Bool {
         get { defaults.object(forKey: Self.rememberKey) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Self.rememberKey); objectWillChange.send() }
+    }
+
+    var remembersSessions: Bool {
+        get { defaults.object(forKey: Self.rememberSessionsKey) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Self.rememberSessionsKey); objectWillChange.send() }
     }
 
     var modelName: String {
@@ -104,6 +116,8 @@ final class GitHubClaudeModel: ObservableObject {
     func load() {
         reviews = Dictionary(((try? store?.githubReviews()) ?? []).map { ($0.url, $0) }) { $1 }
         outdated = (try? store?.githubReviewOutdated()) ?? [:]
+        let saved = remembersSessions ? ((try? store?.githubSessions()) ?? []) : []
+        sessions = Dictionary(saved.filter { $0.kind == .interactive && ClaudeTranscripts.exists(id: $0.id, cwd: $0.cwd) }.map { ($0.url, $0) }) { $1 }
     }
 
     func review(for url: String) -> GitHubReview? { reviews[url] }
@@ -162,7 +176,7 @@ final class GitHubClaudeModel: ObservableObject {
     }
 
     private enum Finish {
-        case answer(String, cost: Double?)
+        case answer(String, cost: Double?, session: GitHubClaudeSession?)
         case cancelled
         case failed(GitHubClaude.Failure)
     }
@@ -184,8 +198,13 @@ final class GitHubClaudeModel: ObservableObject {
         let stream = box.stream
         if outcome.cancelled { return .cancelled }
         if outcome.timedOut { return .failed(.timedOut) }
-        if let result = stream.result, !result.isError, !result.text.isEmpty { return .answer(result.text, cost: result.cost) }
-        if outcome.status == 0, !stream.text.isEmpty, stream.result?.isError != true { return .answer(stream.text, cost: stream.result?.cost) }
+        let session = stream.sessionID.map {
+            GitHubClaudeSession(url: url, id: $0, cwd: (checkout ?? home).path, kind: .review, preset: job.preset, title: nil, updated: Date())
+        }
+        if let result = stream.result, !result.isError, !result.text.isEmpty { return .answer(result.text, cost: result.cost, session: session) }
+        if outcome.status == 0, !stream.text.isEmpty, stream.result?.isError != true {
+            return .answer(stream.text, cost: stream.result?.cost, session: session)
+        }
         return .failed(GitHubClaude.failure(stream.result?.text ?? outcome.stderr))
     }
 
@@ -201,13 +220,14 @@ final class GitHubClaudeModel: ObservableObject {
         switch finish {
         case .cancelled: live[url] = nil
         case .failed(let failure): live[url] = .failed(failure, job.preset)
-        case .answer(let text, let cost):
+        case .answer(let text, let cost, let session):
             let review = GitHubReview(url: url, headSHA: job.detail?.headOid, preset: job.preset, text: text, created: Date(),
                                       duration: Date().timeIntervalSince(started), cost: cost)
             try? store?.saveGitHubReview(review)
             reviews[url] = review
             outdated[url] = false
             live[url] = nil
+            if let session { remember(session) }
         }
         process = nil
         running = nil
@@ -218,21 +238,101 @@ final class GitHubClaudeModel: ObservableObject {
 
     func openInClaude(_ pr: GitHubPR, _ detail: GitHubPRDetail?, _ preset: GitHubClaude.Preset) {
         defaults.set(preset.rawValue, forKey: Self.presetKey)
-        let checkout = GitHubClaude.checkout(for: pr.repo, under: Self.repositoriesRoot)
-        let prompt = GitHubClaude.prompt(preset, context(pr, detail, hasCheckout: checkout != nil))
-        let missing = checkout == nil ? Note(text: "No local checkout of \(pr.repo) found, so Claude starts in your home folder and reads it with gh.",
-                                              copy: GitHubClaude.cloneCommand(pr.repo)) : nil
-        if destination == .inApp { return openEmbedded(pr, preset, checkout: checkout, prompt: prompt, hint: missing) }
-        show(start(prompt, checkout: checkout) ?? missing ?? Note(text: "Started Claude in \(destination.title)."))
+        startInteractive(pr, detail, preset, resuming: false)
     }
 
-    private func openEmbedded(_ pr: GitHubPR, _ preset: GitHubClaude.Preset, checkout: URL?, prompt: String, hint: Note?) {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let cli = ClaudePlugin.findCLI()
-        let name = GitHubLogic.repoName(pr.repo).name
-        EmbeddedTerminalModel.shared.open(pr.url, title: "\(preset.shortTitle) \u{00B7} \(name) #\(pr.number)", directory: checkout ?? home,
-                                          prompt: prompt, cli: cli, hint: hint)
+    /// Picks up the pull request's saved session where it was; starts a new one with the usual preset when there is none to pick up.
+    func resumeInClaude(_ pr: GitHubPR, _ detail: GitHubPRDetail?) {
+        startInteractive(pr, detail, primaryPreset, resuming: true)
     }
+
+    private func startInteractive(_ pr: GitHubPR, _ detail: GitHubPRDetail?, _ preset: GitHubClaude.Preset, resuming: Bool) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let checkout = GitHubClaude.checkout(for: pr.repo, under: Self.repositoriesRoot)
+        let prompt = GitHubClaude.prompt(preset, context(pr, detail, hasCheckout: checkout != nil))
+        var note = checkout == nil ? Note(text: "No local checkout of \(pr.repo) found, so Claude starts in your home folder and reads it with gh.",
+                                           copy: GitHubClaude.cloneCommand(pr.repo)) : nil
+        let saved = resuming && destination != .claudeApp ? sessions[pr.url] : nil
+        let decision = GitHubClaude.resumption(running: destination == .inApp && EmbeddedTerminalModel.shared.runningSince(pr.url) != nil,
+                                               storedID: resuming ? saved?.id : nil,
+                                               transcriptExists: saved.map { ClaudeTranscripts.exists(id: $0.id, cwd: $0.cwd) } ?? false)
+        var folder = checkout ?? home
+        var resume: GitHubClaude.Resume?
+        switch decision {
+        case .reattach, .startNew(forget: false): break
+        case .resume(let id):
+            resume = GitHubClaude.Resume(id: id, title: saved?.title)
+            if var refreshed = saved {
+                folder = URL(fileURLWithPath: refreshed.cwd)
+                refreshed.updated = Date()
+                remember(refreshed)
+            }
+        case .startNew(forget: true):
+            forgetSession(pr.url)
+            note = Note(text: "The saved Claude session is no longer on this Mac, so a new one starts.")
+        }
+        let started = Date()
+        if destination == .inApp {
+            openEmbedded(pr, preset, folder: folder, prompt: prompt, hint: note, resume: resume)
+            watchSession(pr.url, folder: folder, preset: preset) { EmbeddedTerminalModel.shared.runningSince(pr.url) }
+        } else {
+            let verb = resume == nil ? "Started" : "Resumed"
+            show(start(prompt, checkout: folder, resume: resume) ?? note ?? Note(text: "\(verb) Claude in \(destination.title)."))
+            watchSession(pr.url, folder: folder, preset: preset) { started }
+        }
+    }
+
+    private func openEmbedded(_ pr: GitHubPR, _ preset: GitHubClaude.Preset, folder: URL, prompt: String, hint: Note?, resume: GitHubClaude.Resume?) {
+        let name = GitHubLogic.repoName(pr.repo).name
+        EmbeddedTerminalModel.shared.open(pr.url, title: "\(preset.shortTitle) \u{00B7} \(name) #\(pr.number)", directory: folder,
+                                          prompt: prompt, cli: ClaudePlugin.findCLI(), hint: hint, preset: preset, resume: resume)
+    }
+
+    /// Starts Claude again in the same folder without the saved session, as the pane's "Start new session instead" does.
+    func startNewSession(_ url: String, folder: URL, preset: GitHubClaude.Preset?) {
+        EmbeddedTerminalModel.shared.startNew(url)
+        watchSession(url, folder: folder, preset: preset) { EmbeddedTerminalModel.shared.runningSince(url) }
+    }
+
+    // MARK: Session ids
+
+    /// Finds the session a terminal produces: the newest transcript in its folder created since it started that mentions the
+    /// pull request, polled while the terminal runs (or for the capture window, for a terminal app it cannot see).
+    private func watchSession(_ url: String, folder: URL, preset: GitHubClaude.Preset?, since probe: @escaping @MainActor () -> Date?) {
+        guard remembersSessions else { return }
+        captures[url]?.cancel()
+        captures[url] = Task {
+            while let started = probe(), Date() < started.addingTimeInterval(Self.captureWindow) {
+                let id = await Task.detached { ClaudeTranscripts.newestSession(in: folder, since: started, containing: url) }.value
+                if let id {
+                    let title = await Task.detached { ClaudeTranscripts.title(in: folder, id: id) }.value
+                    remember(GitHubClaudeSession(url: url, id: id, cwd: folder.path, kind: .interactive, preset: preset, title: title, updated: Date()))
+                    break
+                }
+                try? await Task.sleep(nanoseconds: Self.capturePoll)
+            }
+            captures[url] = nil
+        }
+    }
+
+    private func remember(_ session: GitHubClaudeSession) {
+        guard remembersSessions else { return }
+        try? store?.saveGitHubSession(session)
+        if session.kind == .interactive { sessions[session.url] = session }
+    }
+
+    func forgetSession(_ url: String) {
+        try? store?.forgetGitHubSessions(url)
+        sessions[url] = nil
+    }
+
+    func forgetAllSessions() {
+        try? store?.forgetGitHubSessions()
+        sessions = [:]
+    }
+
+    /// The saved session that the chosen destination can pick up; the Claude app cannot resume one.
+    func resumable(_ url: String) -> GitHubClaudeSession? { destination == .claudeApp ? nil : sessions[url] }
 
     /// A Claude session about a meeting, through the MCP tools of the MeetingRecorder plugin. Returns what went wrong, if anything.
     func openInClaude(_ meeting: Meeting, title: String) -> String? {
@@ -240,7 +340,7 @@ final class GitHubClaudeModel: ObservableObject {
     }
 
     /// Opens the prompt in the chosen destination; the note says what went wrong or what the user still has to do.
-    private func start(_ prompt: String, checkout: URL?) -> Note? {
+    private func start(_ prompt: String, checkout: URL?, resume: GitHubClaude.Resume? = nil) -> Note? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let destination = destination == .inApp ? .terminal : destination
         switch GitHubClaude.plan(destination, cli: ClaudePlugin.findCLI(), checkout: checkout, home: home, prompt: prompt, isInstalled: isInstalled) {
@@ -249,7 +349,8 @@ final class GitHubClaudeModel: ObservableObject {
                         copy: "npm install -g @anthropic-ai/claude-code")
         case .terminal(let terminal, let directory, let cli):
             do {
-                let script = try GitHubClaude.writeLaunchFiles(prompt: prompt, directory: directory, cli: cli, folder: GitHubClaude.promptFolder())
+                let script = try GitHubClaude.writeLaunchFiles(prompt: resume == nil ? prompt : nil, directory: directory, cli: cli,
+                                                               flags: resume?.flags ?? [], folder: GitHubClaude.promptFolder())
                 guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: terminal.bundleID) else { return Note(text: "\(terminal.title) was not found.") }
                 NSWorkspace.shared.open([script], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
                 return nil

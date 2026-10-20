@@ -148,6 +148,7 @@ struct GitHubDetailContent: View {
 
     private var headerChips: [Chip] {
         var chips = [Self.stateChip(detail, pr)]
+        if claude.resumable(pr.url) != nil { chips.append(Chip(text: "Resumable", icon: "arrow.counterclockwise", tint: .blue)) }
         guard let detail else { return chips }
         if let ticket = detail.ticket ?? pr.ticket { chips.append(.ticket(ticket, directory, short: false)) }
         if detail.state == .open, let text = GitHubLogic.mergeText(detail.mergeable) {
@@ -187,6 +188,9 @@ struct GitHubDetailContent: View {
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
             OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
             TerminalToggle(key: pr.url, model: terminals)
+            if !terminals.hasSession(pr.url), claude.resumable(pr.url) != nil {
+                Button { claude.resumeInClaude(pr, detail) } label: { Label("Resume session", systemImage: "arrow.counterclockwise") }
+            }
             AskClaudeMenu(pr: pr, detail: detail, model: claude)
             GitHubActionButtons(pr: pr, detail: detail, model: pageActions)
             ClaudeNoteBar(model: claude)

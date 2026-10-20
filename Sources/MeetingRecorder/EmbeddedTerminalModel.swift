@@ -86,22 +86,29 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     let title: String
     let directory: URL
     let hint: GitHubClaudeModel.Note?
+    let preset: GitHubClaude.Preset?
+    /// The saved session this one picks up, when it does; then the prompt is not sent again.
+    let resume: GitHubClaude.Resume?
     let view = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
     @Published private(set) var state = State.idle
     @Published private(set) var programTitle = ""
-    private let prompt: String
-    private let cli: URL?
+    private(set) var startedAt = Date.distantPast
+    let prompt: String
+    let cli: URL?
     private var restarting = false
 
     var isRunning: Bool { state == .running }
 
-    init(key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?) {
+    init(key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?,
+         preset: GitHubClaude.Preset?, resume: GitHubClaude.Resume?) {
         self.key = key
         self.title = title
         self.directory = directory
         self.prompt = prompt
         self.cli = cli
         self.hint = hint
+        self.preset = preset
+        self.resume = resume
         super.init()
         view.processDelegate = self
         view.fontStep = { Self.stepFont($0) }
@@ -121,8 +128,14 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     func start() {
         guard let cli, !isRunning else { return }
         do {
-            let file = try GitHubClaude.writePromptFile(prompt: prompt, folder: GitHubClaude.promptFolder())
-            let script = EmbeddedTerminal.script(directory: directory, promptFile: file, cli: cli)
+            let script: String
+            if let resume {
+                script = EmbeddedTerminal.script(directory: directory, promptFile: nil, cli: cli, flags: resume.flags)
+            } else {
+                let file = try GitHubClaude.writePromptFile(prompt: prompt, folder: GitHubClaude.promptFolder())
+                script = EmbeddedTerminal.script(directory: directory, promptFile: file, cli: cli)
+            }
+            startedAt = Date()
             view.startProcess(executable: EmbeddedTerminal.shell, args: EmbeddedTerminal.shellArguments(script),
                               environment: EmbeddedTerminal.environment(ClaudePluginModel.environment(for: cli)), currentDirectory: directory.path)
             state = .running
@@ -249,16 +262,29 @@ final class EmbeddedTerminalModel: ObservableObject {
         if shown { hidden.remove(key) } else { hidden.insert(key) }
     }
 
-    /// Opens the pull request's terminal and starts Claude in it, unless Claude is already running there.
-    func open(_ key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?) {
+    /// Opens the pull request's terminal and starts Claude in it. When Claude already runs there, that session is shown instead of a second one.
+    func open(_ key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?,
+              preset: GitHubClaude.Preset? = nil, resume: GitHubClaude.Resume? = nil) {
         hidden.remove(key)
         if isRunning(key) { return }
         close(key)
         let session = registry.attach(key) {
-            TerminalSession(key: key, title: title, directory: directory, prompt: prompt, cli: cli, hint: hint)
+            TerminalSession(key: key, title: title, directory: directory, prompt: prompt, cli: cli, hint: hint, preset: preset, resume: resume)
         }
         watching[key] = session.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         session.start()
+    }
+
+    /// Ends the pull request's session and starts Claude again in the same folder with the same prompt, without the saved session.
+    func startNew(_ key: String) {
+        guard let old = registry[key] else { return }
+        close(key)
+        open(key, title: old.title, directory: old.directory, prompt: old.prompt, cli: old.cli, hint: nil, preset: old.preset)
+    }
+
+    /// When the pull request's Claude started, while it runs there; nil when nothing runs.
+    func runningSince(_ key: String) -> Date? {
+        registry[key].flatMap { $0.isRunning ? $0.startedAt : nil }
     }
 
     func close(_ key: String) {
@@ -280,7 +306,9 @@ final class EmbeddedTerminalModel: ObservableObject {
     /// A session that shows canned output instead of running anything.
     func showSample(_ key: String, title: String, directory: URL, output: String, running: Bool, hint: GitHubClaudeModel.Note? = nil) {
         close(key)
-        let session = registry.attach(key) { TerminalSession(key: key, title: title, directory: directory, prompt: "", cli: nil, hint: hint) }
+        let session = registry.attach(key) {
+            TerminalSession(key: key, title: title, directory: directory, prompt: "", cli: nil, hint: hint, preset: nil, resume: nil)
+        }
         session.showSample(output: output, running: running)
         watching[key] = session.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         objectWillChange.send()
@@ -313,7 +341,10 @@ final class EmbeddedTerminalModel: ObservableObject {
     func releaseTerminal(_ key: String) {}
     func focusTerminal(_ key: String) -> Bool { false }
     func setShown(_ key: String, _ shown: Bool) {}
-    func open(_ key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?) {}
+    func open(_ key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?,
+              preset: GitHubClaude.Preset? = nil, resume: GitHubClaude.Resume? = nil) {}
+    func startNew(_ key: String) {}
+    func runningSince(_ key: String) -> Date? { nil }
     func close(_ key: String) {}
     func terminateAll() {}
     func quitMessage(enabled: Bool = true) -> String? { nil }

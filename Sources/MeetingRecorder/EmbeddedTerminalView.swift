@@ -106,6 +106,7 @@ struct TerminalPane: View {
             toolbar
             Divider()
             if let hint = session.hint { notice(hint.text, copy: hint.copy) }
+            if let resume = session.resume { resumed(resume) }
             if !noteHidden, !noteDismissed, session.isRunning { safetyNote }
             if case .unavailable(let text, let copy) = session.state {
                 VStack(spacing: 10) {
@@ -163,6 +164,21 @@ struct TerminalPane: View {
             Text(text).foregroundStyle(.secondary)
             if let copy { Button("Copy \(copy)") { GitHubModel.copy(copy) }.buttonStyle(.link) }
             Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private func resumed(_ resume: GitHubClaude.Resume) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.counterclockwise").foregroundStyle(.secondary)
+            Text("Resumed previous session \u{00B7} \(resume.title ?? "saved session")").foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 0)
+            Button("Start new session instead") {
+                GitHubClaudeModel.shared.startNewSession(session.key, folder: session.directory, preset: session.preset)
+            }
+            .buttonStyle(.link)
         }
         .font(.callout)
         .padding(.horizontal, 10)

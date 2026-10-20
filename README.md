@@ -573,6 +573,25 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   with the commit it read, marked Outdated when new commits arrive, and rows with a fresh one show "Reviewed by Claude". Copy as
   review comment puts `[AI]` on the first line; Ask Claude cannot post to GitHub. A run costs roughly one dollar of usage.
 
+### Resuming Claude sessions
+
+Each interactive Claude session started from a pull request is remembered per pull request: the session id, its folder and
+its title, in the `github_pr_sessions` table of the meetings database. The id is taken from the transcript Claude Code writes
+under `~/.claude/projects/<folder>/<id>.jsonl`: after a terminal starts, the app looks for the newest transcript created since
+then whose text names the pull request's address, and stores its name. Nothing is read from the terminal's output.
+
+- **Resume previous session** (the default when a session is saved, in Open in Claude and in the Resume session button) runs
+  `claude --resume <id>` in the folder the session started in. The preset prompt is not sent again. A line says
+  "Resumed previous session" and "Start new session instead" starts over with the usual prompt.
+- If the transcript is gone, the saved row is removed and a new session starts with a note saying so. A session that is
+  already running for the pull request is shown again, not duplicated.
+- The "Resumable" chip on the pull request page shows that a session is saved. Nothing starts by itself when the app opens.
+- Settings > Activity > GitHub: "Remember Claude sessions per PR" (on by default; only ids and paths are stored) and
+  "Forget all". Open in Claude > Forget session removes one pull request's saved session.
+- **Headless reviews are not resumable.** "Ask Claude" runs `claude -p` with `--no-session-persistence`, so Claude writes no
+  transcript for them. Their session id is stored, for reference, but Resume only offers interactive sessions.
+- The Claude app destination cannot resume a session and always starts a new one.
+
 ### Actions
 
 The only way this app writes to GitHub, through the signed-in `gh` (no token is handled). **Off by default**: Settings > Activity > GitHub >

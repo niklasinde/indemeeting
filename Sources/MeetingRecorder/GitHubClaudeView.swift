@@ -8,22 +8,35 @@ struct OpenInClaudeMenu: View {
     @ObservedObject var model: GitHubClaudeModel
 
     var body: some View {
+        let saved = model.resumable(pr.url)
         Menu {
             Picker("Open in", selection: Binding(get: { model.destination }, set: { model.destination = $0 })) {
                 ForEach(model.installedDestinations()) { Text($0.title).tag($0) }
             }
             Divider()
-            ForEach(GitHubClaude.Preset.allCases) { preset in
-                Button(preset.title) { model.openInClaude(pr, detail, preset) }
+            if saved != nil {
+                Button("Resume previous session") { model.resumeInClaude(pr, detail) }
+                Menu("Start new session") { presets }
+                Divider()
+                Button("Forget session") { model.forgetSession(pr.url) }
+            } else {
+                presets
             }
         } label: {
             Label("Open in Claude", systemImage: "terminal")
         } primaryAction: {
-            model.openInClaude(pr, detail, model.primaryPreset)
+            if saved != nil { model.resumeInClaude(pr, detail) } else { model.openInClaude(pr, detail, model.primaryPreset) }
         }
         .menuIndicator(.visible)
         .fixedSize()
-        .help("Start a Claude session about this pull request in \(model.destination.title)")
+        .help(saved != nil ? "Resume the Claude session of this pull request in \(model.destination.title)"
+              : "Start a Claude session about this pull request in \(model.destination.title)")
+    }
+
+    @ViewBuilder private var presets: some View {
+        ForEach(GitHubClaude.Preset.allCases) { preset in
+            Button(preset.title) { model.openInClaude(pr, detail, preset) }
+        }
     }
 }
 
@@ -220,10 +233,22 @@ struct ClaudeSettingsRows: View {
                 Toggle("Remember my choice", isOn: Binding(get: { model.remember }, set: { model.remember = $0 })).labelsHidden().toggleStyle(.switch)
             }
             Divider().padding(.leading, 14)
+            SettingsRow("Remember Claude sessions per PR",
+                        detail: "Keeps the id and folder of each pull request's Claude session, so Resume picks it up. Only ids and paths are stored.") {
+                Toggle("Remember Claude sessions per PR", isOn: Binding(get: { model.remembersSessions }, set: { model.remembersSessions = $0 }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+            Divider().padding(.leading, 14)
+            SettingsRow("Saved Claude sessions", detail: model.sessions.isEmpty ? "None to resume." : "\(model.sessions.count) can be resumed.") {
+                Button("Forget all") { model.forgetAllSessions() }.disabled(model.sessions.isEmpty)
+            }
+            Divider().padding(.leading, 14)
             SettingsRow("Claude model", detail: "Optional, for reviews run here. Empty uses the CLI's default.") {
                 TextField("default", text: Binding(get: { model.modelName }, set: { model.modelName = $0 })).frame(width: 140)
             }
         }
+        .onAppear(perform: model.load)
         .alert("Allow Claude reviews?", isPresented: $confirming) {
             Button("Allow") { model.setEnabled(true) }
             Button("Cancel", role: .cancel) {}

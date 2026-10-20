@@ -300,6 +300,18 @@ final class MeetingStore: @unchecked Sendable {
             error TEXT
         );
         """,
+        """
+        CREATE TABLE github_pr_sessions (
+            url TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            cwd TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            preset TEXT,
+            title TEXT,
+            updated REAL NOT NULL,
+            PRIMARY KEY (url, kind)
+        );
+        """,
     ]
 
     private static let meetingColumns = """

@@ -15,7 +15,7 @@ private func physical(_ url: URL) -> String {
 }
 
 /// Runs the exact login-shell command line, with a fake claude that writes the bytes it was given.
-private func runLoginShell(script: String, in folder: URL) throws -> Int32 {
+func runLoginShell(script: String, in folder: URL) throws -> Int32 {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: EmbeddedTerminal.shell)
     process.arguments = EmbeddedTerminal.shellArguments(script)

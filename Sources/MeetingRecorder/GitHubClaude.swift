@@ -164,17 +164,10 @@ enum GitHubClaude {
 
     static func shellQuote(_ text: String) -> String { "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'" }
 
-    /// Reads the prompt from its file, so no title or comment is ever part of the script's own text.
-    static func terminalScript(directory: URL, promptFile: URL, cli: URL) -> String {
-        """
-        #!/bin/zsh
-        cd \(shellQuote(directory.path)) || exit 1
-        prompt=$(cat \(shellQuote(promptFile.path)))
-        rm -f -- \(shellQuote(promptFile.path)) "$0"
-        export PATH=\(shellQuote(cli.deletingLastPathComponent().path)):"$PATH"
-        exec \(shellQuote(cli.path)) "$prompt"
-
-        """
+    /// The `.command` file Terminal and the other terminal apps run: it removes itself, then runs the CLI as the embedded terminal does.
+    static func terminalScript(directory: URL, promptFile: URL?, cli: URL, flags: [String] = []) -> String {
+        ["#!/bin/zsh", "rm -f -- \"$0\"", EmbeddedTerminal.script(directory: directory, promptFile: promptFile, cli: cli, flags: flags), ""]
+            .joined(separator: "\n")
     }
 
     static let promptFileLifetime: TimeInterval = 86_400
@@ -183,16 +176,19 @@ enum GitHubClaude {
         home.appendingPathComponent("Library/Application Support/MeetingRecorder/claude-prompts", isDirectory: true)
     }
 
-    /// Writes the prompt (0600) and the script that runs it (0700) into the folder, removing leftovers older than a day first.
-    static func writeLaunchFiles(prompt: String, directory: URL, cli: URL, folder: URL, now: Date = Date(),
+    /// Writes the script (0700) that runs the CLI, and the prompt (0600) it reads when there is one, into the folder, removing
+    /// leftovers older than a day first.
+    static func writeLaunchFiles(prompt: String?, directory: URL, cli: URL, flags: [String] = [], folder: URL, now: Date = Date(),
                                  fileManager: FileManager = .default) throws -> URL {
         try fileManager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         purge(folder, now: now, fileManager: fileManager)
         let id = UUID().uuidString
-        let promptFile = folder.appendingPathComponent(id + ".txt")
+        let promptFile = prompt.map { _ in folder.appendingPathComponent(id + ".txt") }
         let script = folder.appendingPathComponent(id + ".command")
-        guard fileManager.createFile(atPath: promptFile.path, contents: Data(prompt.utf8), attributes: [.posixPermissions: 0o600]),
-              fileManager.createFile(atPath: script.path, contents: Data(terminalScript(directory: directory, promptFile: promptFile, cli: cli).utf8),
+        if let prompt, let promptFile, !fileManager.createFile(atPath: promptFile.path, contents: Data(prompt.utf8), attributes: [.posixPermissions: 0o600]) {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        guard fileManager.createFile(atPath: script.path, contents: Data(terminalScript(directory: directory, promptFile: promptFile, cli: cli, flags: flags).utf8),
                                      attributes: [.posixPermissions: 0o700]) else { throw CocoaError(.fileWriteUnknown) }
         return script
     }
@@ -239,6 +235,30 @@ enum GitHubClaude {
             return remotes(inGitConfig: config ?? "").contains(wanted)
         }
         return matches.first { $0.lastPathComponent.lowercased() == name } ?? matches.first
+    }
+
+    // MARK: Resume
+
+    /// A saved interactive session to pick up: its id, and its title when the transcript has one.
+    struct Resume: Equatable {
+        let id: String
+        var title: String?
+
+        var flags: [String] { ["--resume", id] }
+    }
+
+    enum Resumption: Equatable {
+        case reattach
+        case resume(String)
+        /// A stored session whose transcript is gone (or whose id is not a UUID) is forgotten before the new one starts.
+        case startNew(forget: Bool)
+    }
+
+    /// Reattach when Claude already runs for the pull request, resume the stored session while its transcript exists, else start new.
+    static func resumption(running: Bool, storedID: String?, transcriptExists: Bool) -> Resumption {
+        if running { return .reattach }
+        guard let storedID else { return .startNew(forget: false) }
+        return ClaudeTranscripts.isSessionID(storedID) && transcriptExists ? .resume(storedID) : .startNew(forget: true)
     }
 
     // MARK: Headless
@@ -301,10 +321,12 @@ enum GitHubClaude {
         private(set) var text = ""
         private(set) var status: String?
         private(set) var result: Result?
+        private(set) var sessionID: String?
         private var sawDelta = false
 
         mutating func consume(_ line: String) {
             guard let data = line.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            if let id = object["session_id"] as? String { sessionID = id }
             switch object["type"] as? String {
             case "stream_event": event(object["event"] as? [String: Any] ?? [:])
             case "assistant": message(object["message"] as? [String: Any] ?? [:])
@@ -355,4 +377,17 @@ struct GitHubReview: Equatable {
     var created: Date
     var duration: TimeInterval
     var cost: Double?
+}
+
+/// The Claude session of a pull request: an interactive one to resume, or the id of a headless review run.
+struct GitHubClaudeSession: Equatable {
+    enum Kind: String { case interactive, review }
+
+    let url: String
+    let id: String
+    let cwd: String
+    let kind: Kind
+    var preset: GitHubClaude.Preset?
+    var title: String?
+    var updated: Date
 }

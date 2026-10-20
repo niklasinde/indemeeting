@@ -39,6 +39,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/GitHubClient.swift \
     Sources/MeetingRecorder/ClaudeProcess.swift \
     Sources/MeetingRecorder/EmbeddedTerminal.swift \
+    Sources/MeetingRecorder/ClaudeTranscripts.swift \
     Sources/Shared/PhoneAPI.swift \
     Sources/MeetingRecorder/PhoneHTTP.swift \
     Sources/MeetingRecorder/PhonePairingLogic.swift \
@@ -59,6 +60,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/GitHubClaudeTests.swift \
     Tests/MeetingRecorderTests/GitHubActionsTests.swift \
     Tests/MeetingRecorderTests/EmbeddedTerminalTests.swift \
+    Tests/MeetingRecorderTests/ClaudeResumeTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"

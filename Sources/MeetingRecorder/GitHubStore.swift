@@ -132,6 +132,38 @@ extension MeetingStore {
         }
     }
 
+    // MARK: Claude sessions
+
+    func githubSessions() throws -> [GitHubClaudeSession] {
+        try read {
+            try db.query("SELECT url, session_id, cwd, kind, preset, title, updated FROM github_pr_sessions", []) { row -> GitHubClaudeSession? in
+                guard let kind = GitHubClaudeSession.Kind(rawValue: row.string(3)) else { return nil }
+                return GitHubClaudeSession(url: row.string(0), id: row.string(1), cwd: row.string(2), kind: kind,
+                                           preset: row.optionalString(4).flatMap(GitHubClaude.Preset.init(rawValue:)), title: row.optionalString(5),
+                                           updated: Date(timeIntervalSince1970: row.double(6)))
+            }.compactMap { $0 }
+        }
+    }
+
+    func saveGitHubSession(_ session: GitHubClaudeSession) throws {
+        try write {
+            try db.run("INSERT OR REPLACE INTO github_pr_sessions (url, session_id, cwd, kind, preset, title, updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       [session.url, session.id, session.cwd, session.kind.rawValue, session.preset?.rawValue, session.title,
+                        session.updated.timeIntervalSince1970])
+        }
+    }
+
+    /// Forgets the sessions of one pull request, or of all of them when no address is given.
+    func forgetGitHubSessions(_ url: String? = nil) throws {
+        try write {
+            if let url {
+                try db.run("DELETE FROM github_pr_sessions WHERE url = ?", [url])
+            } else {
+                try db.run("DELETE FROM github_pr_sessions")
+            }
+        }
+    }
+
     // MARK: Actions
 
     @discardableResult
