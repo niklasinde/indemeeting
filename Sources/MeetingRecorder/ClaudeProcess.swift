@@ -94,7 +94,7 @@ final class ClaudeProcess: @unchecked Sendable {
         for child in children.reversed() + [pid] { kill(child, SIGTERM) }
     }
 
-    private static func descendants(of pid: pid_t) -> [pid_t] {
+    static func descendants(of pid: pid_t) -> [pid_t] {
         let pgrep = Process()
         pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
         pgrep.arguments = ["-P", String(pid)]

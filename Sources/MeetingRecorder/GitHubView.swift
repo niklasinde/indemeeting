@@ -7,6 +7,7 @@ struct GitHubView: View {
     @State private var showsDetail = false
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
+    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
 
     enum Pane { case list, detail }
     static let defaultListWidth = 420.0
@@ -20,13 +21,14 @@ struct GitHubView: View {
             if !model.showsList {
                 listPane
             } else if proxy.size.width < Self.compactBelow {
-                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }) } else { listPane }
+                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }, total: proxy.size.width) } else { listPane }
             } else {
                 split(width: proxy.size.width)
             }
         }
         .background { openShortcut }
         .onAppear {
+            terminals.toggleFocus = { toggleTerminalFocus() }
             model.loadCache()
             model.reconcile()
             Task { await model.refresh() }
@@ -40,7 +42,7 @@ struct GitHubView: View {
         return HStack(spacing: 0) {
             listPane.frame(width: list)
             splitter(current: list, total: width)
-            detailPane(back: nil)
+            detailPane(back: nil, total: width)
         }
     }
 
@@ -65,14 +67,34 @@ struct GitHubView: View {
     }
 
     private var openShortcut: some View {
-        Button("Open in Browser") { model.page.map { NSWorkspace.shared.open(URL(string: $0.pr.url)!) } }
-            .keyboardShortcut("o")
-            .opacity(0)
-            .frame(width: 0, height: 0)
-            .allowsHitTesting(false)
+        Group {
+            Button("Open in Browser") { model.page.map { NSWorkspace.shared.open(URL(string: $0.pr.url)!) } }
+                .keyboardShortcut("o")
+            Button("Switch Between List and Terminal") { toggleTerminalFocus() }
+                .keyboardShortcut("t", modifiers: [.command, .option])
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .allowsHitTesting(false)
     }
 
-    private func detailPane(back: (() -> Void)?) -> some View {
+    /// The keyboard belongs to one of them at a time: the terminal when it is the first responder, the list otherwise.
+    private func toggleTerminalFocus() {
+        guard let key = model.page?.pr.url else { return }
+        if terminals.terminalHasFocus(key) {
+            terminals.releaseTerminal(key)
+            focus = nil
+            DispatchQueue.main.async { focus = .list }
+        } else {
+            _ = terminals.focusTerminal(key)
+        }
+    }
+
+    private func detailPane(back: (() -> Void)?, total: Double) -> some View {
+        TerminalSplit(key: model.page?.pr.url, width: total) { pageView(back: back) }
+    }
+
+    private func pageView(back: (() -> Void)?) -> some View {
         Group {
             if let page = model.page {
                 GitHubDetailView(page: page, model: model, back: back)
@@ -146,6 +168,10 @@ struct GitHubView: View {
                 Text("Updated \(GitHubLogic.updatedText(fetched, now: Date()))").font(.callout).foregroundStyle(.tertiary)
             }
             ClaudeRunningIndicator(model: .shared)
+            if terminals.runningCount > 0 {
+                Label(EmbeddedTerminal.runningText(terminals.runningCount), systemImage: "circle.fill")
+                    .font(.callout).foregroundStyle(.green).labelStyle(.titleAndIcon).lineLimit(1)
+            }
             if model.refreshing {
                 ProgressView().controlSize(.small)
             } else {
@@ -266,6 +292,7 @@ private struct PullRequestRow: View {
     let selected: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
+    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -336,6 +363,7 @@ private struct PullRequestRow: View {
         if signals.newFeedback > 0 { chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor)) }
         else if signals.newBotFeedback > 0 { chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu")) }
         if pr.comments > 0 { chips.append(Chip(text: "\(pr.comments)", icon: "bubble.left")) }
+        if terminals.isRunning(pr.url) { chips.append(Chip(text: "Claude running", icon: "circle.fill", tint: .green, help: "Claude is running in a terminal for this pull request")) }
         if claude.review(for: pr.url) != nil, claude.outdated[pr.url] != true {
             chips.append(Chip(text: "Reviewed by Claude", icon: "sparkles", help: "Claude has reviewed this pull request here"))
         }

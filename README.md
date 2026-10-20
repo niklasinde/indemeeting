@@ -540,6 +540,25 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   is ever quoted into a shell and no Automation permission is needed. Without a checkout it starts in your home folder and says
   `gh repo clone owner/repo`. The Claude app opens `claude://code/new?q=...&folder=...`; a prompt too long for a link is copied
   instead. Meetings have the same under Ask > Open in Claude, which points Claude at the MeetingRecorder MCP tools.
+- **In this app (embedded terminal):** the first group of the Open in Claude menu is Open in; "In this app" runs the interactive
+  `claude "<prompt>"` in a terminal pane on the pull request page instead of another app. Nothing starts on selection, only on the click.
+  The pane sits to the right of the page in a window at least 1500 pt wide and below it otherwise, with a draggable edge, and a toolbar
+  with Restart, Stop (Ctrl-C, then SIGHUP and SIGKILL for what stays), Copy all output, Hide and Close. There is one session per pull request:
+  other sessions keep running while you browse (a green dot on the row, a count in the list header, a Terminal button with a dot on the
+  page) and selecting the pull request again shows the same terminal with its scrollback. The session runs through `/bin/zsh -l -c`
+  in the checkout (else your home folder), so PATH and sign-in are those of your Terminal; the prompt is read from a 0600 file that
+  removes itself, never quoted into the command. `TERM=xterm-256color`, `COLORTERM=truecolor` and a UTF-8 `LANG` from your locale are set.
+  Without the CLI the pane shows the install command; without a checkout, the clone command. Interactive Claude can change files, so
+  the pane says so once (Don't show again). Light and dark palettes follow the appearance; SF Mono, 12 pt by default.
+  Keys: the terminal gets the keyboard when clicked or with Cmd-Opt-T, which also hands it back to the list; while it has the keyboard
+  the arrow keys go to the program, not the list. Cmd-C and Cmd-V copy and paste, Cmd-K clears, Cmd-plus, Cmd-minus and Cmd-0 change the
+  font size. Closing, restarting and quitting end Claude and everything it started (SIGHUP to the process group, SIGKILL after a moment).
+  Quitting with Claude running asks "Claude is still running in N terminals". Settings > Activity > GitHub: Open Claude in (default
+  destination), Embedded terminal font size, Confirm before quitting while running. The terminal is
+  [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) 1.99.0 (MIT), linked statically from source: no framework is embedded and the
+  signing, entitlements and hardened runtime are unchanged. 1.99.0 because the older releases compile a Metal shader and so need the
+  Metal toolchain plus a resource bundle. The `swiftc` fallback build has no terminal; "In this app" is then not offered. Meetings'
+  Open in Claude uses Terminal when the choice is In this app.
 - **Ask Claude:** off until Settings > Activity > GitHub > Allow Claude reviews is on (a one-time confirmation). It runs your
   `claude -p` here, one pull request at a time, in the checkout (else your home folder), streaming into a Claude review panel on
   the page. It is read-only: `--permission-mode dontAsk` with only Read, Grep, Glob, `gh pr view|diff|checks|list`,

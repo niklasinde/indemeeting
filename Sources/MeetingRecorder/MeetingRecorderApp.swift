@@ -169,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         TerminationSignals.observe { NSApp.terminate(nil) }
         CommandLineLink.refresh()
+        GitHubClaude.purge(GitHubClaude.promptFolder(), now: Date())
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
             self?.toggleRecording()
         }
@@ -188,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        EmbeddedTerminalModel.shared.terminateAll()
         tracker.flush()
     }
 
@@ -202,6 +204,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if let message = EmbeddedTerminalModel.shared.quitMessage() {
+            let alert = NSAlert()
+            alert.messageText = message
+            alert.informativeText = "Quitting ends Claude and everything it started."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        }
         guard recorder.isBusy else { return .terminateNow }
         Task {
             await recorder.stop(reveal: false)

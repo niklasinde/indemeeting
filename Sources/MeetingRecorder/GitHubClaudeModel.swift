@@ -52,7 +52,7 @@ final class GitHubClaudeModel: ObservableObject {
     private var store: MeetingStore? { GitHubModel.shared.store }
 
     var destination: GitHubClaude.Destination {
-        get { defaults.string(forKey: Self.destinationKey).flatMap(GitHubClaude.Destination.init(rawValue:)) ?? .terminal }
+        get { GitHubClaude.Destination.stored(defaults.string(forKey: Self.destinationKey), isAvailable: isInstalled) }
         set { defaults.set(newValue.rawValue, forKey: Self.destinationKey); objectWillChange.send() }
     }
 
@@ -90,7 +90,8 @@ final class GitHubClaudeModel: ObservableObject {
     }
 
     private func isInstalled(_ destination: GitHubClaude.Destination) -> Bool {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: destination.bundleID) != nil
+        if destination == .inApp { return EmbeddedTerminalModel.available }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: destination.bundleID) != nil
     }
 
     func setEnabled(_ on: Bool) {
@@ -221,7 +222,16 @@ final class GitHubClaudeModel: ObservableObject {
         let prompt = GitHubClaude.prompt(preset, context(pr, detail, hasCheckout: checkout != nil))
         let missing = checkout == nil ? Note(text: "No local checkout of \(pr.repo) found, so Claude starts in your home folder and reads it with gh.",
                                               copy: GitHubClaude.cloneCommand(pr.repo)) : nil
+        if destination == .inApp { return openEmbedded(pr, preset, checkout: checkout, prompt: prompt, hint: missing) }
         show(start(prompt, checkout: checkout) ?? missing ?? Note(text: "Started Claude in \(destination.title)."))
+    }
+
+    private func openEmbedded(_ pr: GitHubPR, _ preset: GitHubClaude.Preset, checkout: URL?, prompt: String, hint: Note?) {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cli = ClaudePlugin.findCLI()
+        let name = GitHubLogic.repoName(pr.repo).name
+        EmbeddedTerminalModel.shared.open(pr.url, title: "\(preset.shortTitle) \u{00B7} \(name) #\(pr.number)", directory: checkout ?? home,
+                                          prompt: prompt, cli: cli, hint: hint)
     }
 
     /// A Claude session about a meeting, through the MCP tools of the MeetingRecorder plugin. Returns what went wrong, if anything.
@@ -232,6 +242,7 @@ final class GitHubClaudeModel: ObservableObject {
     /// Opens the prompt in the chosen destination; the note says what went wrong or what the user still has to do.
     private func start(_ prompt: String, checkout: URL?) -> Note? {
         let home = FileManager.default.homeDirectoryForCurrentUser
+        let destination = destination == .inApp ? .terminal : destination
         switch GitHubClaude.plan(destination, cli: ClaudePlugin.findCLI(), checkout: checkout, home: home, prompt: prompt, isInstalled: isInstalled) {
         case .cliMissing:
             return Note(text: "The Claude CLI was not found. Install it with npm install -g @anthropic-ai/claude-code.",
@@ -245,6 +256,8 @@ final class GitHubClaudeModel: ObservableObject {
             } catch {
                 return Note(text: "Could not start Claude: \(error.localizedDescription)")
             }
+        case .embedded:
+            return nil
         case .appLink(let link):
             NSWorkspace.shared.open(link)
             return Note(text: "Opened a new session in the Claude app.")

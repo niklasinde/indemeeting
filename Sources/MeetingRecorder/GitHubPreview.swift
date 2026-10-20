@@ -29,6 +29,14 @@ enum GitHubPreview {
         window.orderBack(nil)
         var directory = TicketDirectory()
         directory.sites["QDLY"] = "quiddly.atlassian.net"
+        if CommandLine.arguments.contains("--terminal-check") {
+            Task { @MainActor in
+                await TerminalCheck.run(window: window, model: model, directory: directory, output: output)
+                exit(0)
+            }
+            NSApplication.shared.run()
+            exit(0)
+        }
         Task { @MainActor in
             @MainActor func shot(_ name: String, appearances: [NSAppearance.Name] = [.aqua, .darkAqua]) async {
                 for appearance in appearances {
@@ -142,7 +150,7 @@ enum GitHubPreview {
         window.orderOut(nil)
     }
 
-    private static var detailSamples: [(name: String, pr: GitHubPR, detail: GitHubPRDetail)] {
+    static var detailSamples: [(name: String, pr: GitHubPR, detail: GitHubPRDetail)] {
         let now = Date()
         func detail(_ name: String, _ number: Int, _ title: String, state: GitHubPR.State = .open, draft: Bool = false, review: GitHubPR.Review? = nil,
                     mergeable: GitHubPRDetail.Mergeable = .mergeable, body: String, checks: [GitHubPRDetail.Check] = [],
@@ -213,7 +221,7 @@ enum GitHubPreview {
         ]
     }
 
-    private static var samples: [GitHubKind: [GitHubPR]] {
+    static var samples: [GitHubKind: [GitHubPR]] {
         let now = Date()
         func pr(_ number: Int, _ repo: String, _ title: String, ago: TimeInterval, state: GitHubPR.State = .open, draft: Bool = false,
                 checks: GitHubPR.Checks = .passed, review: GitHubPR.Review? = nil, add: Int = 40, del: Int = 8, comments: Int = 0,

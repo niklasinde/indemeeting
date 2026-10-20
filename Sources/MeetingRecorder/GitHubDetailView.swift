@@ -66,6 +66,7 @@ struct GitHubDetailContent: View {
     let directory: TicketDirectory
     let ask: () -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
+    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
     @State private var bodyExpanded = false
     @State private var allCommits = false
     @State private var fileQuery = ""
@@ -158,6 +159,7 @@ struct GitHubDetailContent: View {
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
             OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
+            TerminalToggle(key: pr.url, model: terminals)
             AskClaudeMenu(pr: pr, detail: detail, model: claude)
             ClaudeNoteBar(model: claude)
         }

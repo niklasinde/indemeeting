@@ -94,12 +94,13 @@ enum GitHubClaude {
     // MARK: Destinations
 
     enum Destination: String, CaseIterable, Identifiable {
-        case terminal, iterm, ghostty, warp, claudeApp
+        case inApp, terminal, iterm, ghostty, warp, claudeApp
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
+            case .inApp: return "In this app"
             case .terminal: return "Terminal"
             case .iterm: return "iTerm2"
             case .ghostty: return "Ghostty"
@@ -110,6 +111,7 @@ enum GitHubClaude {
 
         var bundleID: String {
             switch self {
+            case .inApp: return ""
             case .terminal: return "com.apple.Terminal"
             case .iterm: return "com.googlecode.iterm2"
             case .ghostty: return "com.mitchellh.ghostty"
@@ -119,11 +121,17 @@ enum GitHubClaude {
         }
 
         var runsCLI: Bool { self != .claudeApp }
+
+        /// The saved choice, falling back to Terminal when it is unknown or its destination is not available.
+        static func stored(_ raw: String?, isAvailable: (Destination) -> Bool) -> Destination {
+            raw.flatMap(Destination.init(rawValue:)).flatMap { isAvailable($0) ? $0 : nil } ?? .terminal
+        }
     }
 
     enum Launch: Equatable {
         case cliMissing
         case terminal(Destination, directory: URL, cli: URL)
+        case embedded(directory: URL, cli: URL)
         case appLink(URL)
         case copyAndOpenApp
     }
@@ -134,6 +142,7 @@ enum GitHubClaude {
             return appLink(prompt: prompt, folder: checkout).map(Launch.appLink) ?? .copyAndOpenApp
         }
         guard let cli else { return .cliMissing }
+        if destination == .inApp { return .embedded(directory: checkout ?? home, cli: cli) }
         return .terminal(isInstalled(destination) ? destination : .terminal, directory: checkout ?? home, cli: cli)
     }
 
@@ -186,6 +195,17 @@ enum GitHubClaude {
               fileManager.createFile(atPath: script.path, contents: Data(terminalScript(directory: directory, promptFile: promptFile, cli: cli).utf8),
                                      attributes: [.posixPermissions: 0o700]) else { throw CocoaError(.fileWriteUnknown) }
         return script
+    }
+
+    /// Writes only the prompt (0600), for a session that reads it itself and removes it.
+    static func writePromptFile(prompt: String, folder: URL, now: Date = Date(), fileManager: FileManager = .default) throws -> URL {
+        try fileManager.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        purge(folder, now: now, fileManager: fileManager)
+        let promptFile = folder.appendingPathComponent(UUID().uuidString + ".txt")
+        guard fileManager.createFile(atPath: promptFile.path, contents: Data(prompt.utf8), attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return promptFile
     }
 
     static func purge(_ folder: URL, now: Date, fileManager: FileManager = .default) {

@@ -9,12 +9,12 @@ struct OpenInClaudeMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(GitHubClaude.Preset.allCases) { preset in
-                Button(preset.title) { model.openInClaude(pr, detail, preset) }
-            }
-            Divider()
             Picker("Open in", selection: Binding(get: { model.destination }, set: { model.destination = $0 })) {
                 ForEach(model.installedDestinations()) { Text($0.title).tag($0) }
+            }
+            Divider()
+            ForEach(GitHubClaude.Preset.allCases) { preset in
+                Button(preset.title) { model.openInClaude(pr, detail, preset) }
             }
         } label: {
             Label("Open in Claude", systemImage: "terminal")
@@ -213,6 +213,9 @@ struct ClaudeSettingsRows: View {
                 .fixedSize()
             }
             Divider().padding(.leading, 14)
+            Divider().padding(.leading, 14)
+            EmbeddedTerminalSettingsRows()
+            Divider().padding(.leading, 14)
             SettingsRow("Remember my choice", detail: "The main Open in Claude button repeats the preset you used last.") {
                 Toggle("Remember my choice", isOn: Binding(get: { model.remember }, set: { model.remember = $0 })).labelsHidden().toggleStyle(.switch)
             }
@@ -226,6 +229,25 @@ struct ClaudeSettingsRows: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(ClaudeConfirmation.message)
+        }
+    }
+}
+
+/// Font size and the quit confirmation of the terminal in this app.
+struct EmbeddedTerminalSettingsRows: View {
+    @AppStorage(EmbeddedTerminal.fontSizeKey) private var fontSize = EmbeddedTerminal.defaultFontSize
+    @AppStorage(EmbeddedTerminal.confirmQuitKey) private var confirmQuit = true
+
+    var body: some View {
+        if EmbeddedTerminalModel.available {
+            SettingsRow("Embedded terminal font size", detail: "For \u{201C}In this app\u{201D}. \u{2318}+ and \u{2318}\u{2212} change it while the terminal has the keyboard.") {
+                Stepper("\(Int(EmbeddedTerminal.fontSize(fontSize))) pt", value: $fontSize, in: EmbeddedTerminal.fontSizes, step: 1)
+                    .monospacedDigit()
+            }
+            Divider().padding(.leading, 14)
+            SettingsRow("Confirm before quitting while running", detail: "Asks first when Claude is still running in an embedded terminal.") {
+                Toggle("Confirm before quitting while running", isOn: $confirmQuit).labelsHidden().toggleStyle(.switch)
+            }
         }
     }
 }

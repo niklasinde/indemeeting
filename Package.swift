@@ -16,10 +16,13 @@ let package = Package(
     name: "MeetingRecorder",
     platforms: [.macOS("26.0")],
     // Only diarization is used, so FluidAudio's NeMo text-processing trait (a prebuilt binary) stays off.
-    dependencies: [.package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5", traits: [])],
+    // SwiftTerm draws the embedded Claude terminal. Linked statically from source: nothing is embedded or loaded at run time.
+    // 1.99.0 because the older releases compile a Metal shader and so need the Metal toolchain and a resource bundle.
+    dependencies: [.package(url: "https://github.com/FluidInference/FluidAudio.git", exact: "0.17.5", traits: []),
+                   .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.0")],
     targets: [
         .executableTarget(name: "MeetingRecorder",
-                          dependencies: [.product(name: "FluidAudio", package: "FluidAudio")] + (hasWhisper ? ["whisper"] : []),
+                          dependencies: [.product(name: "FluidAudio", package: "FluidAudio"), .product(name: "SwiftTerm", package: "SwiftTerm")] + (hasWhisper ? ["whisper"] : []),
                           path: "Sources", sources: ["MeetingRecorder", "Shared"]),
         .testTarget(name: "MeetingRecorderTests", dependencies: ["MeetingRecorder"], path: "Tests/MeetingRecorderTests",
                     swiftSettings: testSettings)
