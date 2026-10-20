@@ -28,6 +28,7 @@ struct GitHubView: View {
         .sheet(item: $actions.sheet) { GitHubActionSheet(sheet: $0, model: actions) }
         .onAppear {
             terminals.toggleFocus = { toggleTerminalFocus() }
+            listWidth = GitHubLayout.repairedWidth(listWidth)
             model.loadCache()
             model.reconcile()
             Task { await model.refresh() }

@@ -58,6 +58,8 @@ enum EmbeddedTerminal {
     static let belowRange = 160.0...700.0
     static let minimumPageWidth = 420.0
     static let minimumPageHeight = 200.0
+    /// The handle between the page and the terminal, which takes a point of the room too.
+    static let handleLength = 1.0
     static let defaultRight = 560.0
     static let defaultBelow = 320.0
 
@@ -66,8 +68,8 @@ enum EmbeddedTerminal {
     /// The pane's width or height, kept inside its range and leaving room for the page it sits next to.
     static func paneLength(_ stored: Double, placement: Placement, available: Double) -> Double {
         switch placement {
-        case .right: return min(max(stored, rightRange.lowerBound), min(rightRange.upperBound, available - minimumPageWidth))
-        case .below: return min(max(stored, belowRange.lowerBound), min(belowRange.upperBound, available - minimumPageHeight))
+        case .right: return min(max(stored, rightRange.lowerBound), min(rightRange.upperBound, available - minimumPageWidth - handleLength))
+        case .below: return min(max(stored, belowRange.lowerBound), min(belowRange.upperBound, available - minimumPageHeight - handleLength))
         }
     }
 

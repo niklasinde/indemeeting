@@ -98,9 +98,9 @@ let embeddedTerminalTests: [(name: String, run: () throws -> Void)] = [
         check(EmbeddedTerminal.placement(width: 1500) == .right && EmbeddedTerminal.placement(width: 1920) == .right, "wide")
         check(EmbeddedTerminal.placement(width: 1499) == .below && EmbeddedTerminal.placement(width: 700) == .below, "narrow")
         check(EmbeddedTerminal.paneLength(100, placement: .right, available: 1000) == 480, "minimum width")
-        check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 1000) == 580, "leaves the page its width")
+        check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 1000) == 579, "leaves the page its width and the handle")
         check(EmbeddedTerminal.paneLength(320, placement: .below, available: 760) == 320, "kept")
-        check(EmbeddedTerminal.paneLength(600, placement: .below, available: 500) == 300, "leaves the page its height")
+        check(EmbeddedTerminal.paneLength(600, placement: .below, available: 500) == 299, "leaves the page its height and the handle")
         check(EmbeddedTerminal.fontSize(nil) == 12 && EmbeddedTerminal.fontSize(3) == 9 && EmbeddedTerminal.fontSize(99) == 24, "font size clamps")
     }),
 
