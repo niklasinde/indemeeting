@@ -82,6 +82,16 @@ enum GitHubClient {
         }
     }
 
+    /// One page of a pull request's comments, the first or the one after `cursors`, with the response it was parsed from.
+    nonisolated static func fetchComments(cli: URL?, repo: String, number: Int, after cursors: GitHubComments.Cursors? = nil)
+        -> Result<(page: GitHubComments, json: Data), GitHubError> {
+        guard let cli, let output = run(cli, GitHubLogic.commentsArguments(repo: repo, number: number, after: cursors)) else { return .failure(.cliMissing) }
+        if output.status != 0, (try? GitHubLogic.parseComments(output.stdout)) == nil { return .failure(GitHubError.classify(output.stderr)) }
+        do { return .success((try GitHubLogic.parseComments(output.stdout), output.stdout)) } catch {
+            return .failure(error as? GitHubError ?? .failed("unexpected response"))
+        }
+    }
+
     /// `--github-pr <owner/repo#n>`: prints the parsed summary of one pull request. Reads GitHub, writes nothing.
     static func runDetailFromCommandLine(_ reference: String) -> Never {
         guard let target = GitHubLogic.reference(reference) else {

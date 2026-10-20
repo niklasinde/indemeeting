@@ -64,6 +64,7 @@ extension MeetingStore {
             try db.run("DELETE FROM github_prs")
             try db.run("DELETE FROM github_pr_details")
             try db.run("DELETE FROM github_pr_reviews")
+            try db.run("DELETE FROM github_pr_comments")
             return count
         }
     }
@@ -88,6 +89,21 @@ extension MeetingStore {
             let head = (try? GitHubLogic.parseDetail(json))?.headOid
             try db.run("INSERT OR REPLACE INTO github_pr_details (url, json, fetched, head_sha) VALUES (?, ?, ?, ?)",
                        [url, json, fetched.timeIntervalSince1970, head])
+        }
+    }
+
+    /// The cached comments of a pull request, parsed, with the responses they were parsed from.
+    func githubComments(_ url: String) throws -> (comments: GitHubComments, json: Data)? {
+        try read {
+            try db.query("SELECT json FROM github_pr_comments WHERE url = ?", [url]) { $0.optionalData(0) }.first.flatMap { $0 }
+                .flatMap { json in (try? GitHubLogic.parseComments(json)).map { ($0, json) } }
+        }
+    }
+
+    func saveGitHubComments(_ url: String, json: Data, headSHA: String?, fetched: Date = Date()) throws {
+        try write(notify: Self.githubDidChange) {
+            try db.run("INSERT OR REPLACE INTO github_pr_comments (url, json, head_sha, fetched) VALUES (?, ?, ?, ?)",
+                       [url, json, headSHA, fetched.timeIntervalSince1970])
         }
     }
 

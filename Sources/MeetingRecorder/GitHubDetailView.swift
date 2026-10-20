@@ -15,6 +15,9 @@ struct GitHubDetailView: View {
                     Button(action: back) { Label("Pull requests", systemImage: "chevron.left") }.buttonStyle(.borderless)
                 }
                 Spacer()
+                Button { page.showComments() } label: { Label("Comments", systemImage: "bubble.left.and.bubble.right") }
+                    .buttonStyle(.borderless)
+                    .help("Scroll to the comments")
                 if page.loading { ProgressView().controlSize(.small) } else {
                     Button { page.start() } label: { Image(systemName: "arrow.clockwise") }.help("Fetch this pull request now")
                 }
@@ -23,12 +26,17 @@ struct GitHubDetailView: View {
             .padding(.top, 20)
             .padding(.bottom, 10)
             if let error = page.error { DetailErrorBanner(error: error) }
-            ScrollView {
-                GitHubDetailContent(pr: page.pr, detail: page.detail, directory: model.directory, ask: { model.ask(about: page.pr) })
-                    .frame(maxWidth: 760, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, RecordingDetail.gutter)
-                    .padding(.bottom, 28)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    GitHubDetailContent(pr: page.pr, detail: page.detail, comments: page.comments, directory: model.directory, ask: { model.ask(about: page.pr) })
+                        .frame(maxWidth: 760, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, RecordingDetail.gutter)
+                        .padding(.bottom, 28)
+                }
+                .onAppear { scrollToComments(proxy) }
+                .onChange(of: page.scrollPending) { scrollToComments(proxy) }
+                .onChange(of: page.detail != nil) { scrollToComments(proxy) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -38,6 +46,18 @@ struct GitHubDetailView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(ClaudeConfirmation.message)
+        }
+    }
+}
+
+extension GitHubDetailView {
+    /// Scrolls to the comments once the page has its content, when the list or the toolbar asked for them.
+    private func scrollToComments(_ proxy: ScrollViewProxy) {
+        guard page.scrollPending, page.detail != nil else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            withAnimation { proxy.scrollTo(GitHubDetailContent.commentsAnchor, anchor: .top) }
+            page.scrollPending = false
         }
     }
 }
@@ -63,8 +83,12 @@ private struct DetailErrorBanner: View {
 struct GitHubDetailContent: View {
     let pr: GitHubPR
     let detail: GitHubPRDetail?
+    @ObservedObject var comments: GitHubCommentsModel
     let directory: TicketDirectory
     let ask: () -> Void
+    /// Off in the previews, which render the whole page at once.
+    var lazyComments = true
+    static let commentsAnchor = "comments"
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
     @State private var bodyExpanded = false
@@ -83,6 +107,7 @@ struct GitHubDetailContent: View {
                 checks(detail)
                 commits(detail)
                 files(detail)
+                GitHubCommentsSection(model: comments, lazy: lazyComments).id(Self.commentsAnchor)
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -290,11 +315,11 @@ struct GitHubDetailContent: View {
     }
 }
 
-private func open(_ url: String) {
+func open(_ url: String) {
     URL(string: url).map { NSWorkspace.shared.open($0) }
 }
 
-private struct DetailSection<Content: View>: View {
+struct DetailSection<Content: View>: View {
     let title: String
     var trailing: String?
     @ViewBuilder let content: Content
@@ -333,7 +358,7 @@ private struct DetailRow<Content: View>: View {
     }
 }
 
-private struct Note: View {
+struct Note: View {
     let text: String
 
     var body: some View { Text(text).font(.caption).foregroundStyle(.tertiary).padding(.top, 6) }
@@ -352,7 +377,7 @@ private struct BranchChip: View {
     }
 }
 
-private struct Initials: View {
+struct Initials: View {
     let text: String
     let color: Color
 

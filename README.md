@@ -524,6 +524,12 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   a click opens the run; refreshed every 30 seconds while one is running), the commits (first 100, per-commit check mark)
   and the files changed (first 100, with a filter; a click opens the pull request's Files tab). It is read only, from one
   GraphQL query through `gh`, cached per pull request in `github_pr_details` so it reopens instantly.
+- **Comments:** a section under Files changed (and a Comments button in the page toolbar) with the review threads grouped by file, each with
+  the code it was made on, its comments in order (Markdown, suggestions as before and after, bots badged, long bot comments and
+  `<details>` collapsed), resolved threads folded into one line and outdated ones dimmed, then the conversation of comments and review
+  summaries. Filters: Unresolved, All, Mine, New (comments by others after your last activity, marked with a dot), Hide bots and a search.
+  Clicking "N unresolved" or "N new comments" on a list row opens the page on them. Read only. A second GraphQL query (about 1 point
+  a page of 50 threads) fetches it when the page opens; Load more follows the cursors. Cached per pull request in `github_pr_comments`.
 - **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
   data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
 - **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks · 2 with new feedback" opens the page.
@@ -570,7 +576,8 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 `MeetingRecorder --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
 signals, and the GraphQL points used (read only). `--github-pr-threads owner/repo#n` is a probe that prints what the review
 threads of one pull request look like (no UI uses it).
-`--github-pr owner/repo#number` fetches one pull request page and prints the parsed summary.
+`--github-pr owner/repo#number` fetches one pull request page and prints the parsed summary. `--github-pr-comments owner/repo#n` fetches
+all pages of its comments and prints the parsed structure and the cost.
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
 
 ## iPhone access

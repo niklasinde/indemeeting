@@ -107,6 +107,12 @@ final class GitHubModel: ObservableObject {
         }
     }
 
+    /// Opens the pull request on its comments, with the filter a list chip stands for.
+    func showComments(of pr: GitHubPR, _ scope: GitHubCommentsFilter.Scope) {
+        select(pr)
+        page?.showComments(scope)
+    }
+
     func step(_ direction: GitHubSelection.Direction) {
         select(GitHubSelection.step(direction, from: selectedURL, in: visible))
     }

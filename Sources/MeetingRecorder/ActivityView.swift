@@ -722,6 +722,16 @@ struct Chip: Hashable {
     var help: String?
     /// Opened in the default browser when the chip is clicked.
     var link: URL?
+    /// Run when the chip is clicked, instead of a link.
+    var tap: Tap?
+
+    struct Tap: Hashable {
+        let key: String
+        let run: () -> Void
+
+        static func == (lhs: Tap, rhs: Tap) -> Bool { lhs.key == rhs.key }
+        func hash(into hasher: inout Hasher) { hasher.combine(key) }
+    }
 
     /// A ticket, with its title when known (or only in the tooltip when `short`), linking to Jira when its site is known.
     static func ticket(_ ticket: String, _ directory: TicketDirectory, short: Bool) -> Chip {
@@ -745,7 +755,9 @@ struct ChipLabel: View {
         .foregroundStyle(chip.tint ?? .secondary)
         .help(chip.help ?? "")
         .contentShape(Rectangle())
-        .highPriorityGesture(TapGesture().onEnded { if let link = chip.link { NSWorkspace.shared.open(link) } }, including: chip.link == nil ? .subviews : .all)
+        .highPriorityGesture(TapGesture().onEnded {
+                if let tap = chip.tap { tap.run() } else if let link = chip.link { NSWorkspace.shared.open(link) }
+            }, including: chip.link == nil && chip.tap == nil ? .subviews : .all)
     }
 }
 

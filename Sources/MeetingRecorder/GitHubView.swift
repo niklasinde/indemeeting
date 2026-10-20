@@ -358,9 +358,13 @@ private struct PullRequestRow: View {
         if pr.state == .open, let review = pr.review { chips.append(Self.chip(review)) }
         if signals.unresolved > 0 {
             let capped = (pr.activity?.threads ?? 0) > GitHubLogic.threadPageSize
-            chips.append(Chip(text: "\(signals.unresolved)\(capped ? "+" : "") unresolved", icon: "bubble.left.and.exclamationmark.bubble.right", tint: .orange))
+            chips.append(Chip(text: "\(signals.unresolved)\(capped ? "+" : "") unresolved", icon: "bubble.left.and.exclamationmark.bubble.right", tint: .orange,
+                              help: "Show the unresolved threads", tap: .init(key: "unresolved") { showComments(.unresolved) }))
         }
-        if signals.newFeedback > 0 { chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor)) }
+        if signals.newFeedback > 0 {
+            chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor,
+                              help: "Show the new comments", tap: .init(key: "new") { showComments(.new) }))
+        }
         else if signals.newBotFeedback > 0 { chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu")) }
         if pr.comments > 0 { chips.append(Chip(text: "\(pr.comments)", icon: "bubble.left")) }
         if terminals.isRunning(pr.url) { chips.append(Chip(text: "Claude running", icon: "circle.fill", tint: .green, help: "Claude is running in a terminal for this pull request")) }
@@ -384,6 +388,11 @@ private struct PullRequestRow: View {
 
     private func open(_ url: String) {
         URL(string: url).map { NSWorkspace.shared.open($0) }
+    }
+
+    private func showComments(_ scope: GitHubCommentsFilter.Scope) {
+        show(pr)
+        model.showComments(of: pr, scope)
     }
 }
 

@@ -114,6 +114,27 @@ enum GitHubPreview {
                 await renderDetail(claudeSample, directory: directory, appearance: .aqua, to: output.appendingPathComponent("claude-\(name).png"))
             }
             await renderSettings(model, appearance: .darkAqua, to: output.appendingPathComponent("claude-settings-dark.png"))
+            let commentPR = detailSamples[0].pr
+            let sampleComments = commentSamples
+            let commentStates: [(String, GitHubComments, GitHubCommentsFilter, Set<String>)] = [
+                ("unresolved", sampleComments, GitHubCommentsFilter(scope: .unresolved), []),
+                ("all", sampleComments, GitHubCommentsFilter(scope: .all), ["T2"]),
+                ("mine", sampleComments, GitHubCommentsFilter(scope: .mine), []),
+                ("hide-bots", sampleComments, GitHubCommentsFilter(scope: .all, hideBots: true), []),
+                ("search", sampleComments, GitHubCommentsFilter(scope: .all, query: "guard"), []),
+                ("bot-full", sampleComments, GitHubCommentsFilter(scope: .all), ["T2", "B1"]),
+                ("empty", GitHubComments(), GitHubCommentsFilter(), []),
+            ]
+            for (name, comments, filter, expanded) in commentStates {
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    await render(GitHubCommentsSection(model: GitHubCommentsModel(pr: commentPR, sample: comments, filter: filter, expanded: expanded), lazy: false),
+                                 appearance: appearance, to: output.appendingPathComponent("comments-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+                }
+            }
+            await render(GitHubDetailContent(pr: commentPR, detail: detailSamples[0].detail,
+                                             comments: GitHubCommentsModel(pr: commentPR, sample: sampleComments, filter: GitHubCommentsFilter(scope: .unresolved)),
+                                             directory: directory, ask: {}, lazyComments: false),
+                         appearance: .aqua, to: output.appendingPathComponent("comments-page-light.png"))
             exit(0)
         }
         NSApplication.shared.run()
@@ -137,8 +158,13 @@ enum GitHubPreview {
     @MainActor
     private static func renderDetail(_ sample: (name: String, pr: GitHubPR, detail: GitHubPRDetail), directory: TicketDirectory,
                                      appearance: NSAppearance.Name, to url: URL) async {
-        let content = GitHubDetailContent(pr: sample.pr, detail: sample.detail, directory: directory, ask: {})
-            .padding(32).frame(width: 840, alignment: .leading).background(Color(nsColor: .windowBackgroundColor))
+        await render(GitHubDetailContent(pr: sample.pr, detail: sample.detail, comments: GitHubCommentsModel(pr: sample.pr, sample: nil), directory: directory, ask: {}),
+                     appearance: appearance, to: url)
+    }
+
+    @MainActor
+    private static func render(_ view: some View, appearance: NSAppearance.Name, to url: URL) async {
+        let content = view.padding(32).frame(width: 840, alignment: .leading).background(Color(nsColor: .windowBackgroundColor))
         let controller = NSHostingController(rootView: content)
         controller.sizingOptions = .preferredContentSize
         let window = NSWindow(contentViewController: controller)
@@ -148,6 +174,85 @@ enum GitHubPreview {
         try? await Task.sleep(nanoseconds: 1_200_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    static var commentSamples: GitHubComments {
+        let now = Date()
+        func who(_ login: String) -> GitHubActivity.Actor { GitHubActivity.Actor(login: login, isBot: GitHubLogic.isBot(login: login, typename: nil)) }
+        func said(_ id: String, _ login: String, _ ago: Double, _ body: String, review: GitHubPRDetail.ReviewState? = nil) -> GitHubComment {
+            let parts = GitHubLogic.commentParts(body)
+            let author = who(login)
+            return GitHubComment(id: id, author: author, body: body, parts: parts, digest: author.isBot ? GitHubLogic.digest(parts, body: body) : nil,
+                                 created: now.addingTimeInterval(-ago), url: "https://github.com/acme/finq.api/pull/2462#discussion_\(id)", review: review)
+        }
+        let guardDiff = GitHubLogic.diffLines("""
+            @@ -38,7 +38,12 @@ def order_to_pay(case):
+                 case = load(case_id)
+                 if case is None:
+                     return
+            -    send(case)
+            +    if not setting("strawbay_send_to_kronofogden"):
+            +        return
+            +    batch = build_batch(case)
+            +    send(batch)
+                 log.info("sent")
+            """)
+        let longBot = """
+            <!-- This is an auto-generated comment: summarize by coderabbit.ai -->
+            _\u{26A0}\u{FE0F} Potential issue_ | _\u{1F7E0} Major_
+
+            **The guard skips the log line, so a disabled tenant leaves no trace.**
+
+            When the setting is off the function returns before `log.info`, which makes support cases hard to follow.
+
+            <details>
+            <summary>\u{1F4DD} Committable suggestion</summary>
+
+            > \u{203C}\u{FE0F} **IMPORTANT**
+            > Carefully review the code before committing.
+
+            ```suggestion
+            if not setting("strawbay_send_to_kronofogden"):
+                log.info("skipped")
+                return
+            ```
+
+            </details>
+
+            <details>
+            <summary>\u{1F916} Prompt for AI Agents</summary>
+
+            ```
+            In finq/jobs/enforcement/delivery_api/strawbay/sending.py around lines 41 to 44, log before returning.
+            ```
+
+            </details>
+
+            <!-- fingerprinting:phantom:triton:hamster -->
+            """
+        let threads: [GitHubThread] = [
+            GitHubThread(id: "T1", path: "finq/jobs/enforcement/delivery_api/strawbay/sending.py", line: 44, startLine: 41, diff: guardDiff,
+                         comments: [said("a1", "sara", 7_200, "Can the guard live in `order_to_pay` instead? Then the batch builder stays pure.\n\n```suggestion\nif not setting(\"strawbay_send_to_kronofogden\"):\n    return\n```"),
+                                    said("a2", "niklas", 3_600, "Moved it, thanks. I kept the log line.")], commentCount: 2),
+            GitHubThread(id: "T2", path: "finq/jobs/enforcement/delivery_api/strawbay/sending.py", line: 52, isResolved: true, resolvedBy: "sara", diff: guardDiff,
+                         comments: [said("b0", "sara", 9_000, "Nit: name this `batch`, not `b`."), said("b1", "niklas", 8_000, "Done.")], commentCount: 2),
+            GitHubThread(id: "T3", path: "finq/jobs/enforcement/delivery_api/strawbay/sending.py", line: nil, originalLine: 61, isOutdated: true, diff: guardDiff,
+                         comments: [said("c1", "elin", 90_000, "This branch never runs with the new setting, can it go?", review: .changesRequested)], commentCount: 1),
+            GitHubThread(id: "T4", path: "finq/api/resources/engine_rule/engine_rule.py", line: 17, diff: guardDiff,
+                         comments: [said("B1", "coderabbitai[bot]", 5_000, longBot),
+                                    said("d2", "elin", 600, "Agreed with the bot, the guard should log.")], commentCount: 2),
+            GitHubThread(id: "T5", path: "README.md", line: nil, isFile: true,
+                         comments: [said("e1", "copilot-pull-request-reviewer", 20_000, "The README does not mention the new setting.")], commentCount: 1),
+            GitHubThread(id: "T6", path: "db/migrations/versions/5a248b7f1722_setting.py", line: 12, isResolved: true, resolvedBy: "johan", diff: guardDiff,
+                         comments: [said("f1", "johan", 40_000, "Please add a downgrade.")], commentCount: 1),
+        ]
+        let conversation = [
+            said("i1", "johan", 80_000, "LGTM once the guard logs.", review: .approved),
+            said("i2", "coderabbitai[bot]", 70_000, "## Walkthrough\n\nThe change guards the sending job behind a tenant setting and adds the migration.\n\n<details>\n<summary>Changes</summary>\n\n| File | Summary |\n|---|---|\n| sending.py | Guard |\n\n</details>"),
+            said("i3", "niklas", 1_000, "Pushed the fix, ready for another look."),
+        ]
+        return GitHubComments(me: "niklas", threads: threads, threadTotal: 94, conversation: conversation,
+                              cursors: .init(threads: .init(after: "x", more: true)), cost: 1, remaining: 4990)
     }
 
     static var detailSamples: [(name: String, pr: GitHubPR, detail: GitHubPRDetail)] {

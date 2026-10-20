@@ -244,7 +244,7 @@ enum GitHubLogic {
                     remaining: response.data?.rateLimit?.remaining)
     }
 
-    private static func date(_ text: String?) -> Date? { text.flatMap { ISO8601DateFormatter().date(from: $0) } }
+    static func date(_ text: String?) -> Date? { text.flatMap { ISO8601DateFormatter().date(from: $0) } }
 
     private static func actor(_ named: Response.Node.Named?) -> GitHubActivity.Actor {
         GitHubActivity.Actor(login: named?.login ?? "ghost", isBot: named?.__typename == "Bot")

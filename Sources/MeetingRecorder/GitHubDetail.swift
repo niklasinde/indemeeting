@@ -29,8 +29,8 @@ struct GitHubPRDetail: Equatable {
         let deletions: Int
         let change: Change
 
-        var directory: String { path.contains("/") ? String(path[...path.lastIndex(of: "/")!]) : "" }
-        var name: String { String(path.dropFirst(directory.count)) }
+        var directory: String { GitHubLogic.pathParts(path).directory }
+        var name: String { GitHubLogic.pathParts(path).name }
     }
 
     struct Check: Equatable {
@@ -253,8 +253,6 @@ extension GitHubLogic {
         return parts.count >= 3 ? "\(parts[1])/\(parts[2])" : ""
     }
 
-    private static func date(_ text: String?) -> Date? { text.flatMap { ISO8601DateFormatter().date(from: $0) } }
-
     private static func reviewers(_ node: DetailResponse.PullRequest) -> [GitHubPRDetail.Reviewer] {
         let requested = (node.reviewRequests?.nodes ?? []).compactMap { $0?.requestedReviewer }.compactMap { reviewer in
             reviewer.login.map { GitHubPRDetail.Reviewer(name: $0, state: .pending) }
@@ -350,8 +348,13 @@ extension GitHubLogic {
             guard let source = attribute("src", in: tag) else { return "" }
             return "![\(attribute("alt", in: tag) ?? "")](\(source))"
         }
-        text = text.replacingOccurrences(of: "</?(details|summary|p|br|div|b|i|em|strong|sub|sup|kbd|center|picture|source)\\b[^>]*>",
-                                         with: "\n", options: [.regularExpression, .caseInsensitive])
+        let insensitive: NSString.CompareOptions = [.regularExpression, .caseInsensitive]
+        text = text.replacingOccurrences(of: "<a\\b[^>]*href=\"([^\"]*)\"[^>]*>([\\s\\S]*?)</a>", with: "[$2]($1)", options: insensitive)
+        text = text.replacingOccurrences(of: "<h([1-6])[^>]*>([\\s\\S]*?)</h\\1>", with: "\n\n### $2\n\n", options: insensitive)
+        text = text.replacingOccurrences(of: "</?code\\b[^>]*>", with: "`", options: insensitive)
+        text = text.replacingOccurrences(of: "<li\\b[^>]*>", with: "\n- ", options: insensitive)
+        text = text.replacingOccurrences(of: "</?(details|summary|p|br|hr|div|b|i|em|strong|sub|sup|kbd|center|picture|source|ul|ol|li|blockquote|table|thead|tbody|tr|th|td)\\b[^>]*>",
+                                         with: "\n", options: insensitive)
         return text.replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

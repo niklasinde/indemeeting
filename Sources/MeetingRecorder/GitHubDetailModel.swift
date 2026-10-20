@@ -9,16 +9,21 @@ final class GitHubDetailModel: ObservableObject {
     @Published private(set) var detail: GitHubPRDetail?
     @Published private(set) var error: GitHubError?
     @Published private(set) var loading = false
+    /// Set when the list's chip or the toolbar asks for the comments; the page scrolls to them and clears it.
+    @Published var scrollPending = false
+    let comments: GitHubCommentsModel
     private let store: MeetingStore?
     private var poll: Task<Void, Never>?
 
     init(pr: GitHubPR, store: MeetingStore?) {
         self.pr = pr
         self.store = store
+        comments = GitHubCommentsModel(pr: pr, store: store)
         detail = (try? store?.githubDetail(pr.url)) ?? nil
     }
 
     func start() {
+        comments.start()
         poll?.cancel()
         poll = Task { [weak self] in
             while !Task.isCancelled {
@@ -30,7 +35,15 @@ final class GitHubDetailModel: ObservableObject {
         }
     }
 
+    /// Scrolls to the comments, with the filter of a preset when one is given, and fetches them.
+    func showComments(_ scope: GitHubCommentsFilter.Scope? = nil) {
+        scope.map(comments.show)
+        comments.start()
+        scrollPending = true
+    }
+
     func stop() {
+        comments.stop()
         poll?.cancel()
         poll = nil
     }
@@ -51,9 +64,10 @@ final class GitHubDetailModel: ObservableObject {
     }
 
     #if DEBUG
-    init(pr: GitHubPR, sample: GitHubPRDetail?) {
+    init(pr: GitHubPR, sample: GitHubPRDetail?, comments: GitHubComments? = nil) {
         self.pr = pr
         store = nil
+        self.comments = GitHubCommentsModel(pr: pr, sample: comments)
         detail = sample
     }
     #endif

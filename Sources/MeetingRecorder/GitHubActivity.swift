@@ -106,9 +106,7 @@ extension GitHubLogic {
         let me = activity.me
         let mine = pr.author == me
         let reviews = activity.reviews.map { GitHubActivity.Event(actor: $0.actor, date: $0.date) }
-        let mineDates = ([mine ? activity.lastCommit : nil, activity.lastComment.flatMap { $0.actor.login == me ? $0.date : nil }]
-                         + (activity.open + reviews).map { $0.actor.login == me ? $0.date : nil }).compactMap { $0 }
-        let cutoff = mineDates.max() ?? (mine ? .distantPast : nil)
+        let cutoff = feedbackCutoff(pr)
         signals.unresolved = activity.open.count
         signals.humanUnresolved = activity.open.filter { !$0.actor.isBot }.count
         signals.discussed = pr.comments + activity.threads + activity.reviewCount
