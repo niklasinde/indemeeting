@@ -474,6 +474,29 @@ folder:
 MeetingRecorder --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
 ```
 
+## Sessions
+
+The **Sessions** row in the main window's sidebar lists every Claude session the app knows: the terminals it runs, the saved sessions you
+can resume and the review runs. Rows are grouped Running, Waiting for you, Saved and Done, newest first, and the search field matches the
+title, the pull request, its address and the state. Each row shows its pull request (`owner/repo #n`, or No PR) and its time.
+
+- **Status.** A running session is Working while it wrote in the last few seconds, Waiting for you when a permission prompt is on its
+  screen or its last message asks a question, and Done otherwise. Ended is red: the terminal exited or could not start. A saved session
+  or a review run is Done.
+- **Chat.** The transcript (`~/.claude/projects/<folder>/<id>.jsonl`) is read as Claude writes it, a few bytes at a time, and follows
+  new messages until you scroll up (Jump to latest). Your messages and Claude's Markdown show as bubbles and text; each tool Claude ran is one
+  line you can expand. Reminders and command plumbing are hidden. A file that shrinks or is replaced is read again from the top.
+- **Sending.** Running sessions have a send box: Return sends, Shift-Return starts a new line. What you send goes to that session's
+  terminal as the text and a Return, several lines as one paste, and shows at once until Claude's transcript has it. Empty text is never
+  sent. A waiting question shows verbatim with Yes and No, which send `y` or `n`. Nothing else writes to the terminal.
+- **Links.** A session's pull request chip opens that pull request in GitHub, the same way a `meetingrecorder://` link does. On a pull
+  request, a Sessions section lists its sessions; a click opens the session here.
+- **Saved sessions** are read only: **Resume session** picks one up in the chosen destination. The menu has Copy transcript, Stop,
+  Restart, text size and Forget session (not while the session runs).
+- **Limits.** The chat needs Remember Claude sessions per PR (Settings > Activity > GitHub); without it a running session has no
+  transcript to show. A sent message is only confirmed by the transcript, which Claude writes after it reads the input. A permission answer
+  is sent as a bare `y` or `n` and is not shown as a message.
+
 ## Claude API chat
 
 A chat that calls the Anthropic Messages API directly with your own API key. It is separate from the on-device chat and from
