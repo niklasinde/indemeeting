@@ -10,6 +10,15 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     var fontStep: ((Int) -> Void)?
     private var appliedPalette: EmbeddedTerminal.Palette?
 
+    override init(frame: CGRect) {
+        super.init(frame: frame, font: nil, options: TerminalOptions(scrollback: EmbeddedTerminal.scrollbackLines))
+        lineSpacing = EmbeddedTerminal.lineSpacing
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+    }
+
     /// Handles a key pressed while this view has the keyboard; false leaves it to the terminal and the menu.
     func handle(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -68,6 +77,24 @@ final class ClaudeTerminalView: LocalProcessTerminalView {
     }
 }
 
+/// When output last arrived. Written on the process's thread, read on the main one for the status dot.
+final class OutputClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var date: Date?
+
+    func tick() {
+        lock.lock()
+        date = Date()
+        lock.unlock()
+    }
+
+    var last: Date? {
+        lock.lock()
+        defer { lock.unlock() }
+        return date
+    }
+}
+
 /// One Claude session in a terminal of its own: the view, its process and what to start again with. Lives until it is closed, so
 /// the scrollback stays while another pull request is selected.
 @MainActor
@@ -92,6 +119,8 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     let view = ClaudeTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
     @Published private(set) var state = State.idle
     @Published private(set) var programTitle = ""
+    @Published private(set) var dismissedNotices: Set<String> = []
+    let outputClock = OutputClock()
     private(set) var startedAt = Date.distantPast
     let prompt: String
     let cli: URL?
@@ -111,7 +140,9 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         self.resume = resume
         super.init()
         view.processDelegate = self
-        view.fontStep = { Self.stepFont($0) }
+        view.fontStep = { EmbeddedTerminal.steppedFontSize($0) }
+        let clock = outputClock
+        view.setProcessOutputHandler { clock.tick() }
         _ = ClaudeTerminalView.keyMonitor
         if cli == nil {
             state = .unavailable("The Claude CLI was not found. Install it with npm install -g @anthropic-ai/claude-code.",
@@ -119,11 +150,16 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
         }
     }
 
-    static func stepFont(_ step: Int) {
-        let stored = UserDefaults.standard.object(forKey: EmbeddedTerminal.fontSizeKey) as? Double
-        let size = step == 0 ? EmbeddedTerminal.defaultFontSize : EmbeddedTerminal.fontSize((stored ?? EmbeddedTerminal.defaultFontSize) + Double(step))
-        UserDefaults.standard.set(size, forKey: EmbeddedTerminal.fontSizeKey)
+    var lastOutput: Date? { outputClock.last }
+
+    var hasEnded: Bool {
+        switch state {
+        case .exited, .unavailable: return true
+        case .idle, .running: return false
+        }
     }
+
+    func dismissNotice(_ id: String) { dismissedNotices.insert(id) }
 
     func start() {
         guard let cli, !isRunning else { return }

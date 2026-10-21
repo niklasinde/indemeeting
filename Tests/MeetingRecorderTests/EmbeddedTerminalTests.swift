@@ -90,6 +90,7 @@ let embeddedTerminalTests: [(name: String, run: () throws -> Void)] = [
         check(environment.contains("TERM=xterm-256color") && environment.contains("COLORTERM=truecolor"), "terminal")
         check(environment.contains("LANG=sv_SE.UTF-8"), "the user's locale")
         check(environment.contains("PATH=/bin") && !environment.contains { $0.hasPrefix("LC_CTYPE") }, "path kept, LC_CTYPE dropped")
+        check(environment.contains("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1"), "transcripts are kept")
         check(EmbeddedTerminal.lang(current: "en_GB.UTF-8", locale: Locale(identifier: "sv_SE"), exists: { _ in true }) == "en_GB.UTF-8", "a UTF-8 LANG stays")
         check(EmbeddedTerminal.lang(current: nil, locale: Locale(identifier: "en_SE"), exists: { _ in false }) == "en_US.UTF-8", "falls back to a locale that exists")
     }),
@@ -101,7 +102,7 @@ let embeddedTerminalTests: [(name: String, run: () throws -> Void)] = [
         check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 1000) == 519, "leaves the page its width and the handle")
         check(EmbeddedTerminal.paneLength(320, placement: .below, available: 760) == 320, "kept")
         check(EmbeddedTerminal.paneLength(600, placement: .below, available: 500) == 299, "leaves the page its height and the handle")
-        check(EmbeddedTerminal.fontSize(nil) == 12 && EmbeddedTerminal.fontSize(3) == 9 && EmbeddedTerminal.fontSize(99) == 24, "font size clamps")
+        check(EmbeddedTerminal.fontSize(nil) == 13 && EmbeddedTerminal.fontSize(3) == 9 && EmbeddedTerminal.fontSize(99) == 24, "font size clamps")
     }),
 
     ("one session per pull request, reattached by its address and counted while running", {
@@ -138,11 +139,71 @@ let embeddedTerminalTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubClaude.plan(.inApp, cli: nil, checkout: dir, home: home, prompt: "p") { _ in true } == .cliMissing, "no CLI")
     }),
 
-    ("both palettes define every colour the terminal needs", {
-        for palette in [EmbeddedTerminal.light, EmbeddedTerminal.dark] {
-            check(palette.ansi.count == 16 && Set(palette.ansi).count == 16, "16 distinct ANSI colours")
-            check(palette.foreground != palette.background, "text differs from the background")
+    ("the colours sit on the page's surface and stay readable on light and dark", {
+        for surface in [0xFFFFFF, 0xECECEC, 0xF5F5F7, 0x000000, 0x1E1E1E, 0x282828, 0x2C2C2E] {
+            for accent in [0x007AFF, 0x0A84FF] {
+                let palette = EmbeddedTerminal.palette(surface: UInt32(surface), accent: UInt32(accent))
+                let name = String(surface, radix: 16) + "/" + String(accent, radix: 16)
+                check(palette.background == UInt32(surface), "the background is the surface \(name)")
+                check(EmbeddedTerminal.contrast(palette.foreground, palette.background) >= 7, "body text 7:1 \(name)")
+                check(EmbeddedTerminal.contrast(palette.foreground, palette.selection) >= 4.5, "text on the selection 4.5:1 \(name)")
+                check(palette.ansi.count == 16 && palette.ansi.allSatisfy { EmbeddedTerminal.contrast($0, palette.background) >= 4.5 }, "ANSI 4.5:1 \(name)")
+                check(EmbeddedTerminal.contrast(palette.caret, palette.background) >= 3, "caret 3:1 \(name)")
+                let darkSurface = EmbeddedTerminal.luminance(UInt32(surface)) < 0.5
+                check((EmbeddedTerminal.luminance(palette.foreground) > EmbeddedTerminal.luminance(palette.background)) == darkSurface, "text contrasts the surface \(name)")
+            }
         }
-        check(EmbeddedTerminal.light.background != EmbeddedTerminal.dark.background, "the two differ")
+        let dark = EmbeddedTerminal.palette(surface: 0x1E1E1E, accent: 0x0A84FF)
+        check(dark.foreground == 0xE6E6E6 && dark.caret == 0x0A84FF, "readable colours are kept as they are")
+        check(EmbeddedTerminal.readable(0x777777, on: 0xFFFFFF, minimum: 4.5) != 0x777777 && EmbeddedTerminal.readable(0x000000, on: 0xFFFFFF, minimum: 4.5) == 0x000000, "only what must move moves")
+    }),
+
+    ("the font is SF Mono, then Menlo, at 13 pt with 1.2 line spacing", {
+        check(EmbeddedTerminal.fontName { _ in true } == "SFMono-Regular", "SF Mono first")
+        check(EmbeddedTerminal.fontName { $0 == "Menlo-Regular" } == "Menlo-Regular", "Menlo when SF Mono is missing")
+        check(EmbeddedTerminal.fontName { _ in false } == nil, "system monospace when neither is there")
+        check(EmbeddedTerminal.defaultFontSize == 13 && EmbeddedTerminal.lineSpacing == 1.2, "size and spacing")
+    }),
+
+    ("the font size is saved, steps with the keys and stays inside its limits", {
+        let suite = "embedded-font-\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else { return check(false, "a defaults suite") }
+        defer { defaults.removePersistentDomain(forName: suite) }
+        check(EmbeddedTerminal.steppedFontSize(1, defaults: defaults) == 14, "one larger from the default")
+        check(defaults.double(forKey: EmbeddedTerminal.fontSizeKey) == 14, "saved")
+        check(EmbeddedTerminal.steppedFontSize(1, defaults: defaults) == 15, "kept on the next step")
+        check(EmbeddedTerminal.steppedFontSize(0, defaults: defaults) == 13 && defaults.double(forKey: EmbeddedTerminal.fontSizeKey) == 13, "Cmd-0 resets")
+        check(EmbeddedTerminal.steppedFontSize(50, defaults: defaults) == 24, "largest")
+        check(EmbeddedTerminal.steppedFontSize(-50, defaults: defaults) == 9, "smallest")
+    }),
+
+    ("the scrollback keeps ten thousand lines", {
+        check(EmbeddedTerminal.scrollbackLines == 10_000, "10,000 lines")
+    }),
+
+    ("the status dot is green while output is fresh, grey when quiet and red once ended", {
+        let now = Date()
+        check(EmbeddedTerminal.activity(running: true, ended: false, lastOutput: now.addingTimeInterval(-1), now: now) == .working, "output a second ago")
+        check(EmbeddedTerminal.activity(running: true, ended: false, lastOutput: now.addingTimeInterval(-3), now: now) == .idle, "quiet for the window")
+        check(EmbeddedTerminal.activity(running: true, ended: false, lastOutput: nil, now: now) == .idle, "running with no output yet")
+        check(EmbeddedTerminal.activity(running: false, ended: false, lastOutput: nil, now: now) == .idle, "not started")
+        check(EmbeddedTerminal.activity(running: false, ended: true, lastOutput: now, now: now) == .ended, "ended, even with recent output")
+    }),
+
+    ("a notice shows once per session until it is dismissed, and the safety note stops when asked", {
+        let hint = EmbeddedTerminal.Notice(id: "hint", symbol: "info.circle", text: "Install it", copy: "npm install")
+        guard let safety = EmbeddedTerminal.safetyNotice(directory: "~/git/api", neverAgain: false, running: true) else { return check(false, "safety note while running") }
+        check(EmbeddedTerminal.currentNotice([hint, safety], dismissed: []) == hint, "the first one first")
+        check(EmbeddedTerminal.currentNotice([hint, safety], dismissed: ["hint"]) == safety, "then the next")
+        check(EmbeddedTerminal.currentNotice([hint, safety], dismissed: ["hint", "safety"]) == nil, "nothing once all are dismissed")
+        check(safety.text == "Interactive Claude can change files in ~/git/api \u{2014} it asks first.", "the safety text")
+        check(EmbeddedTerminal.safetyNotice(directory: "~/git/api", neverAgain: false, running: false) == nil, "not while nothing runs")
+        check(EmbeddedTerminal.safetyNotice(directory: "~/git/api", neverAgain: true, running: true) == nil, "Don't show again")
+    }),
+
+    ("the header names the pull request by owner, repository and number", {
+        check(EmbeddedTerminal.pullRequestLabel("https://github.com/acme/api/pull/7") == "acme/api #7", "a pull request")
+        check(EmbeddedTerminal.pullRequestLabel("https://github.com/acme/api/issues/7") == nil, "an issue")
+        check(EmbeddedTerminal.pullRequestLabel("not a url") == nil, "no address")
     }),
 ]

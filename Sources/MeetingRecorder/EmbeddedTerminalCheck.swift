@@ -169,7 +169,7 @@ enum TerminalCheck {
         let sizeBefore = UserDefaults.standard.double(forKey: EmbeddedTerminal.fontSizeKey)
         await press("=", code: 24, flags: .command, in: window)
         let sizeAfter = UserDefaults.standard.double(forKey: EmbeddedTerminal.fontSizeKey)
-        report(sizeAfter == EmbeddedTerminal.fontSize(sizeBefore == 0 ? 13 : sizeBefore + 1), "Cmd-+ grows the font (\(sizeBefore) -> \(sizeAfter))")
+        report(sizeAfter == EmbeddedTerminal.fontSize(sizeBefore == 0 ? EmbeddedTerminal.defaultFontSize : sizeBefore + 1), "Cmd-+ grows the font (\(sizeBefore) -> \(sizeAfter))")
         await press("0", code: 29, flags: .command, in: window)
         report(UserDefaults.standard.double(forKey: EmbeddedTerminal.fontSizeKey) == EmbeddedTerminal.defaultFontSize, "Cmd-0 resets it")
         await press("k", code: 40, flags: .command, in: window)

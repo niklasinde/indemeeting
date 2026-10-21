@@ -1,7 +1,7 @@
 import Foundation
 
-/// The pure parts of the embedded Claude terminal: the login-shell command, the environment, where the pane goes, when to ask before
-/// quitting, and the colours. Tested; the SwiftTerm view and the processes live in EmbeddedTerminalModel.swift.
+/// The pure parts of the embedded Claude terminal: the login-shell command, the environment, where the pane goes, the font, the colours,
+/// the status dot and the notices. Tested; the SwiftTerm view and the processes live in EmbeddedTerminalModel.swift.
 enum EmbeddedTerminal {
     static let fontSizeKey = "embeddedTerminalFontSize"
     static let confirmQuitKey = "embeddedTerminalConfirmQuit"
@@ -37,6 +37,7 @@ enum EmbeddedTerminal {
         environment["COLORTERM"] = "truecolor"
         environment["LANG"] = lang(current: base["LANG"], locale: locale, exists: localeExists)
         environment["LC_CTYPE"] = nil
+        environment["CLAUDE_CODE_FORCE_SESSION_PERSISTENCE"] = "1"
         return environment.map { "\($0.key)=\($0.value)" }.sorted()
     }
 
@@ -80,10 +81,23 @@ enum EmbeddedTerminal {
     // MARK: Font
 
     static let fontSizes = 9.0...24.0
-    static let defaultFontSize = 12.0
+    static let defaultFontSize = 13.0
+    static let fontFamilies = ["SFMono-Regular", "Menlo-Regular"]
+    static let lineSpacing = 1.2
+    static let scrollbackLines = 10_000
+
+    static func fontName(isAvailable: (String) -> Bool) -> String? { fontFamilies.first(where: isAvailable) }
 
     static func fontSize(_ stored: Double?) -> Double {
         min(max(stored ?? defaultFontSize, fontSizes.lowerBound), fontSizes.upperBound)
+    }
+
+    /// Moves the saved size by the step (zero resets it) and returns the new size.
+    @discardableResult
+    static func steppedFontSize(_ step: Int, defaults: UserDefaults = .standard) -> Double {
+        let size = step == 0 ? defaultFontSize : fontSize((defaults.object(forKey: fontSizeKey) as? Double ?? defaultFontSize) + Double(step))
+        defaults.set(size, forKey: fontSizeKey)
+        return size
     }
 
     // MARK: Messages
@@ -98,6 +112,46 @@ enum EmbeddedTerminal {
 
     static func safetyNote(directory: String) -> String { "Interactive Claude can change files in \(directory) \u{2014} it asks first." }
 
+    // MARK: Status
+
+    enum Activity: Equatable { case working, idle, ended }
+
+    /// Claude counts as working while it wrote something in this many seconds.
+    static let workingWindow: TimeInterval = 3
+
+    static func activity(running: Bool, ended: Bool, lastOutput: Date?, now: Date) -> Activity {
+        if ended { return .ended }
+        guard running, let lastOutput, now.timeIntervalSince(lastOutput) < workingWindow else { return .idle }
+        return .working
+    }
+
+    /// `owner/repo #n` for a pull request address, nil for anything else.
+    static func pullRequestLabel(_ url: String) -> String? {
+        guard let parts = URL(string: url)?.pathComponents, parts.count >= 5, parts[3] == "pull", Int(parts[4]) != nil else { return nil }
+        return "\(parts[1])/\(parts[2]) #\(parts[4])"
+    }
+
+    // MARK: Notices
+
+    /// One line under the header. Each is shown once per session until its × is pressed.
+    struct Notice: Equatable {
+        let id: String
+        let symbol: String
+        let text: String
+        var copy: String?
+        var action: String?
+    }
+
+    static func safetyNotice(directory: String, neverAgain: Bool, running: Bool) -> Notice? {
+        guard running, !neverAgain else { return nil }
+        return Notice(id: "safety", symbol: "pencil.and.list.clipboard", text: safetyNote(directory: directory), action: "Don't show again")
+    }
+
+    /// The first notice that has not been dismissed in this session.
+    static func currentNotice(_ notices: [Notice], dismissed: Set<String>) -> Notice? {
+        notices.first { !dismissed.contains($0.id) }
+    }
+
     // MARK: Colours
 
     struct Palette: Equatable {
@@ -108,13 +162,55 @@ enum EmbeddedTerminal {
         let ansi: [UInt32]
     }
 
-    static let light = Palette(foreground: 0x1D1D1F, background: 0xFBFBFA, caret: 0x1D1D1F, selection: 0xB5D5FF,
-                               ansi: [0x1D1D1F, 0xC4271C, 0x1F7A3A, 0x946200, 0x1D5FC4, 0x9A3FA6, 0x0F7F8A, 0x6E6E73,
-                                      0x8E8E93, 0xE0392B, 0x2E9D4F, 0xB57B00, 0x3A7BE0, 0xB352C0, 0x1A9AA6, 0x3A3A3C])
+    /// The terminal's colours on the page's own surface: the background is the surface, the text and ANSI colours are pushed away from
+    /// it until they are readable, and the caret and selection take the accent.
+    static func palette(surface: UInt32, accent: UInt32) -> Palette {
+        let dark = contrast(surface, 0xFFFFFF) > contrast(surface, 0x000000)
+        return Palette(foreground: readable(dark ? 0xE6E6E6 : 0x1D1D1F, on: surface, minimum: 7),
+                       background: surface,
+                       caret: readable(accent, on: surface, minimum: 3),
+                       selection: mix(surface, accent, 0.35),
+                       ansi: (dark ? ansiDark : ansiLight).map { readable($0, on: surface, minimum: 4.5) })
+    }
 
-    static let dark = Palette(foreground: 0xE6E6E6, background: 0x1C1C1E, caret: 0xE6E6E6, selection: 0x3E5C8A,
-                              ansi: [0x1C1C1E, 0xFF6B60, 0x5FD07A, 0xE5B84B, 0x6EA8FF, 0xD28CE0, 0x5CC8D2, 0xC7C7CC,
-                                     0x6E6E73, 0xFF8A80, 0x7FE59A, 0xF2CB6B, 0x8FBFFF, 0xE3A6EE, 0x7FDDE6, 0xFFFFFF])
+    static let ansiLight: [UInt32] = [0x1D1D1F, 0xC4271C, 0x1F7A3A, 0x946200, 0x1D5FC4, 0x9A3FA6, 0x0F7F8A, 0x6E6E73,
+                                      0x8E8E93, 0xE0392B, 0x2E9D4F, 0xB57B00, 0x3A7BE0, 0xB352C0, 0x1A9AA6, 0x3A3A3C]
+    static let ansiDark: [UInt32] = [0x1C1C1E, 0xFF6B60, 0x5FD07A, 0xE5B84B, 0x6EA8FF, 0xD28CE0, 0x5CC8D2, 0xC7C7CC,
+                                     0x6E6E73, 0xFF8A80, 0x7FE59A, 0xF2CB6B, 0x8FBFFF, 0xE3A6EE, 0x7FDDE6, 0xFFFFFF]
+
+    /// The colour, moved toward black or white (whichever contrasts more with the surface) until it reaches the minimum contrast.
+    static func readable(_ color: UInt32, on surface: UInt32, minimum: Double) -> UInt32 {
+        let target: UInt32 = contrast(surface, 0xFFFFFF) > contrast(surface, 0x000000) ? 0xFFFFFF : 0x000000
+        var result = color
+        var step = 0.0
+        while contrast(result, surface) < minimum, step < 1 {
+            step += 0.05
+            result = mix(color, target, min(step, 1))
+        }
+        return result
+    }
+
+    /// WCAG contrast ratio, from 1 to 21.
+    static func contrast(_ a: UInt32, _ b: UInt32) -> Double {
+        let la = luminance(a), lb = luminance(b)
+        return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+    }
+
+    static func luminance(_ color: UInt32) -> Double {
+        func linear(_ shift: UInt32) -> Double {
+            let value = Double(color >> shift & 0xFF) / 255
+            return value <= 0.03928 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linear(16) + 0.7152 * linear(8) + 0.0722 * linear(0)
+    }
+
+    static func mix(_ a: UInt32, _ b: UInt32, _ t: Double) -> UInt32 {
+        func channel(_ shift: UInt32) -> UInt32 {
+            let x = Double(a >> shift & 0xFF), y = Double(b >> shift & 0xFF)
+            return UInt32((x + (y - x) * t).rounded()) << shift
+        }
+        return channel(16) | channel(8) | channel(0)
+    }
 }
 
 /// One session per key, reattached by the same key. Pure over its session type so the rules are tested without a terminal.

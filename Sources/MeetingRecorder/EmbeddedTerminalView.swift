@@ -8,7 +8,6 @@ import AppKit
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
     @AppStorage(EmbeddedTerminal.fontSizeKey) private var fontSize = EmbeddedTerminal.defaultFontSize
-    @Environment(\.colorScheme) private var scheme
 
     func makeNSView(context: Context) -> ClaudeTerminalView {
         let view = session.view
@@ -21,14 +20,50 @@ struct TerminalHost: NSViewRepresentable {
 
     private func configure(_ view: ClaudeTerminalView) {
         let size = EmbeddedTerminal.fontSize(fontSize)
-        if view.font.pointSize != size { view.font = NSFont.monospacedSystemFont(ofSize: size, weight: .regular) }
-        view.apply(scheme == .dark ? EmbeddedTerminal.dark : EmbeddedTerminal.light)
+        if view.font.pointSize != size { view.font = Self.font(size) }
+        view.apply(TerminalTheme.palette(for: view.effectiveAppearance))
+    }
+
+    static func font(_ size: Double) -> NSFont {
+        EmbeddedTerminal.fontName { NSFont(name: $0, size: size) != nil }.flatMap { NSFont(name: $0, size: size) }
+            ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
     }
 }
 
-extension EmbeddedTerminal.Palette {
-    var backgroundColor: Color {
-        Color(.sRGB, red: Double(background >> 16 & 0xFF) / 255, green: Double(background >> 8 & 0xFF) / 255, blue: Double(background & 0xFF) / 255)
+/// The terminal's colours, derived from the window surface the page sits on in the same appearance.
+enum TerminalTheme {
+    static func palette(for appearance: NSAppearance) -> EmbeddedTerminal.Palette {
+        EmbeddedTerminal.palette(surface: NSColor.windowBackgroundColor.hex(in: appearance), accent: NSColor.controlAccentColor.hex(in: appearance))
+    }
+}
+
+extension NSColor {
+    func hex(in appearance: NSAppearance) -> UInt32 {
+        var value: UInt32 = 0
+        appearance.performAsCurrentDrawingAppearance {
+            guard let color = usingColorSpace(.sRGB) else { return }
+            func channel(_ component: CGFloat) -> UInt32 { UInt32((component * 255).rounded()) }
+            value = channel(color.redComponent) << 16 | channel(color.greenComponent) << 8 | channel(color.blueComponent)
+        }
+        return value
+    }
+}
+
+extension EmbeddedTerminal.Activity {
+    var color: Color {
+        switch self {
+        case .working: return .green
+        case .idle: return .secondary.opacity(0.5)
+        case .ended: return .red
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .working: return "Claude is working"
+        case .idle: return "Claude is idle"
+        case .ended: return "Claude has ended"
+        }
     }
 }
 
@@ -125,23 +160,17 @@ struct TerminalDock: View {
     }
 }
 
-/// The terminal under a toolbar with the session's title and what can be done to it.
+/// The terminal under one header: the pull request, the session and what can be done to it, then one notice strip.
 struct TerminalPane: View {
     @ObservedObject var session: TerminalSession
     @ObservedObject var model: EmbeddedTerminalModel
     @AppStorage(EmbeddedTerminal.noteHiddenKey) private var noteHidden = false
-    @State private var noteDismissed = false
-    @Environment(\.colorScheme) private var scheme
-
-    private var palette: EmbeddedTerminal.Palette { scheme == .dark ? EmbeddedTerminal.dark : EmbeddedTerminal.light }
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
+            header
             Divider()
-            if let hint = session.hint { notice(hint.text, copy: hint.copy) }
-            if let resume = session.resume { resumed(resume) }
-            if !noteHidden, !noteDismissed, session.isRunning { safetyNote }
+            if let notice = EmbeddedTerminal.currentNotice(notices, dismissed: session.dismissedNotices) { strip(notice) }
             if case .unavailable(let text, let copy) = session.state {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 26)).foregroundStyle(.tertiary)
@@ -155,27 +184,30 @@ struct TerminalPane: View {
                 TerminalHost(session: session).padding(6).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(palette.backgroundColor)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var toolbar: some View {
+    private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "circle.fill").font(.system(size: 8)).foregroundStyle(session.isRunning ? Color.green : Color.secondary.opacity(0.5))
-                .help(session.isRunning ? "Claude is running" : "Claude is not running")
-            Text(session.title).font(.callout.weight(.medium)).lineLimit(1)
-            Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let activity = EmbeddedTerminal.activity(running: session.isRunning, ended: session.hasEnded, lastOutput: session.lastOutput, now: context.date)
+                Circle().fill(activity.color).frame(width: 7, height: 7).help(activity.help)
+            }
+            Text(EmbeddedTerminal.pullRequestLabel(session.key) ?? session.title)
+                .font(.callout.weight(.medium)).lineLimit(1).help(session.programTitle)
+            if let preset = session.preset { Text(preset.shortTitle).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
+            if let status { Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(1) }
             Spacer(minLength: 4)
-            Button { session.restart() } label: { Image(systemName: "arrow.clockwise") }
-                .help("Start Claude again with the same prompt")
-            Button { session.stop() } label: { Image(systemName: "stop.fill") }
+            headerButton("doc.on.doc", "Copy everything the terminal shows, scrollback included") { GitHubModel.copy(session.view.allOutput) }
+            headerButton("textformat.size.smaller", "Smaller text (\u{2318}-)") { _ = EmbeddedTerminal.steppedFontSize(-1) }
+            headerButton("textformat.size.larger", "Larger text (\u{2318}+, \u{2318}0 resets)") { _ = EmbeddedTerminal.steppedFontSize(1) }
+            Divider().frame(height: 14)
+            headerButton("arrow.clockwise", "Start Claude again with the same prompt") { session.restart() }
+            headerButton("stop.fill", "Stop Claude: Ctrl-C first, then end it if it stays") { session.stop() }
                 .disabled(!session.isRunning)
-                .help("Stop Claude: Ctrl-C first, then end it if it stays")
-            Button { GitHubModel.copy(session.view.allOutput) } label: { Image(systemName: "doc.on.doc") }
-                .help("Copy everything the terminal shows, scrollback included")
-            Button { model.setShown(session.key, false) } label: { Image(systemName: "chevron.down") }
-                .help("Hide the terminal; Claude keeps running")
-            Button { model.close(session.key) } label: { Image(systemName: "xmark") }
-                .help("Close the terminal and end Claude")
+            Divider().frame(height: 14)
+            headerButton("chevron.down", "Hide the terminal; Claude keeps running") { model.setShown(session.key, false) }
+            headerButton("xmark", "Close the terminal and end Claude") { model.close(session.key) }
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
@@ -183,55 +215,53 @@ struct TerminalPane: View {
         .padding(.vertical, 6)
     }
 
-    private var status: String {
+    private func headerButton(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { Image(systemName: symbol) }.help(help)
+    }
+
+    private var status: String? {
         switch session.state {
-        case .idle: return ""
-        case .running: return session.programTitle
+        case .idle, .running: return nil
         case .exited(let code): return code.map { $0 == 0 ? "Finished" : "Exited with \($0)" } ?? "Ended"
         case .unavailable: return "Unavailable"
         }
     }
 
-    private func notice(_ text: String, copy: String?) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "info.circle").foregroundStyle(.secondary)
-            Text(text).foregroundStyle(.secondary)
-            if let copy { Button("Copy \(copy)") { GitHubModel.copy(copy) }.buttonStyle(.link) }
-            Spacer(minLength: 0)
+    private var notices: [EmbeddedTerminal.Notice] {
+        var list: [EmbeddedTerminal.Notice] = []
+        if let hint = session.hint { list.append(EmbeddedTerminal.Notice(id: "hint", symbol: "info.circle", text: hint.text, copy: hint.copy)) }
+        if let resume = session.resume {
+            list.append(EmbeddedTerminal.Notice(id: "resume", symbol: "arrow.counterclockwise",
+                                                text: "Resumed previous session \u{00B7} \(resume.title ?? "saved session")", action: "Start new session instead"))
         }
-        .font(.callout)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        let folder = (session.directory.path as NSString).abbreviatingWithTildeInPath
+        if let safety = EmbeddedTerminal.safetyNotice(directory: folder, neverAgain: noteHidden, running: session.isRunning) { list.append(safety) }
+        return list
     }
 
-    private func resumed(_ resume: GitHubClaude.Resume) -> some View {
+    private func strip(_ notice: EmbeddedTerminal.Notice) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "arrow.counterclockwise").foregroundStyle(.secondary)
-            Text("Resumed previous session \u{00B7} \(resume.title ?? "saved session")").foregroundStyle(.secondary).lineLimit(1)
+            Image(systemName: notice.symbol).foregroundStyle(.secondary)
+            Text(notice.text).foregroundStyle(.secondary).lineLimit(2)
             Spacer(minLength: 0)
-            Button("Start new session instead") {
-                GitHubClaudeModel.shared.startNewSession(session.key, folder: session.directory, preset: session.preset)
-            }
-            .buttonStyle(.link)
-        }
-        .font(.callout)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-    }
-
-    private var safetyNote: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "pencil.and.list.clipboard").foregroundStyle(.secondary)
-            Text(EmbeddedTerminal.safetyNote(directory: (session.directory.path as NSString).abbreviatingWithTildeInPath))
-                .foregroundStyle(.secondary).lineLimit(2)
-            Spacer(minLength: 0)
-            Button("Don't show again") { noteHidden = true }.buttonStyle(.link)
-            Button { noteDismissed = true } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
+            if let copy = notice.copy { Button("Copy \(copy)") { GitHubModel.copy(copy) }.buttonStyle(.link) }
+            if let action = notice.action { Button(action) { act(notice.id) }.buttonStyle(.link) }
+            Button { session.dismissNotice(notice.id) } label: { Image(systemName: "xmark") }
+                .buttonStyle(.borderless)
+                .help("Dismiss")
         }
         .font(.callout)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .background(Color.primary.opacity(0.05))
+    }
+
+    private func act(_ id: String) {
+        switch id {
+        case "resume": GitHubClaudeModel.shared.startNewSession(session.key, folder: session.directory, preset: session.preset)
+        case "safety": noteHidden = true
+        default: break
+        }
     }
 }
 

@@ -586,10 +586,14 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   in the checkout (else your home folder), so PATH and sign-in are those of your Terminal; the prompt is read from a 0600 file that
   removes itself, never quoted into the command. `TERM=xterm-256color`, `COLORTERM=truecolor` and a UTF-8 `LANG` from your locale are set.
   Without the CLI the pane shows the install command; without a checkout, the clone command. Interactive Claude can change files, so
-  the pane says so once (Don't show again). Light and dark palettes follow the appearance; SF Mono, 12 pt by default.
+  the pane says so once per session (Don't show again). The colours come from the window surface in the current appearance, with the
+  text and ANSI colours pushed to a readable contrast; the caret takes the accent. SF Mono (Menlo if missing), 13 pt by default, 1.2 line
+  height. The header shows the status dot (green while output arrives, grey when quiet, red once ended), `owner/repo #n` and the session.
+  The scrollback keeps 10,000 lines. The session sets `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`, so Claude Code keeps its transcripts
+  and does not print "Transcript saving is off" in the pane.
   Keys: the terminal gets the keyboard when clicked or with Cmd-Opt-T, which also hands it back to the list; while it has the keyboard
   the arrow keys go to the program, not the list. Cmd-C and Cmd-V copy and paste, Cmd-K clears, Cmd-plus, Cmd-minus and Cmd-0 change the
-  font size. Closing, restarting and quitting end Claude and everything it started (SIGHUP to the process group, SIGKILL after a moment).
+  font size (the header buttons do the same). Closing, restarting and quitting end Claude and everything it started (SIGHUP to the process group, SIGKILL after a moment).
   Quitting with Claude running asks "Claude is still running in N terminals". Settings > Activity > GitHub: Open Claude in (default
   destination), Embedded terminal font size, Confirm before quitting while running. The terminal is
   [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) 1.99.0 (MIT), linked statically from source: no framework is embedded and the
