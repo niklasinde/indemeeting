@@ -111,7 +111,8 @@ hides the sidebar so the content takes the full width; the choice is remembered 
 summary, else "Meeting") and the time and length. The search field at the top searches titles, transcripts, summaries
 and notes in the database (every word has to match as the start of a word, ignoring case and accents); the arrow keys
 move through the list. In-progress `.recording.m4a` files are left out, and the list follows the folder as files
-appear or are removed.
+appear or are removed. When a newer build is installed while the app runs, a banner at the top offers **Restart now**
+(refused while recording; asks first when Claude sessions are running) or **Later**, which hides it until the next launch.
 
 A selected meeting shows its title (click to rename), the date, time, length and language, and three tabs:
 
