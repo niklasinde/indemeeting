@@ -16,6 +16,9 @@ enum Main {
         if let output = PreviewRenderer.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
+        if let output = ClaudeAPIPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { ClaudeAPIPreview.run(to: output) }
+        }
         #endif
         if let link = PhoneCommandLine.value("--open-link", in: CommandLine.arguments) { GitHubLink.printFromCommandLine(link) }
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
@@ -28,6 +31,7 @@ enum Main {
         if PhoneClient.isRequested(CommandLine.arguments) { PhoneClient.run(CommandLine.arguments) }
         #endif
         if let job = ChatLogic.chatArguments(CommandLine.arguments) { ChatCommandLine.run(job) }
+        if let endpoint = ClaudeAPICheck.endpoint(CommandLine.arguments) { ClaudeAPICheck.runFromCommandLine(endpoint) }
         if let job = ProcessingLogic.processArguments(CommandLine.arguments) {
             let store = MeetingStore.openDefault()
             if let error = store.openError {
@@ -182,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GitHubModel.shared.start()
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
+        ClaudeAPIWindow.shared.configure(store: store)
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
         SettingsWindow.shared.speakers.store = store

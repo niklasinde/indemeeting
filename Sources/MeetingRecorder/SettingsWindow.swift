@@ -360,6 +360,7 @@ struct SettingsView: View {
                 }
             }
             ChatSettingsSection()
+            ClaudeAPISettingsSection()
         }
     }
 

@@ -488,6 +488,7 @@ struct Sidebar: View {
             activityRow
             gitHubRow
             chatRow
+            claudeAPIRow
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
@@ -553,6 +554,20 @@ struct Sidebar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 8)
         .help("Ask about your meetings and work (\u{2318}\u{21E7}A)")
+    }
+
+    private var claudeAPIRow: some View {
+        Button { ClaudeAPIWindow.shared.show() } label: {
+            Label("Claude API", systemImage: "sparkles")
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .help("Chat with Claude through the Anthropic API, with your own key")
     }
 
     private func row(_ entry: RecordingEntry, group: DateGroup) -> some View {
