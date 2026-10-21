@@ -53,6 +53,9 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ClaudeAPIClient.swift \
     Sources/MeetingRecorder/ClaudeAPIStore.swift \
     Sources/MeetingRecorder/SidebarLogic.swift \
+    Sources/MeetingRecorder/SessionTranscript.swift \
+    Sources/MeetingRecorder/ClaudeSessions.swift \
+    Sources/MeetingRecorder/UpgradeLogic.swift \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
     Tests/MeetingRecorderTests/ActivityTests.swift \
@@ -75,6 +78,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/RecordingDeviceTests.swift \
     Tests/MeetingRecorderTests/ClaudeAPITests.swift \
     Tests/MeetingRecorderTests/SidebarTests.swift \
+    Tests/MeetingRecorderTests/SessionsTests.swift \
+    Tests/MeetingRecorderTests/UpgradeTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"
