@@ -316,6 +316,7 @@ struct MainView: View {
     @ObservedObject var library: RecordingLibrary
     @ObservedObject var activity: ActivityModel
     let playback: AudioPlayback
+    @ObservedObject private var github = GitHubModel.shared
 
     var body: some View {
         NavigationSplitView {
@@ -324,6 +325,14 @@ struct MainView: View {
         } detail: {
             VStack(spacing: 0) {
                 if let error = library.databaseError { DatabaseErrorBanner(error: error) }
+                if let notice = github.linkNotice {
+                    Text(notice)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
+                        .background(.quaternary)
+                }
                 if library.showsActivity {
                     ActivityView(model: activity, tracker: activity.tracker)
                 } else if library.showsGitHub {

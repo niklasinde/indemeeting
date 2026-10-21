@@ -183,6 +183,7 @@ struct GitHubDetailContent: View {
         FlowLayout(spacing: 8) {
             Button("Open in Browser") { open(pr.url) }
             Button("Copy Link") { GitHubModel.copy(pr.url) }
+            Button("Copy meetingrecorder link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
             Button("Copy Title") { GitHubModel.copy(pr.copyText) }
             if let branch = detail?.head, !branch.isEmpty { CopyBranchMenu(branch: branch, number: pr.number, repo: pr.repo) }
             Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }

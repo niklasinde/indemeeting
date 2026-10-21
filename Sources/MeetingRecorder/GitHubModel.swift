@@ -23,10 +23,14 @@ final class GitHubModel: ObservableObject {
     @Published private(set) var selectedURL = UserDefaults.standard.string(forKey: selectionKey)
     /// The rows picked with command- and shift-click, for an action on several at once.
     @Published private(set) var marked = Set<String>()
+    /// A pull request opened from a link that is not in the list; it stays selected through a refresh.
+    var linkedURL: String?
+    @Published private(set) var linkNotice: String?
 
     var store: MeetingStore?
     private var loop: Task<Void, Never>?
     private let settle = Debouncer()
+    private let noticeTimer = Debouncer()
     private var prefetching = Set<String>()
     private var patches: [String: GitHubActions.Patch] = [:]
 
@@ -103,6 +107,7 @@ final class GitHubModel: ObservableObject {
         page?.stop()
         settle.cancel()
         selectedURL = pr?.url
+        if pr?.url != linkedURL { linkedURL = nil }
         UserDefaults.standard.set(pr?.url, forKey: Self.selectionKey)
         page = pr.map { GitHubDetailModel(pr: $0, store: store) }
         guard page != nil else { return }
@@ -125,7 +130,7 @@ final class GitHubModel: ObservableObject {
     func reconcile() {
         marked = GitHubActions.pruned(marked, in: visible)
         guard hasData else { return }
-        guard let url = GitHubSelection.preserved(selectedURL, in: visible) else { return select(nil) }
+        guard let url = GitHubSelection.preserved(selectedURL, in: visible) ?? (selectedURL == linkedURL ? linkedURL : nil) else { return select(nil) }
         if page == nil { select(visible.first { $0.url == url }) }
     }
 
@@ -151,6 +156,14 @@ final class GitHubModel: ObservableObject {
         Task {
             await refresh()
             page?.start()
+        }
+    }
+
+    /// Shows a line in the window for a few seconds, e.g. when a link could not be opened.
+    func showLinkNotice(_ text: String) {
+        linkNotice = text
+        noticeTimer.schedule(after: 5) { [weak self] in
+            MainActor.assumeIsolated { self?.linkNotice = nil }
         }
     }
 

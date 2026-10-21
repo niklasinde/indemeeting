@@ -17,6 +17,7 @@ enum Main {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
         #endif
+        if let link = PhoneCommandLine.value("--open-link", in: CommandLine.arguments) { GitHubLink.printFromCommandLine(link) }
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
         if CommandLine.arguments.contains("--github-prs") { GitHubClient.runFromCommandLine() }
         if let reference = PhoneCommandLine.value("--github-pr", in: CommandLine.arguments) { GitHubClient.runDetailFromCommandLine(reference) }
@@ -225,6 +226,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         mainWindow.show()
         return true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == GitHubLink.scheme {
+            guard let target = GitHubLink.parse(url.absoluteString) else {
+                mainWindow.show()
+                GitHubModel.shared.showLinkNotice("Couldn't open that link")
+                continue
+            }
+            mainWindow.showGitHub()
+            GitHubModel.shared.open(target)
+        }
     }
 }
 
