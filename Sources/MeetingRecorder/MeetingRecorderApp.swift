@@ -10,6 +10,9 @@ enum Main {
         if let output = GitHubPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { GitHubPreview.run(to: output) }
         }
+        if let output = SessionsPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { SessionsPreview.run(to: output) }
+        }
         if let output = PhonePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PhonePreview.run(to: output) }
         }
@@ -18,6 +21,9 @@ enum Main {
         }
         if let output = ClaudeAPIPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { ClaudeAPIPreview.run(to: output) }
+        }
+        if let output = UpgradePreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { UpgradePreview.run(to: output) }
         }
         #endif
         if let link = PhoneCommandLine.value("--open-link", in: CommandLine.arguments) { GitHubLink.printFromCommandLine(link) }
@@ -201,12 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         processor.summariseWhenModelReady()
         tracker.start()
         classifier.start()
+        AppUpgrade.shared.start(recorder: recorder)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
         tracker.flush()
+        AppUpgrade.shared.relaunchIfRequested()
     }
 
     private func stopRecording() async {
@@ -225,7 +233,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if let message = EmbeddedTerminalModel.shared.quitMessage() {
+        if !AppUpgrade.shared.relaunching, let message = EmbeddedTerminalModel.shared.quitMessage() {
             let alert = NSAlert()
             alert.messageText = message
             alert.informativeText = "Quitting ends Claude and everything it started."
