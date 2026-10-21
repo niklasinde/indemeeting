@@ -312,6 +312,24 @@ final class MeetingStore: @unchecked Sendable {
             PRIMARY KEY (url, kind)
         );
         """,
+        """
+        CREATE TABLE api_chats (
+            id INTEGER PRIMARY KEY,
+            title TEXT NOT NULL,
+            created REAL NOT NULL,
+            updated REAL NOT NULL
+        );
+        CREATE TABLE api_messages (
+            id INTEGER PRIMARY KEY,
+            chat_id INTEGER NOT NULL REFERENCES api_chats(id) ON DELETE CASCADE,
+            role TEXT NOT NULL,
+            text TEXT NOT NULL,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            created REAL NOT NULL
+        );
+        CREATE INDEX api_messages_chat ON api_messages(chat_id);
+        """,
     ]
 
     private static let meetingColumns = """
