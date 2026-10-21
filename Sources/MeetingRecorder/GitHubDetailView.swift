@@ -6,6 +6,8 @@ struct GitHubDetailView: View {
     @ObservedObject var page: GitHubDetailModel
     @ObservedObject var model: GitHubModel
     let back: (() -> Void)?
+    /// The width of the page column beside the list, which sets how wide the prose may run.
+    let column: Double
     @ObservedObject private var claude = GitHubClaudeModel.shared
 
     var body: some View {
@@ -23,8 +25,13 @@ struct GitHubDetailView: View {
                 }
             }
             .padding(.horizontal, RecordingDetail.gutter)
-            .padding(.top, 20)
-            .padding(.bottom, 10)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+            PageActionBar(pr: page.pr, detail: page.detail, ask: { model.ask(about: page.pr) })
+                .padding(.horizontal, RecordingDetail.gutter)
+                .padding(.bottom, 6)
+            ClaudeNoteBar(model: claude)
+                .padding(.horizontal, RecordingDetail.gutter)
             if let error = page.error { DetailErrorBanner(error: error) }
             ScrollViewReader { proxy in
                 ScrollView {
@@ -39,6 +46,7 @@ struct GitHubDetailView: View {
         }
         .frame(maxWidth: GitHubLayout.pageWidth, maxHeight: .infinity, alignment: .topLeading)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .environment(\.pageColumn, column)
         .onAppear(perform: claude.load)
         .alert("Allow Claude reviews?", isPresented: Binding(get: { claude.confirming != nil }, set: { if !$0 { claude.confirming = nil } })) {
             Button("Allow") { claude.confirmAllowing() }
@@ -97,9 +105,8 @@ struct GitHubDetailContent: View {
     private static let visibleCommits = 20
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 16) {
             header.readingWidth()
-            actions.readingWidth()
             ClaudeReviewPanel(pr: pr, detail: detail, model: claude).readingWidth()
             if let detail {
                 people(detail).readingWidth()
@@ -177,26 +184,6 @@ struct GitHubDetailContent: View {
         case .changesRequested: return Chip(text: text, icon: "exclamationmark.bubble", tint: .red)
         case .required: return Chip(text: text, icon: "eye", tint: .orange)
         }
-    }
-
-    private var actions: some View {
-        FlowLayout(spacing: 8) {
-            Button("Open in Browser") { open(pr.url) }
-            Button("Copy Link") { GitHubModel.copy(pr.url) }
-            Button("Copy meetingrecorder link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
-            Button("Copy Title") { GitHubModel.copy(pr.copyText) }
-            if let branch = detail?.head, !branch.isEmpty { CopyBranchMenu(branch: branch, number: pr.number, repo: pr.repo) }
-            Button { ask() } label: { Label("Ask about this pull request", systemImage: "bubble.left") }
-            OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
-            TerminalToggle(key: pr.url, model: terminals)
-            if !terminals.hasSession(pr.url), claude.resumable(pr.url) != nil {
-                Button { claude.resumeInClaude(pr, detail) } label: { Label("Resume session", systemImage: "arrow.counterclockwise") }
-            }
-            AskClaudeMenu(pr: pr, detail: detail, model: claude)
-            GitHubActionButtons(pr: pr, detail: detail, model: pageActions)
-            ClaudeNoteBar(model: claude)
-        }
-        .controlSize(.small)
     }
 
     private func people(_ detail: GitHubPRDetail) -> some View {
@@ -366,47 +353,147 @@ private struct DetailRow<Content: View>: View {
     }
 }
 
+private struct PageColumnKey: EnvironmentKey {
+    static let defaultValue = 0.0
+}
+
+extension EnvironmentValues {
+    /// The page column's width, which the prose reads to decide whether it is capped.
+    var pageColumn: Double {
+        get { self[PageColumnKey.self] }
+        set { self[PageColumnKey.self] = newValue }
+    }
+}
+
+private struct ReadingWidth: ViewModifier {
+    @Environment(\.pageColumn) private var column
+
+    func body(content: Content) -> some View {
+        content.frame(maxWidth: GitHubLayout.proseWidth(column: column).map { CGFloat($0) } ?? .infinity, alignment: .leading)
+    }
+}
+
 private extension View {
-    /// Prose lines stop at the reading width; the lists beside them keep the whole page column.
-    func readingWidth() -> some View { frame(maxWidth: GitHubLayout.readingWidth, alignment: .leading) }
+    /// Prose lines stop at the reading width once the column is wide; the lists beside them keep the whole page column.
+    func readingWidth() -> some View { modifier(ReadingWidth()) }
+}
+
+/// The page's actions in one row: the ones that fit, and a More menu for the rest, so Merge and Close move there when narrow.
+struct PageActionBar: View {
+    let pr: GitHubPR
+    let detail: GitHubPRDetail?
+    let ask: () -> Void
+    @ObservedObject private var claude = GitHubClaudeModel.shared
+    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
+    @ObservedObject private var pageActions = GitHubActionsModel.shared
+
+    private var isOpen: Bool { (detail?.state ?? pr.state) == .open }
+    private var isClosed: Bool { (detail?.state ?? pr.state) == .closed }
+
+    private var present: [GitHubLayout.PageAction] {
+        var present: [GitHubLayout.PageAction] = [.openInBrowser, .copy, .ask, .review, .openInClaude]
+        if terminals.hasSession(pr.url) { present.append(.terminal) }
+        return present + [.merge, .close]
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let layout = GitHubLayout.toolbar(width: proxy.size.width, present: present)
+            HStack(spacing: GitHubLayout.toolbarSpacing) {
+                ForEach(layout.visible, id: \.self) { item($0) }
+                if !layout.overflow.isEmpty { more(layout.overflow) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 26)
+        .controlSize(.small)
+    }
+
+    @ViewBuilder private func item(_ action: GitHubLayout.PageAction) -> some View {
+        switch action {
+        case .openInBrowser: Button { open(pr.url) } label: { Label("Open in Browser", systemImage: "safari") }
+        case .copy: Menu { copyItems } label: { Label("Copy", systemImage: "doc.on.doc") }.menuIndicator(.visible).fixedSize()
+        case .ask: Menu { askItems } label: { Label("Ask", systemImage: "bubble.left") }.menuIndicator(.visible).fixedSize()
+        case .review: Menu { reviewItems } label: { Label("Review", systemImage: "checkmark.bubble") }
+            .menuIndicator(.visible).fixedSize().disabled(!pageActions.enabled)
+        case .openInClaude: OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
+        case .terminal: TerminalToggle(key: pr.url, model: terminals)
+        case .merge: mergeButton
+        case .close: closeButton
+        }
+    }
+
+    private func more(_ actions: [GitHubLayout.PageAction]) -> some View {
+        Menu {
+            ForEach(actions, id: \.self) { moreItem($0) }
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    @ViewBuilder private func moreItem(_ action: GitHubLayout.PageAction) -> some View {
+        switch action {
+        case .openInBrowser: Button("Open in Browser") { open(pr.url) }
+        case .copy: Menu("Copy") { copyItems }
+        case .ask: Menu("Ask") { askItems }
+        case .review: Menu("Review") { reviewItems }
+        case .openInClaude:
+            Menu("Open in Claude") {
+                if claude.resumable(pr.url) != nil { Button("Resume Previous Session") { claude.resumeInClaude(pr, detail) } }
+                ForEach(GitHubClaude.Preset.allCases) { preset in Button(preset.title) { claude.openInClaude(pr, detail, preset) } }
+            }
+        case .terminal:
+            Button(terminals.isShown(pr.url) ? "Hide Terminal" : "Show Terminal") { terminals.setShown(pr.url, !terminals.isShown(pr.url)) }
+        case .merge: mergeButton
+        case .close: closeButton
+        }
+    }
+
+    @ViewBuilder private var copyItems: some View {
+        Button("Copy Link") { GitHubModel.copy(pr.url) }
+        Button("Copy meetingrecorder link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
+        Button("Copy Title") { GitHubModel.copy(pr.copyText) }
+        if let branch = detail?.head, !branch.isEmpty {
+            Divider()
+            Button("Copy branch name") { GitHubModel.copy(branch) }
+            Button("Copy git checkout command") { GitHubModel.copy(GitHubLogic.gitCheckoutCommand(branch)) }
+            Button("Copy gh checkout command") { GitHubModel.copy(GitHubLogic.ghCheckoutCommand(number: pr.number, repo: pr.repo)) }
+        }
+    }
+
+    @ViewBuilder private var askItems: some View {
+        Button("Ask About This Pull Request\u{2026}", action: ask)
+        Divider()
+        ForEach(GitHubClaude.Preset.headless) { preset in Button(preset.title) { claude.ask(pr, detail, preset) } }
+    }
+
+    @ViewBuilder private var reviewItems: some View {
+        Button("Approve\u{2026}") { pageActions.begin(.approve, pr, detail: detail) }.disabled(!isOpen)
+        Button("Request Changes\u{2026}") { pageActions.begin(.requestChanges, pr, detail: detail) }.disabled(!isOpen)
+        Button("Comment\u{2026}") { pageActions.begin(.comment, pr, detail: detail) }
+    }
+
+    @ViewBuilder private var mergeButton: some View {
+        Button("Merge\u{2026}") { pageActions.begin(.merge, pr, detail: detail) }
+            .disabled(!pageActions.enabled || !isOpen)
+            .help(pageActions.enabled ? "Merge this pull request. You confirm first; GitHub cannot undo a merge." : GitHubActions.disabledHelp)
+    }
+
+    @ViewBuilder private var closeButton: some View {
+        if isClosed {
+            Button("Reopen\u{2026}") { pageActions.begin(.reopen, pr, detail: detail) }.disabled(!pageActions.enabled)
+        } else {
+            Button("Close\u{2026}") { pageActions.begin(.close, pr, detail: detail) }.disabled(!pageActions.enabled || !isOpen)
+        }
+    }
 }
 
 struct Note: View {
     let text: String
 
     var body: some View { Text(text).font(.caption).foregroundStyle(.tertiary).padding(.top, 6) }
-}
-
-/// Copies the head branch on the main click; the menu has the name and the commands that check it out.
-private struct CopyBranchMenu: View {
-    let branch: String
-    let number: Int
-    let repo: String
-    @State private var copied = false
-
-    var body: some View {
-        Menu {
-            Button("Copy branch name") { copy(branch) }
-            Button("Copy git checkout command") { copy(GitHubLogic.gitCheckoutCommand(branch)) }
-            Button("Copy gh checkout command") { copy(GitHubLogic.ghCheckoutCommand(number: number, repo: repo)) }
-        } label: {
-            Label(copied ? "Copied" : "Copy Branch", systemImage: copied ? "checkmark" : "arrow.triangle.branch")
-        } primaryAction: {
-            copy(branch)
-        }
-        .menuIndicator(.visible)
-        .fixedSize()
-        .help("Copy \(branch)")
-    }
-
-    private func copy(_ text: String) {
-        GitHubModel.copy(text)
-        copied = true
-        Task {
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            copied = false
-        }
-    }
 }
 
 private struct BranchChip: View {

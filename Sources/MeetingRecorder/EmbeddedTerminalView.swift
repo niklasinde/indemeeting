@@ -32,46 +32,49 @@ extension EmbeddedTerminal.Palette {
     }
 }
 
-/// The page with its terminal: to the right of it in a wide window, below it otherwise, with a handle to resize it.
+/// The page with its terminal: beside it in a wide window, and below it otherwise, where the terminal is the bottom part of the
+/// column and shows its start while no session is open. A handle resizes it.
 struct TerminalSplit<Page: View>: View {
-    let key: String?
+    let page: GitHubDetailModel?
     let width: Double
-    @ViewBuilder let page: Page
+    /// The terminal is a bottom half under the whole content, whatever the width.
+    var stacked = false
+    @ViewBuilder let content: Page
     @ObservedObject private var model = EmbeddedTerminalModel.shared
     @AppStorage(EmbeddedTerminal.rightSizeKey) private var rightSize = EmbeddedTerminal.defaultRight
     @AppStorage(EmbeddedTerminal.belowSizeKey) private var belowSize = EmbeddedTerminal.defaultBelow
     @State private var dragStart: Double?
 
     var body: some View {
-        if let key, let session = model.session(for: key), model.isShown(key) {
-            let placement = EmbeddedTerminal.placement(width: width)
-            GeometryReader { proxy in
-                let length = EmbeddedTerminal.paneLength(placement == .right ? rightSize : belowSize, placement: placement,
-                                                         available: placement == .right ? proxy.size.width : proxy.size.height)
-                let pane = TerminalPane(session: session, model: model).id(key)
-                switch placement {
-                case .right:
-                    HStack(spacing: 0) {
-                        page.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        handle(.right, current: length)
-                        pane.frame(width: length)
-                    }
-                case .below:
-                    VStack(spacing: 0) {
-                        page.frame(maxWidth: .infinity, maxHeight: .infinity)
-                        handle(.below, current: length)
-                        pane.frame(height: length)
-                    }
+        if let page { docked(page) } else { content }
+    }
+
+    private func docked(_ page: GitHubDetailModel) -> some View {
+        let key = page.pr.url
+        let placement = stacked ? EmbeddedTerminal.Placement.below : EmbeddedTerminal.placement(width: width)
+        return GeometryReader { proxy in
+            if placement == .right, model.isShown(key), let session = model.session(for: key) {
+                let length = EmbeddedTerminal.paneLength(rightSize, placement: .right, available: proxy.size.width)
+                HStack(spacing: 0) {
+                    content.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    handle(horizontal: true, current: length)
+                    TerminalPane(session: session, model: model).id(key).frame(width: length)
                 }
+            } else if placement == .below {
+                let length = EmbeddedTerminal.paneLength(belowSize, placement: .below, available: proxy.size.height)
+                VStack(spacing: 0) {
+                    content.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    handle(horizontal: false, current: length)
+                    TerminalDock(page: page, model: model).frame(height: length)
+                }
+            } else {
+                content
             }
-        } else {
-            page
         }
     }
 
-    private func handle(_ placement: EmbeddedTerminal.Placement, current: Double) -> some View {
-        let horizontal = placement == .right
-        return Rectangle()
+    private func handle(horizontal: Bool, current: Double) -> some View {
+        Rectangle()
             .fill(Color.primary.opacity(0.12))
             .frame(width: horizontal ? 1 : nil, height: horizontal ? nil : 1)
             .overlay {
@@ -88,6 +91,37 @@ struct TerminalSplit<Page: View>: View {
                         }
                         .onEnded { _ in dragStart = nil })
             }
+    }
+}
+
+/// The bottom part of the page: the Claude terminal, or while none is open what can start one, with the Open in Claude choices.
+struct TerminalDock: View {
+    @ObservedObject var page: GitHubDetailModel
+    @ObservedObject var model: EmbeddedTerminalModel
+    @ObservedObject private var claude = GitHubClaudeModel.shared
+
+    var body: some View {
+        let key = page.pr.url
+        if let session = model.session(for: key), model.isShown(key) {
+            TerminalPane(session: session, model: model).id(key)
+        } else {
+            VStack(spacing: 10) {
+                Image(systemName: "apple.terminal").font(.system(size: 22)).foregroundStyle(.tertiary)
+                Text(model.hasSession(key) ? "The Claude terminal is hidden. Claude keeps running in it." : "No Claude session for this pull request.")
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                HStack(spacing: 8) {
+                    if model.hasSession(key) { Button("Show Terminal") { model.setShown(key, true) } }
+                    OpenInClaudeMenu(pr: page.pr, detail: page.detail, model: claude)
+                    AskClaudeMenu(pr: page.pr, detail: page.detail, model: claude)
+                }
+                .controlSize(.small)
+            }
+            .font(.callout)
+            .padding(16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.primary.opacity(0.03))
+        }
     }
 }
 
@@ -204,11 +238,13 @@ struct TerminalPane: View {
 #else
 
 struct TerminalSplit<Page: View>: View {
-    let key: String?
+    let page: GitHubDetailModel?
     let width: Double
-    @ViewBuilder let page: Page
+    /// The terminal is a bottom half under the whole content, whatever the width.
+    var stacked = false
+    @ViewBuilder let content: Page
 
-    var body: some View { page }
+    var body: some View { content }
 }
 
 #endif

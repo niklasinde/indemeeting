@@ -15,9 +15,15 @@ struct GitHubView: View {
     var body: some View {
         GeometryReader { proxy in
             if !model.showsList {
-                listPane(width: proxy.size.width)
+                listPane(width: proxy.size.width, list: proxy.size.width)
             } else if proxy.size.width < GitHubLayout.compactBelow {
-                if showsDetail, model.page != nil { detailPane(back: { showsDetail = false }, total: proxy.size.width) } else { listPane(width: proxy.size.width) }
+                if showsDetail, model.page != nil {
+                    detailPane(back: { showsDetail = false }, total: proxy.size.width, column: proxy.size.width)
+                } else {
+                    listPane(width: proxy.size.width, list: proxy.size.width)
+                }
+            } else if GitHubLayout.stacksTerminal(width: proxy.size.width, height: proxy.size.height) {
+                stacked(width: proxy.size.width)
             } else {
                 split(width: proxy.size.width)
             }
@@ -40,9 +46,21 @@ struct GitHubView: View {
     private func split(width: CGFloat) -> some View {
         let list = GitHubLayout.listWidth(listWidth, in: width)
         return HStack(spacing: 0) {
-            listPane(width: width).frame(width: list)
+            listPane(width: width, list: list).frame(width: list)
             splitter(current: list, total: width)
-            detailPane(back: nil, total: width)
+            detailPane(back: nil, total: width, column: width - list - GitHubLayout.splitterWidth)
+        }
+    }
+
+    /// Tall windows: the list and the page on the top half, the Claude session across the whole width below them.
+    private func stacked(width: Double) -> some View {
+        let list = GitHubLayout.listWidth(listWidth, in: width)
+        return TerminalSplit(page: model.page, width: width, stacked: true) {
+            HStack(spacing: 0) {
+                listPane(width: width, list: list).frame(width: list)
+                splitter(current: list, total: width)
+                pageView(back: nil, column: width - list - GitHubLayout.splitterWidth)
+            }
         }
     }
 
@@ -86,14 +104,14 @@ struct GitHubView: View {
         }
     }
 
-    private func detailPane(back: (() -> Void)?, total: Double) -> some View {
-        TerminalSplit(key: model.page?.pr.url, width: total) { pageView(back: back) }
+    private func detailPane(back: (() -> Void)?, total: Double, column: Double) -> some View {
+        TerminalSplit(page: model.page, width: total) { pageView(back: back, column: column) }
     }
 
-    private func pageView(back: (() -> Void)?) -> some View {
+    private func pageView(back: (() -> Void)?, column: Double) -> some View {
         Group {
             if let page = model.page {
-                GitHubDetailView(page: page, model: model, back: back)
+                GitHubDetailView(page: page, model: model, back: back, column: column)
                     .id(page.pr.url)
                     .focusable()
                     .focused($focus, equals: .detail)
@@ -116,14 +134,14 @@ struct GitHubView: View {
         focus = .list
     }
 
-    private func listPane(width: Double) -> some View {
+    private func listPane(width: Double, list: Double) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if let error = model.error, model.enabled, model.hasData { ErrorBanner(error: error) }
             if model.marked.count > 1 {
                 MarkedBar(count: model.marked.count, model: actions, close: { actions.beginBulk(.close, model.markedPRs) }, clear: model.clearMarks)
             }
-            content(showsMetadata: GitHubLayout.showsRowMetadata(width: width))
+            content(showsMetadata: GitHubLayout.showsRowMetadata(width: width), singleLine: GitHubLayout.singleLineRows(listWidth: list))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -235,7 +253,7 @@ struct GitHubView: View {
         if model.filter.quick.contains(quick) { model.filter.quick.remove(quick) } else { model.filter.quick.insert(quick) }
     }
 
-    @ViewBuilder private func content(showsMetadata: Bool) -> some View {
+    @ViewBuilder private func content(showsMetadata: Bool, singleLine: Bool) -> some View {
         if !model.enabled {
             GitHubEmptyState(icon: "arrow.triangle.branch", title: "Your pull requests, in one place",
                        text: "Reads your pull requests through the GitHub CLI. Nothing is uploaded.") {
@@ -254,7 +272,7 @@ struct GitHubView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(model.visible) { pr in
                             PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
-                                           showsMetadata: showsMetadata, show: show)
+                                           showsMetadata: showsMetadata, singleLine: singleLine, show: show)
                             Divider().padding(.horizontal, Self.gutter)
                         }
                     }
@@ -297,6 +315,7 @@ private struct PullRequestRow: View {
     let selected: Bool
     let marked: Bool
     let showsMetadata: Bool
+    let singleLine: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
@@ -312,9 +331,13 @@ private struct PullRequestRow: View {
                 Spacer(minLength: 4)
                 StatusMark(pr: pr)
             }
-            Text(pr.title).lineLimit(2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
-            if showsMetadata { metadata }
-            details
+            Text(pr.title).lineLimit(singleLine ? 1 : 2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
+            if singleLine {
+                Text(chips.map(\.text).joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            } else {
+                if showsMetadata { metadata }
+                details
+            }
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 8)

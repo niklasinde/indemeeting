@@ -560,6 +560,7 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 - **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
   data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
 - **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks · 2 with new feedback" opens the page.
+- **Layout:** the list is narrow below 1200 points, and the page's actions sit in one row with Merge and Close under More when it is narrow. In a window 900 points tall or more, the Claude terminal is a bottom half across the whole window, drag it to resize (remembered; it starts at half the height) and it offers Open in Claude choices while no session is open.
 - **Timeline:** the tooltip of a pull request address in the Activity timeline shows its title from the cache.
 - **Cache:** the last fetch, with the raw discussion data, is stored in `github_prs` in the meeting database, so the page opens instantly and works
   offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.

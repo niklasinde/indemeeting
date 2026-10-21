@@ -288,39 +288,6 @@ struct ActionBannerView: View {
 }
 
 /// Review and Close on the pull request page. Disabled, with the reason, while the master switch is off.
-struct GitHubActionButtons: View {
-    let pr: GitHubPR
-    let detail: GitHubPRDetail?
-    @ObservedObject var model: GitHubActionsModel
-
-    var body: some View {
-        let state = detail?.state ?? pr.state
-        Menu {
-            Button("Approve\u{2026}") { model.begin(.approve, pr, detail: detail) }.disabled(state != .open)
-            Button("Request Changes\u{2026}") { model.begin(.requestChanges, pr, detail: detail) }.disabled(state != .open)
-            Button("Comment\u{2026}") { model.begin(.comment, pr, detail: detail) }
-        } label: {
-            Label("Review", systemImage: "checkmark.bubble")
-        }
-        .menuIndicator(.visible)
-        .fixedSize()
-        .disabled(!model.enabled)
-        .help(model.enabled ? "Approve, request changes or comment. You confirm first." : GitHubActions.disabledHelp)
-        Button("Merge\u{2026}") { model.begin(.merge, pr, detail: detail) }
-            .disabled(!model.enabled || state != .open)
-            .help(model.enabled ? "Merge this pull request. You confirm first; GitHub cannot undo a merge." : GitHubActions.disabledHelp)
-        if state == .closed {
-            Button("Reopen\u{2026}") { model.begin(.reopen, pr, detail: detail) }
-                .disabled(!model.enabled)
-                .help(model.enabled ? "Reopen this pull request. You confirm first." : GitHubActions.disabledHelp)
-        } else {
-            Button("Close\u{2026}") { model.begin(.close, pr, detail: detail) }
-                .disabled(!model.enabled || state != .open)
-                .help(model.enabled ? "Close this pull request. You confirm first." : GitHubActions.disabledHelp)
-        }
-    }
-}
-
 /// The actions in a row's context menu; nothing at all while the master switch is off.
 struct GitHubRowActions: View {
     let pr: GitHubPR
