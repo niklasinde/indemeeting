@@ -115,7 +115,7 @@ struct ActionConfirmSheet: View {
                 Label(warning.text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(warning.tone.color).fixedSize(horizontal: false, vertical: true)
             }
             if blocker == nil {
-                if confirmation.mergeMethods.count > 1 {
+                if confirmation.showsMergeMethod {
                     Picker("Merge method", selection: $draft.request.method) {
                         ForEach(confirmation.mergeMethods) { Text($0.title).tag($0) }
                     }

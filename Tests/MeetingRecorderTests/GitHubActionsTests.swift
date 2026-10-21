@@ -525,6 +525,22 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         check(!GitHubActions.confirmation(for: request(.merge), target: { var d = t; d.state = .merged; return d }()).canConfirm, "merged holds it back")
     }),
 
+    ("the merge method is offered for merge only, and no other command carries a method flag", {
+        var t = target()
+        t.mergeable = .mergeable
+        t.mergeMethods = [.squash, .merge, .rebase]
+        t.state = .open
+        for action in GitHubAction.allCases where action != .merge {
+            let c = GitHubActions.confirmation(for: request(action, comment: "Note"), target: t)
+            check(!c.showsMergeMethod && c.mergeMethods.isEmpty, "\(action) shows no merge method")
+            check(!c.command.contains("--squash") && !c.command.contains("--merge") && !c.command.contains("--rebase"), "\(action) command: \(c.command)")
+            let copy = [c.title, c.confirmTitle, c.commentLabel, c.blocker ?? ""] + c.warnings.map(\.text)
+            check(copy.allSatisfy { !$0.lowercased().contains("merge") && !$0.lowercased().contains("squash") && !$0.lowercased().contains("rebase") }, "\(action) copy never mentions merge methods")
+        }
+        check(GitHubActions.confirmation(for: request(.merge), target: t).showsMergeMethod, "merge offers the methods")
+        check(!GitHubActions.confirmation(for: request(.merge), target: { var one = t; one.mergeMethods = [.squash]; return one }()).showsMergeMethod, "one method is not a choice")
+    }),
+
     ("merge errors from gh are classified, and a conflict is not mistaken for protection", {
         let fixtures: [(String, GitHubActionError)] = [
             ("GraphQL: Pull request is not mergeable: the merge commit cannot be cleanly created", .conflicts),

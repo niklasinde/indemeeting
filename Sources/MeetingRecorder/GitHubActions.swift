@@ -246,6 +246,7 @@ struct GitHubActionConfirmation: Equatable {
     let confirmIsDefault: Bool
 
     var canConfirm: Bool { blocker == nil && !needsComment }
+    var showsMergeMethod: Bool { mergeMethods.count > 1 }
 }
 
 enum GitHubActions {
@@ -382,7 +383,7 @@ enum GitHubActions {
             facts: facts, command: commandLine(request), comment: request.trimmedComment, commentRequired: request.action.commentRequired,
             needsComment: request.action.commentRequired && request.trimmedComment.isEmpty,
             offersBranchDelete: (request.action == .close || merging) && target.state == .open && branchDeletable(head: target.head, base: target.base),
-            mergeMethods: target.mergeMethods, commentLabel: merging ? "Commit body (optional)" : request.action.commentRequired ? "Comment (required)" : "Comment (optional)",
+            mergeMethods: merging ? target.mergeMethods : [], commentLabel: merging ? "Commit body (optional)" : request.action.commentRequired ? "Comment (required)" : "Comment (optional)",
             confirmIsDefault: request.action.returnConfirms)
         switch preflight(request, target) {
         case .blocked(let reason): confirmation.blocker = reason
