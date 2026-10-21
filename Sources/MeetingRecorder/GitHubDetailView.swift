@@ -69,6 +69,39 @@ extension GitHubDetailView {
     }
 }
 
+/// The Claude sessions on this pull request, running, waiting, saved or done; a click opens the session on the Sessions section.
+private struct PullRequestSessions: View {
+    let url: String
+    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
+    @ObservedObject private var claude = GitHubClaudeModel.shared
+
+    var body: some View {
+        let rows = SessionList.sessions(for: url, in: SessionsModel.shared.rows(now: Date()))
+        if !rows.isEmpty {
+            DetailSection("Sessions", trailing: "\(rows.count)") {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(rows) { row in
+                        Button { SessionsModel.shared.show(row.id) } label: {
+                            HStack(spacing: 8) {
+                                Circle().fill(row.state.color).frame(width: 7, height: 7)
+                                Text(row.title).lineLimit(1)
+                                Spacer(minLength: 8)
+                                Text(row.state.title).foregroundStyle(.secondary)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open this session in Sessions")
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct DetailErrorBanner: View {
     let error: GitHubError
 
@@ -107,6 +140,7 @@ struct GitHubDetailContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header.readingWidth()
+            PullRequestSessions(url: pr.url).readingWidth()
             ClaudeReviewPanel(pr: pr, detail: detail, model: claude).readingWidth()
             if let detail {
                 people(detail).readingWidth()
