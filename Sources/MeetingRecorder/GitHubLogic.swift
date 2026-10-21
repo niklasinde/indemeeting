@@ -107,6 +107,8 @@ enum GitHubLogic {
     static let pageSize = 50
     static let closedPageSize = 30
     static let host = "github.com"
+    /// The UserDefaults key of the GitHub switch in Settings.
+    static let enabledKey = "githubEnabled"
 
     struct Search: Equatable {
         let kind: GitHubKind

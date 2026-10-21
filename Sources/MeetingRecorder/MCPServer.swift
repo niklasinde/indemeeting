@@ -91,7 +91,7 @@ struct MCPServer {
     static func runFromCommandLine() -> Never {
         let store = Result { try MeetingStore.openReadOnly() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        let server = MCPServer(tools: meetingTools(store), version: version)
+        let server = MCPServer(tools: meetingTools(store) + githubTools(store), version: version)
         while let line = readLine() {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty, let response = server.handle(line) else { continue }
             FileHandle.standardOutput.write(Data((response + "\n").utf8))
@@ -102,12 +102,8 @@ struct MCPServer {
 
 extension MCPServer {
     static func meetingTools(_ opened: Result<MeetingStore, Error>, now: @escaping () -> Date = Date.init) -> [MCPTool] {
-        func store() throws -> MeetingStore {
-            do { return try opened.get() } catch {
-                throw MCPToolError("The MeetingRecorder database at \(AppPaths.database.path) could not be opened: \(error.localizedDescription)")
-            }
-        }
-        let limit: [String: Any] = ["type": "integer", "minimum": 1, "maximum": 50, "description": "How many meetings, 10 when left out."]
+        func store() throws -> MeetingStore { try openedStore(opened) }
+        let limit = limitSchema("meetings", 10)
         return [
             MCPTool(name: "activity_context",
                     description: "What the user worked on in the last hours: active time, projects, apps, repositories and branches, "
@@ -143,8 +139,7 @@ extension MCPServer {
                     throw MCPToolError("No meeting with id \(id)")
                 }
                 let text = meetingLine(meeting) + "\n\n" + ProcessingLogic.exportMarkdown(content)
-                let limit = max(Int(number($0["max_characters"]) ?? 40_000), 1000)
-                return text.count <= limit ? text : String(text.prefix(limit)) + "\n\n[Cut at \(limit) characters]\n"
+                return cut(text, at: max(Int(number($0["max_characters"]) ?? Double(outputLimit)), 1000))
             },
             MCPTool(name: "recent_meetings", description: "The latest meetings, newest first, with ids for get_meeting.",
                     properties: ["limit": limit]) {
@@ -163,8 +158,24 @@ extension MCPServer {
         (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap(Double.init)
     }
 
-    static func count(_ value: Any?) -> Int {
-        min(max(Int(number(value) ?? 10), 1), 50)
+    static let outputLimit = 40_000
+
+    static func limitSchema(_ what: String, _ fallback: Int) -> [String: Any] {
+        ["type": "integer", "minimum": 1, "maximum": 50, "description": "How many \(what), \(fallback) when left out."]
+    }
+
+    static func openedStore(_ opened: Result<MeetingStore, Error>) throws -> MeetingStore {
+        do { return try opened.get() } catch {
+            throw MCPToolError("The MeetingRecorder database at \(AppPaths.database.path) could not be opened: \(error.localizedDescription)")
+        }
+    }
+
+    static func cut(_ text: String, at limit: Int) -> String {
+        text.count <= limit ? text : String(text.prefix(limit)) + "\n\n[Cut at \(limit) characters]\n"
+    }
+
+    static func count(_ value: Any?, fallback: Int = 10) -> Int {
+        min(max(Int(number(value) ?? Double(fallback)), 1), 50)
     }
 
     static func date(_ text: String) throws -> Date {

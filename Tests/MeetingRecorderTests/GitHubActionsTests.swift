@@ -397,9 +397,9 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = try MeetingStore.open(at: directory.appendingPathComponent("meetings.sqlite"))
         let scopes: [ChatScope] = [.general, .meeting(1, label: nil), .notes(1, label: nil), .block(1, from: Date(), to: Date(), label: nil)]
-        let tools = MCPServer.meetingTools(.success(store)) + scopes.flatMap { ChatToolbox.tools(for: $0, store: store, budget: ChatBudget(contextSize: 4096)) }
+        let tools = MCPServer.meetingTools(.success(store)) + MCPServer.githubTools(.success(store)) + scopes.flatMap { ChatToolbox.tools(for: $0, store: store, budget: ChatBudget(contextSize: 4096)) }
         check(!tools.isEmpty, "there are tools")
-        let verbs = ["approve", "close", "reopen", "review", "merge", "comment", "create", "update", "delete", "post", "send", "write", "push", "set_", "edit", "gh_", "github"]
+        let verbs = ["approve", "close", "reopen", "review", "merge", "comment", "create", "update", "delete", "post", "send", "write", "push", "set_", "edit", "gh_"]
         for tool in tools {
             let lowered = tool.name.lowercased()
             check(!verbs.contains { lowered.contains($0) }, "\(tool.name) does not sound like a write")

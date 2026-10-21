@@ -28,11 +28,11 @@ private func append(_ text: String, to url: URL) throws {
     try handle.close()
 }
 
-private func json(_ text: String?) -> [String: Any] {
+func json(_ text: String?) -> [String: Any] {
     (text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) } as? [String: Any]) ?? [:]
 }
 
-private func call(_ server: MCPServer, _ tool: String, _ arguments: String = "{}", id: Int = 9) -> (text: String, isError: Bool) {
+func call(_ server: MCPServer, _ tool: String, _ arguments: String = "{}", id: Int = 9) -> (text: String, isError: Bool) {
     let response = json(server.handle(#"{"jsonrpc":"2.0","id":\#(id),"method":"tools/call","params":{"name":"\#(tool)","arguments":\#(arguments)}}"#))
     let result = response["result"] as? [String: Any] ?? [:]
     let content = result["content"] as? [[String: Any]] ?? []

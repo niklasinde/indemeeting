@@ -706,6 +706,11 @@ What it adds:
   per day, project, branch and ticket), `search_meetings(query, limit?)` (full-text, with snippets), `get_meeting(id)`
   (summary, action items, notes and the transcript with speakers) and `recent_meetings(limit?)`. It opens the database
   read-only, so it never conflicts with the running app.
+  The GitHub tools read the pull request cache the GitHub view keeps and never call `gh`: `github_prs(kind?, state?,
+  limit?)` (created, review_requested, assigned or mentioned; open, merged, closed or all), `github_pr(pr)` (a URL or
+  `owner/repo#number`: branches, mergeable state, reviewers, checks, ticket keys and the description, from the cached
+  detail) and `github_needs_attention(limit?)` (what waits on you or has new comments from people). They answer with a
+  message when the cache is empty or GitHub is off in Settings.
 - `/meeting-context [hours]` and `/time-report [week]`, and a skill telling Claude when to use the tools ("what did
   we decide in the standup", "what was I working on").
 

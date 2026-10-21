@@ -3,7 +3,7 @@ import Foundation
 @testable import MeetingRecorder
 #endif
 
-private func detailJSON(pr extra: String = "", commits: String = "[]", commitCount: Int = 0, files: String = "[]", fileCount: Int = 0,
+func detailJSON(pr extra: String = "", commits: String = "[]", commitCount: Int = 0, files: String = "[]", fileCount: Int = 0,
                         contexts: String = "[]", rollup: String = #"{"state":"SUCCESS","contexts":{"totalCount":0,"nodes":[]}}"#) -> Data {
     Data("""
     {"data":{"repository":{"pullRequest":{

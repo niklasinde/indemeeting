@@ -23,6 +23,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ClaudeEvents.swift \
     Sources/MeetingRecorder/ClaudePlugin.swift \
     Sources/MeetingRecorder/MCPServer.swift \
+    Sources/MeetingRecorder/MCPGitHub.swift \
     Sources/MeetingRecorder/ChatLogic.swift \
     Sources/MeetingRecorder/ChatStore.swift \
     Sources/MeetingRecorder/ChatToolbox.swift \
@@ -61,6 +62,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/GitHubBranchTests.swift \
     Tests/MeetingRecorderTests/GitHubClaudeTests.swift \
     Tests/MeetingRecorderTests/GitHubActionsTests.swift \
+    Tests/MeetingRecorderTests/MCPGitHubTests.swift \
     Tests/MeetingRecorderTests/EmbeddedTerminalTests.swift \
     Tests/MeetingRecorderTests/ClaudeResumeTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \

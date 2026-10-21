@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor
 final class GitHubModel: ObservableObject {
     static let shared = GitHubModel()
-    static let enabledKey = "githubEnabled"
+    static let enabledKey = GitHubLogic.enabledKey
     static let intervalKey = "githubRefreshMinutes"
     static let selectionKey = "githubSelectedPR"
     static let intervals = [1, 5, 10, 15, 30, 60]
