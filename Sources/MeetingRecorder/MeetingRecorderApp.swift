@@ -170,6 +170,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         TerminationSignals.observe { NSApp.terminate(nil) }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopForSleep() }
+        }
         CommandLineLink.refresh()
         GitHubClaude.purge(GitHubClaude.promptFolder(), now: Date())
         hotKey = GlobalHotKey(keyCode: GlobalHotKey.record.keyCode, modifiers: GlobalHotKey.record.carbonModifiers) { [weak self] in
@@ -191,12 +194,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
         tracker.flush()
     }
 
     private func stopRecording() async {
         await processor.finishRecording(recorder, reveal: false)
+    }
+
+    private func stopForSleep() {
+        guard recorder.isRecording else { return }
+        Task { await stopRecording() }
     }
 
     private func toggleRecording() {

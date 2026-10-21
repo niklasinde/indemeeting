@@ -68,6 +68,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/EmbeddedTerminalTests.swift \
     Tests/MeetingRecorderTests/ClaudeResumeTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \
+    Tests/MeetingRecorderTests/RecordingDeviceTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

@@ -1,21 +1,33 @@
 import AVFoundation
 import CoreAudio
 
+/// A fresh engine per recording: once released, the input device (and a Bluetooth headset's call profile) is let go.
 final class MicrophoneCapture {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let normalizer = PCMNormalizer()
 
     func start(into mixer: AudioMixer) throws {
+        stop()
+        let engine = AVAudioEngine()
         let input = engine.inputNode
         input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [normalizer] buffer, _ in
             mixer.append(normalizer.samples(from: buffer), from: .microphone)
         }
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
+        self.engine = engine
     }
 
     func stop() {
+        guard let engine else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        engine.reset()
+        self.engine = nil
     }
 }
 

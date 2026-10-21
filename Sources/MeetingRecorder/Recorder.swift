@@ -145,12 +145,17 @@ final class Recorder: ObservableObject {
         NSWorkspace.shared.open(Self.folder)
     }
 
+    /// Releases the mic engine and the system audio tap and aggregate device. Safe to call at any time, any number of times.
+    func releaseAudioDevices() {
+        microphone.stop()
+        system.stop()
+    }
+
     private func teardown() -> URL? {
         timer?.invalidate()
         timer = nil
         clock = nil
-        microphone.stop()
-        system.stop()
+        releaseAudioDevices()
         defer { mixer = nil }
         guard let mixer else { return nil }
         let url = mixer.finish()
