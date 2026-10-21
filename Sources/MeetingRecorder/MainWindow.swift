@@ -15,6 +15,11 @@ final class MainWindow {
         activity = ActivityModel(store: store, tracker: tracker)
         let view = MainView(recorder: recorder, processor: processor, library: library, activity: activity, playback: playback)
         window = AppWindow(onClose: { [playback] in playback.pause() }) { Self.makeWindow(view) }
+        SessionsModel.shared.reveal = { [weak self] in self?.showSessions() }
+        SessionsModel.shared.showGitHub = { [weak self] target in
+            self?.showGitHub()
+            GitHubModel.shared.open(target)
+        }
     }
 
     func show(selecting meeting: URL? = nil) {
@@ -49,6 +54,12 @@ final class MainWindow {
         window.show()
     }
 
+    func showSessions() {
+        library.start()
+        library.showsSessions = true
+        window.show()
+    }
+
     static func makeWindow(_ view: MainView) -> NSWindow {
         let controller = NSHostingController(rootView: view)
         controller.sceneBridgingOptions = [.toolbars]
@@ -77,11 +88,15 @@ final class RecordingLibrary: ObservableObject {
     @Published var confirmingDelete = false
     /// The Activity page is shown instead of the selected meeting.
     @Published var showsActivity = false {
-        didSet { if showsActivity { showsGitHub = false } }
+        didSet { if showsActivity { showsGitHub = false; showsSessions = false } }
     }
     /// The GitHub page is shown instead of the selected meeting.
     @Published var showsGitHub = false {
-        didSet { if showsGitHub { showsActivity = false } }
+        didSet { if showsGitHub { showsActivity = false; showsSessions = false } }
+    }
+    /// The Sessions page is shown instead of the selected meeting.
+    @Published var showsSessions = false {
+        didSet { if showsSessions { showsActivity = false; showsGitHub = false } }
     }
     /// A moment in the selected meeting that the transcript should scroll to.
     @Published var seekTarget: TimeInterval?
@@ -103,13 +118,14 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub) }
+    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub, sessions: showsSessions) }
 
     var selected: RecordingEntry? { section == .meetings ? recordings.first { $0.id == selection } : nil }
 
     func show(_ section: SidebarSection) {
         showsActivity = section == .activity
         showsGitHub = section == .gitHub
+        showsSessions = section == .sessions
     }
 
     func select(_ entry: RecordingEntry) {
@@ -323,6 +339,7 @@ struct MainView: View {
     @ObservedObject var activity: ActivityModel
     let playback: AudioPlayback
     @ObservedObject private var github = GitHubModel.shared
+    @ObservedObject private var upgrade = AppUpgrade.shared
     @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
 
     private var columns: Binding<NavigationSplitViewVisibility> {
@@ -335,6 +352,7 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
         } detail: {
             VStack(spacing: 0) {
+                UpgradeBanner(upgrade: upgrade)
                 if let error = library.databaseError { DatabaseErrorBanner(error: error) }
                 if let notice = github.linkNotice {
                     Text(notice)
@@ -388,6 +406,7 @@ struct MainView: View {
         switch library.section {
         case .activity: ActivityView(model: activity, tracker: activity.tracker)
         case .gitHub: GitHubView(model: .shared)
+        case .sessions: SessionsView()
         default: MeetingsView(recorder: recorder, processor: processor, library: library, playback: playback) { newMeeting() }
         }
     }

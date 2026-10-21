@@ -4,8 +4,8 @@ import Foundation
 #endif
 
 let sidebarTests: [(name: String, run: () throws -> Void)] = [
-    ("sidebar lists Meetings above Activity, GitHub, Chat and Claude API", {
-        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Claude API"],
+    ("sidebar lists Meetings above Activity, GitHub, Sessions, Chat and Claude API", {
+        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Sessions", "Chat", "Claude API"],
               "order \(SidebarSection.allCases.map(\.title))")
         check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI], "chat and Claude API open their windows")
     }),
@@ -15,6 +15,7 @@ let sidebarTests: [(name: String, run: () throws -> Void)] = [
         check(SidebarLogic.section(activity: false, gitHub: false) == .meetings, "nothing shown")
         check(SidebarLogic.section(activity: true, gitHub: false) == .activity, "activity")
         check(SidebarLogic.section(activity: false, gitHub: true) == .gitHub, "github")
+        check(SidebarLogic.section(activity: false, gitHub: false, sessions: true) == .sessions, "sessions")
     }),
 
     ("sidebar visibility is stored under its own key and defaults to shown", {
