@@ -103,11 +103,17 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var selected: RecordingEntry? { showsActivity || showsGitHub ? nil : recordings.first { $0.id == selection } }
+    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub) }
+
+    var selected: RecordingEntry? { section == .meetings ? recordings.first { $0.id == selection } : nil }
+
+    func show(_ section: SidebarSection) {
+        showsActivity = section == .activity
+        showsGitHub = section == .gitHub
+    }
 
     func select(_ entry: RecordingEntry) {
-        showsActivity = false
-        showsGitHub = false
+        show(.meetings)
         selection = entry.id
     }
 
@@ -317,11 +323,16 @@ struct MainView: View {
     @ObservedObject var activity: ActivityModel
     let playback: AudioPlayback
     @ObservedObject private var github = GitHubModel.shared
+    @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
+
+    private var columns: Binding<NavigationSplitViewVisibility> {
+        Binding(get: { sidebarHidden ? .detailOnly : .all }, set: { sidebarHidden = $0 == .detailOnly })
+    }
 
     var body: some View {
-        NavigationSplitView {
-            Sidebar(recorder: recorder, processor: processor, library: library) { newMeeting() }
-                .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 300)
+        NavigationSplitView(columnVisibility: columns) {
+            SectionSidebar(library: library)
+                .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 240)
         } detail: {
             VStack(spacing: 0) {
                 if let error = library.databaseError { DatabaseErrorBanner(error: error) }
@@ -333,21 +344,19 @@ struct MainView: View {
                         .padding(8)
                         .background(.quaternary)
                 }
-                if library.showsActivity {
-                    ActivityView(model: activity, tracker: activity.tracker)
-                } else if library.showsGitHub {
-                    GitHubView(model: .shared)
-                } else if let entry = library.selected {
-                    RecordingDetail(entry: entry, recorder: recorder, processor: processor, library: library, playback: playback)
-                        .id(entry.id)
-                } else {
-                    Text(library.recordings.isEmpty ? "No recordings yet" : "Select a meeting")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
+                statusNotices
+                page
             }
         }
+        .toolbar(removing: .sidebarToggle)
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button { sidebarHidden.toggle() } label: {
+                    Label(SidebarLogic.toggleTitle(hidden: sidebarHidden), systemImage: "sidebar.leading")
+                        .labelStyle(.iconOnly)
+                }
+                .help("\(SidebarLogic.toggleTitle(hidden: sidebarHidden)) (\u{2303}\u{2318}S)")
+            }
             ToolbarItemGroup(placement: .automatic) {
                 Spacer()
                 if recorder.isRecording { pauseButton }
@@ -355,6 +364,12 @@ struct MainView: View {
                 recordButton
                 moreMenu
             }
+        }
+        .background {
+            Button("New Meeting") { newMeeting() }
+                .keyboardShortcut("n")
+                .opacity(0)
+                .frame(width: 0, height: 0)
         }
         .frame(minWidth: 720, minHeight: 460)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
@@ -366,6 +381,32 @@ struct MainView: View {
             Button("Move to Trash", role: .destructive) { deleteSelected() }
         } message: {
             Text("Its transcript, summary and notes are deleted.")
+        }
+    }
+
+    @ViewBuilder private var page: some View {
+        switch library.section {
+        case .activity: ActivityView(model: activity, tracker: activity.tracker)
+        case .gitHub: GitHubView(model: .shared)
+        default: MeetingsView(recorder: recorder, processor: processor, library: library, playback: playback) { newMeeting() }
+        }
+    }
+
+    @ViewBuilder private var statusNotices: some View {
+        let messages = [recorder.notice, recorder.errorMessage, processor.errorMessage].compactMap { $0 }
+        if !messages.isEmpty || !Permissions.allGranted {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(messages, id: \.self) { Text($0) }
+                if !Permissions.allGranted {
+                    Text("Some permissions are missing")
+                    Button("Open Setup\u{2026}") { OnboardingWindow.shared.show() }
+                        .buttonStyle(.link)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
         }
     }
 
@@ -463,165 +504,38 @@ struct MainView: View {
     }
 }
 
-struct Sidebar: View {
-    @ObservedObject var recorder: Recorder
-    @ObservedObject var processor: MeetingProcessor
+struct SectionSidebar: View {
     @ObservedObject var library: RecordingLibrary
-    let newMeeting: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                SearchField(text: $library.query)
-                Button(action: newMeeting) {
-                    Image(systemName: "plus")
-                        .frame(width: 26, height: 24)
+        VStack(spacing: 2) {
+            ForEach(SidebarSection.allCases) { section in
+                Button { open(section) } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: section.systemImage).frame(width: 20)
+                        Text(section.title)
+                    }
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(library.section == section ? Color.primary.opacity(0.08) : .clear))
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .keyboardShortcut("n")
-                .help(recorder.isBusy ? "A meeting is being recorded; this shows it" : "New meeting (\u{2318}N)")
+                .help(section.help)
             }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 8)
-            activityRow
-            gitHubRow
-            chatRow
-            claudeAPIRow
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(LibraryLogic.grouped(library.visibleRecordings, now: Date()), id: \.group) { group, entries in
-                        Text(group.rawValue)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 10)
-                            .padding(.top, 14)
-                            .padding(.bottom, 4)
-                        ForEach(entries) { row($0, group: group) }
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.bottom, 12)
-            }
-            .onMoveCommand { direction in
-                if direction == .up { library.moveSelection(by: -1) }
-                if direction == .down { library.moveSelection(by: 1) }
-            }
-            statusFooter
+            Spacer()
         }
-    }
-
-    private var activityRow: some View {
-        Button { library.showsActivity = true } label: {
-            Label("Activity", systemImage: "clock")
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(library.showsActivity ? Color.primary.opacity(0.08) : .clear))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
         .padding(.horizontal, 8)
-        .help("What you worked on, by day and week")
+        .padding(.top, 8)
     }
 
-    private var gitHubRow: some View {
-        Button { library.showsGitHub = true } label: {
-            Label("GitHub", systemImage: "arrow.triangle.branch")
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(library.showsGitHub ? Color.primary.opacity(0.08) : .clear))
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .help("Your pull requests, read through the GitHub CLI")
-    }
-
-    private var chatRow: some View {
-        Button { ChatWindow.shared.show() } label: {
-            Label("Chat", systemImage: "bubble.left.and.text.bubble.right")
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .help("Ask about your meetings and work (\u{2318}\u{21E7}A)")
-    }
-
-    private var claudeAPIRow: some View {
-        Button { ClaudeAPIWindow.shared.show() } label: {
-            Label("Claude API", systemImage: "sparkles")
-                .foregroundStyle(.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
-        .help("Chat with Claude through the Anthropic API, with your own key")
-    }
-
-    private func row(_ entry: RecordingEntry, group: DateGroup) -> some View {
-        Button { library.select(entry) } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(library.title(of: entry))
-                    .lineLimit(1)
-                    .foregroundStyle(.primary)
-                HStack(spacing: 4) {
-                    if recorder.meeting == entry.audio {
-                        RecordingStatus(recorder: recorder)
-                    } else {
-                        Text(([dateText(entry.date, group: group)] + [entry.duration.map(LibraryLogic.minutesText)].compactMap { $0 })
-                            .joined(separator: " \u{00B7} "))
-                    }
-                    if processor.processing == entry.audio { ProgressView().controlSize(.mini) }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6)
-                .fill(library.selected?.id == entry.id ? Color.primary.opacity(0.08) : .clear))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func dateText(_ date: Date, group: DateGroup) -> String {
-        switch group {
-        case .today, .yesterday: return date.formatted(date: .omitted, time: .shortened)
-        case .thisWeek: return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
-        case .earlier: return date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
-        }
-    }
-
-    @ViewBuilder private var statusFooter: some View {
-        let messages = [recorder.notice, recorder.errorMessage, processor.errorMessage].compactMap { $0 }
-        if !messages.isEmpty || !Permissions.allGranted {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(messages, id: \.self) { Text($0) }
-                if !Permissions.allGranted {
-                    Text("Some permissions are missing")
-                    Button("Open Setup\u{2026}") { OnboardingWindow.shared.show() }
-                        .buttonStyle(.link)
-                }
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .overlay(alignment: .top) { Divider() }
+    private func open(_ section: SidebarSection) {
+        switch section {
+        case .chat: ChatWindow.shared.show()
+        case .claudeAPI: ClaudeAPIWindow.shared.show()
+        default: library.show(section)
         }
     }
 }

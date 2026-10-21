@@ -54,6 +54,18 @@ enum PreviewRenderer {
                     save(window, to: output.appendingPathComponent("\(shot.name)-\(mode).png"))
                 }
             }
+            for hidden in [false, true] {
+                library.selection = library.recordings.first?.id
+                library.tab = .summary
+                UserDefaults.standard.set(hidden, forKey: SidebarLogic.hiddenKey)
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    window.appearance = NSAppearance(named: appearance)
+                    try? await Task.sleep(nanoseconds: 700_000_000)
+                    let mode = appearance == .aqua ? "light" : "dark"
+                    save(window, to: output.appendingPathComponent("sidebar-\(hidden ? "hidden" : "meetings")-\(mode).png"))
+                }
+            }
+            UserDefaults.standard.removeObject(forKey: SidebarLogic.hiddenKey)
             library.showsActivity = true
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 window.appearance = NSAppearance(named: appearance)

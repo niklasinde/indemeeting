@@ -103,8 +103,11 @@ Quitting while paused saves the recording like Stop.
 ## App window
 
 "Open Meeting Recorder" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
-main window (with a Dock icon while it is open). The sidebar lists the recordings in `~/Movies/MeetingRecordings`
-grouped by Today, Yesterday, This week and Earlier. Each row shows the meeting title (a rename, else the title of the
+main window (with a Dock icon while it is open). The sidebar holds the sections: **Meetings** (first), Activity, GitHub,
+Chat and Claude API. Meetings shows the recordings in `~/Movies/MeetingRecordings` in a list beside the selected meeting,
+grouped by Today, Yesterday, This week and Earlier; below 780 points the list and the meeting take turns, with a back
+button. Chat and Claude API open their own windows. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
+hides the sidebar so the content takes the full width; the choice is remembered between launches. Each row shows the meeting title (a rename, else the title of the
 summary, else "Meeting") and the time and length. The search field at the top searches titles, transcripts, summaries
 and notes in the database (every word has to match as the start of a word, ignoring case and accents); the arrow keys
 move through the list. In-progress `.recording.m4a` files are left out, and the list follows the folder as files
@@ -409,7 +412,7 @@ eight words and a project guess from your own projects. It runs in the backgroun
 batches, and caches the answer per app, normalised title and address, so repeats cost nothing. The guess is shown with
 a small sparkle and only applies when no rule or manual choice does; the block popover accepts it with one click.
 
-The Activity entry at the top of the sidebar opens the day view: active time, totals per project and per category, the
+The Activity section opens the day view: active time, totals per project and per category, the
 time per app, and the timeline of blocks (app icon, title, chips for address, repository · branch, ticket, category and
 Claude session, the written excerpt, and the project). Week shows hours per project and per day, the per-day totals
 and hours per category: the time report. Export CSV… (`date,project,hours,details`) and Export Markdown… (per day and
@@ -498,7 +501,7 @@ a fake key against a loopback stub. It refuses any other host.
 
 ## GitHub
 
-Off by default. Settings > Activity > GitHub turns on a **GitHub** row in the main window's sidebar: your pull requests
+Off by default. Settings > Activity > GitHub turns on a **GitHub** section in the main window's sidebar: your pull requests
 as a list on the left and the selected pull request on the right, read through the GitHub CLI (`gh`) that is already signed in on this Mac. The app never handles a
 token, password or API key; if `gh` is missing the page shows `brew install gh`, and if it is not signed in it shows
 `gh auth login`, each with a Copy button (the app never runs the interactive login).

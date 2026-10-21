@@ -130,6 +130,7 @@ enum TerminationSignals {
 
 struct MeetingRecorderApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
+    @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
 
     var body: some Scene {
         MenuBarExtra {
@@ -145,6 +146,10 @@ struct MeetingRecorderApp: App {
             CommandGroup(after: .saveItem) { ExportCommand(library: delegate.mainWindow.library) }
             CommandGroup(after: .windowList) { ChatCommand() }
             CommandGroup(replacing: .appSettings) { SettingsButton() }
+            CommandGroup(replacing: .sidebar) {
+                Button(SidebarLogic.toggleTitle(hidden: sidebarHidden)) { sidebarHidden.toggle() }
+                    .keyboardShortcut("s", modifiers: [.command, .control])
+            }
         }
     }
 }
