@@ -152,6 +152,19 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     var lastOutput: Date? { outputClock.last }
 
+    /// The last lines Claude printed, for the check whether it waits for an answer.
+    var screenTail: String {
+        view.allOutput.split(whereSeparator: \.isNewline).suffix(WaitingPrompt.screenLines).joined(separator: "\n")
+    }
+
+    /// The only place that writes to the session's terminal: the send box and the Yes and No answers come here.
+    @discardableResult
+    func submit(_ text: String) -> Bool {
+        guard isRunning, let payload = SessionInput.submission(text) else { return false }
+        view.send(data: ArraySlice(payload.utf8))
+        return true
+    }
+
     var hasEnded: Bool {
         switch state {
         case .exited, .unavailable: return true
