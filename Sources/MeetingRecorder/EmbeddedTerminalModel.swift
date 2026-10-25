@@ -177,13 +177,8 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
     func start() {
         guard let cli, !isRunning else { return }
         do {
-            let script: String
-            if let resume {
-                script = EmbeddedTerminal.script(directory: directory, promptFile: nil, cli: cli, flags: resume.flags)
-            } else {
-                let file = try GitHubClaude.writePromptFile(prompt: prompt, folder: GitHubClaude.promptFolder())
-                script = EmbeddedTerminal.script(directory: directory, promptFile: file, cli: cli)
-            }
+            let file: URL? = try resume == nil && !prompt.isEmpty ? GitHubClaude.writePromptFile(prompt: prompt, folder: GitHubClaude.promptFolder()) : nil
+            let script = EmbeddedTerminal.script(directory: directory, promptFile: file, cli: cli, flags: resume?.flags ?? [])
             startedAt = Date()
             view.startProcess(executable: EmbeddedTerminal.shell, args: EmbeddedTerminal.shellArguments(script),
                               environment: EmbeddedTerminal.environment(ClaudePluginModel.environment(for: cli)), currentDirectory: directory.path)

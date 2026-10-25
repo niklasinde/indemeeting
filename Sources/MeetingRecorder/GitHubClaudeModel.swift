@@ -294,6 +294,13 @@ final class GitHubClaudeModel: ObservableObject {
         watchSession(url, folder: folder, preset: preset) { EmbeddedTerminalModel.shared.runningSince(url) }
     }
 
+    /// Starts Claude in a folder chosen for a session of its own, keyed by the folder's path, which the Sessions list shows.
+    func openSession(in folder: URL) {
+        let key = folder.path
+        EmbeddedTerminalModel.shared.open(key, title: folder.lastPathComponent, directory: folder, prompt: "", cli: ClaudePlugin.findCLI(), hint: nil)
+        watchSession(key, folder: folder, preset: nil) { EmbeddedTerminalModel.shared.runningSince(key) }
+    }
+
     // MARK: Session ids
 
     /// Finds the session a terminal produces: the newest transcript in its folder created since it started that mentions the

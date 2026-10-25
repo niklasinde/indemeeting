@@ -384,7 +384,7 @@ struct MainView: View {
             }
         }
         .background {
-            Button("New Meeting") { newMeeting() }
+            Button(library.section == .sessions ? "New Session" : "New Meeting") { startNew() }
                 .keyboardShortcut("n")
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -445,17 +445,22 @@ struct MainView: View {
             }
             .help("Stop Recording")
         } else {
-            Button { newMeeting() } label: {
+            let sessions = library.section == .sessions
+            Button { startNew() } label: {
                 Label {
-                    Text("New Meeting")
+                    Text(sessions ? "New Session" : "New Meeting")
                 } icon: {
-                    Image(systemName: "circle.fill").foregroundStyle(.red)
+                    Image(systemName: sessions ? "terminal" : "circle.fill").foregroundStyle(sessions ? Color.primary : Color.red)
                 }
                 .labelStyle(.titleAndIcon)
             }
-            .disabled(recorder.isBusy)
-            .help("Record a new meeting (\u{2318}N)")
+            .disabled(recorder.isBusy && !sessions)
+            .help(sessions ? "Start a Claude session in a folder (\u{2318}N)" : "Record a new meeting (\u{2318}N)")
         }
+    }
+
+    private func startNew() {
+        if library.section == .sessions { SessionsModel.shared.newSession() } else { newMeeting() }
     }
 
     private var pauseButton: some View {

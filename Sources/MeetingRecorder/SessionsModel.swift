@@ -153,6 +153,20 @@ final class SessionsModel: ObservableObject {
         reveal?()
     }
 
+    /// Asks for a folder and starts Claude there, selected in the list; nothing starts when the panel is cancelled.
+    func newSession() {
+        let panel = NSOpenPanel()
+        panel.title = "Start a Claude session in a folder"
+        panel.prompt = "Start"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        GitHubClaudeModel.shared.openSession(in: folder)
+        show(folder.path)
+    }
+
     func openPullRequest(_ url: String) {
         guard let target = SessionList.pullRequest(url) else { return }
         showGitHub?(target)
