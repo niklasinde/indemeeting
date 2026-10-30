@@ -365,6 +365,14 @@ struct MainView: View {
                 statusNotices
                 page
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                Text(UpgradeLogic.versionLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+                    .background(.bar)
+            }
         }
         .toolbar(removing: .sidebarToggle)
         .toolbar {
@@ -609,6 +617,54 @@ struct SearchField: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+    }
+}
+
+struct AskBar: View {
+    var onSubmit: () -> Void = {}
+    @State private var question = ""
+    @FocusState private var focused: Bool
+    private let suggestions = ["Summarise this week's meetings", "Check open PRs"]
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                TextField("Ask MeetingRecorder", text: $question)
+                    .textFieldStyle(.plain)
+                    .focused($focused)
+                    .onSubmit(send)
+                Button(action: send) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(question.trimmingCharacters(in: .whitespaces).isEmpty ? Color.secondary.opacity(0.5) : Color.accentColor)
+                }
+                .buttonStyle(.plain)
+                .help("Ask (Return)")
+            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color.primary.opacity(0.06)))
+            HStack(spacing: 8) {
+                ForEach(suggestions, id: \.self) { prompt in
+                    Button(prompt) { ask(prompt) }
+                        .buttonStyle(SuggestionStyle())
+                }
+            }
+        }
+        .frame(maxWidth: 560)
+        .padding(.horizontal, 16)
+        .onAppear { focused = true }
+    }
+
+    private func send() {
+        ask(question)
+        question = ""
+    }
+
+    private func ask(_ text: String) {
+        ChatWindow.shared.ask(text)
+        onSubmit()
     }
 }
 

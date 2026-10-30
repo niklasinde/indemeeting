@@ -23,6 +23,13 @@ final class ChatWindow {
         window?.show()
     }
 
+    /// Opens a new general chat and sends `question` as its first message.
+    func ask(_ question: String) {
+        guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        show(scope: .general)
+        model?.send(question)
+    }
+
     static func makeWindow(_ view: ChatView) -> NSWindow {
         let controller = NSHostingController(rootView: view)
         controller.sceneBridgingOptions = [.toolbars]
@@ -263,7 +270,7 @@ private struct ChatEmptyState: View {
     }
 }
 
-private struct SuggestionStyle: ButtonStyle {
+struct SuggestionStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.callout)

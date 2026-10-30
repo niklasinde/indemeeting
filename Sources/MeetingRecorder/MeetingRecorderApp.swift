@@ -198,6 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         ClaudeAPIWindow.shared.configure(store: store)
+        AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
         SettingsWindow.shared.speakers.store = store
@@ -286,6 +287,7 @@ struct MenuContent: View {
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
+    @AppStorage(AskPanel.shownKey) private var showAskBar = true
     @ObservedObject private var listened = ListenedLanguages.shared
     @ObservedObject private var github = GitHubModel.shared
 
@@ -351,6 +353,7 @@ struct MenuContent: View {
         Divider()
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)
         Toggle("Stop automatically when the meeting ends", isOn: $stopWhenMeetingEnds)
+        Toggle("Show Ask Bar", isOn: $showAskBar)
         Button("Open Recordings Folder") { recorder.openFolder() }
         SettingsButton()
         Button("Setup & Help…") { OnboardingWindow.shared.show() }
