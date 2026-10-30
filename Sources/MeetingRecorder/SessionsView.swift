@@ -53,7 +53,7 @@ private struct SessionColumn: View {
                 .padding(10)
             if rows.isEmpty {
                 ContentUnavailableView("No Claude sessions yet", systemImage: "terminal",
-                                       description: Text("Start one from a pull request with Open in Claude > In this app."))
+                                       description: Text("Start one with New Session, or from a pull request with Open in Claude > In this app."))
                     .frame(maxHeight: .infinity)
             } else {
                 let sections = SessionList.grouped(SessionList.matching(rows, query: model.query))
