@@ -4,6 +4,7 @@ import SwiftUI
 struct GitHubView: View {
     @ObservedObject var model: GitHubModel
     @AppStorage("githubListWidth") private var listWidth = GitHubLayout.defaultListWidth
+    @AppStorage(GitHubModel.simpleKey) private var simple = false
     @State private var showsDetail = false
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
@@ -231,6 +232,9 @@ struct GitHubView: View {
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Sort the pull requests")
+                Toggle("Simple", isOn: $simple)
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
             }
             SearchField(text: $model.filter.query)
         }
@@ -272,7 +276,7 @@ struct GitHubView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(model.visible) { pr in
                             PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
-                                           showsMetadata: showsMetadata, singleLine: singleLine, show: show)
+                                           showsMetadata: showsMetadata, singleLine: singleLine, compact: simple, show: show)
                             Divider().padding(.horizontal, Self.gutter)
                         }
                     }
@@ -316,6 +320,7 @@ private struct PullRequestRow: View {
     let marked: Bool
     let showsMetadata: Bool
     let singleLine: Bool
+    let compact: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
@@ -332,11 +337,13 @@ private struct PullRequestRow: View {
                 StatusMark(pr: pr)
             }
             Text(pr.title).lineLimit(singleLine ? 1 : 2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
-            if singleLine {
-                Text(chips.map(\.text).joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-            } else {
-                if showsMetadata { metadata }
-                details
+            if !compact {
+                if singleLine {
+                    Text(chips.map(\.text).joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+                } else {
+                    if showsMetadata { metadata }
+                    details
+                }
             }
         }
         .padding(.vertical, 8)

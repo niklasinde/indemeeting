@@ -172,6 +172,7 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(numbers { $0.quick = [.waitingOnMe] } == [4], "waiting")
         check(numbers { $0.quick = [.changesRequested] } == [1], "changes")
         check(numbers { $0.hideBotOnly = true } == [1, 2, 4], "hide bot-only")
+        check(GitHubLogic.filter(rows, GitHubLogic.Filter(), simple: true).map(\.number) == [4], "simple keeps only waiting on me")
     }),
 
     ("the discussion is cached with the pull request and read back", {

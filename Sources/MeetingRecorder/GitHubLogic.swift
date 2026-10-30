@@ -342,20 +342,24 @@ enum GitHubLogic {
         var sort = GitHubSort.updated
     }
 
-    /// The pull requests that pass the filter, in the order of its sort.
-    static func filter(_ prs: [GitHubPR], _ filter: Filter) -> [GitHubPR] {
+    /// The pull requests that pass the filter, in the order of its sort. Simple adds Waiting on me and keeps the first few.
+    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
+        let quick = simple ? filter.quick.union([.waitingOnMe]) : filter.quick
         let passing = prs.filter { pr in
             guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo else { return false }
-            if !filter.quick.isEmpty || filter.hideBotOnly {
+            if !quick.isEmpty || filter.hideBotOnly {
                 let signals = signals(pr)
-                guard filter.quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly) else { return false }
+                guard quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly) else { return false }
             }
             let haystack = "\(pr.repo) #\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
-        return sorted(passing, by: filter.sort)
+        let ordered = sorted(passing, by: filter.sort)
+        return simple ? Array(ordered.prefix(simpleLimit)) : ordered
     }
+
+    static let simpleLimit = 6
 
     static func repos(in prs: [GitHubPR]) -> [String] {
         Array(Set(prs.map(\.repo))).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }

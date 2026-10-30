@@ -8,6 +8,7 @@ final class GitHubModel: ObservableObject {
     static let enabledKey = GitHubLogic.enabledKey
     static let intervalKey = "githubRefreshMinutes"
     static let selectionKey = "githubSelectedPR"
+    static let simpleKey = "githubSimpleList"
     static let intervals = [1, 5, 10, 15, 30, 60]
 
     @Published private(set) var enabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -39,7 +40,7 @@ final class GitHubModel: ObservableObject {
         return Self.intervals.contains(stored) ? stored : 5
     }
 
-    var visible: [GitHubPR] { GitHubLogic.filter(prs[kind] ?? [], filter) }
+    var visible: [GitHubPR] { GitHubLogic.filter(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey)) }
     var repos: [String] { GitHubLogic.repos(in: prs[kind] ?? []) }
     var isCapped: Bool { GitHubLogic.isCapped(prs[kind] ?? [], state: filter.state) }
     var showsList: Bool { enabled && (error == nil || hasData) }
