@@ -361,6 +361,13 @@ enum GitHubLogic {
 
     static let simpleLimit = 6
 
+    /// The first few open pull requests, those waiting on me first, then by last update.
+    static func waitingFirst(_ prs: [GitHubPR]) -> [GitHubPR] {
+        let waiting = filter(prs, Filter(quick: [.waitingOnMe]))
+        let rest = filter(prs, Filter()).filter { !waiting.contains($0) }
+        return Array((waiting + rest).prefix(simpleLimit))
+    }
+
     static func repos(in prs: [GitHubPR]) -> [String] {
         Array(Set(prs.map(\.repo))).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
