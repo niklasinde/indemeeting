@@ -622,6 +622,7 @@ struct SearchField: View {
 
 struct AskBar: View {
     var onSubmit: () -> Void = {}
+    var onType: (String) -> Void = { _ in }
     @State private var question = ""
     @FocusState private var focused: Bool
     private let suggestions = ["Summarise this week's meetings", "Check open PRs"]
@@ -633,6 +634,7 @@ struct AskBar: View {
                     .textFieldStyle(.plain)
                     .focused($focused)
                     .onSubmit(send)
+                    .onChange(of: question) { _, text in onType(text) }
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 20))

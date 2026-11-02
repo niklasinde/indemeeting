@@ -51,6 +51,9 @@ final class NotchBar: ObservableObject {
     private let screen: NSScreen
     private lazy var panel = makePanel()
     private var resign: NSObjectProtocol?
+    private var openedByHover = false
+    private var typing = false
+    private var pendingCollapse: DispatchWorkItem?
 
     init(screen: NSScreen) {
         self.screen = screen
@@ -59,8 +62,9 @@ final class NotchBar: ObservableObject {
         }
     }
 
-    func expand(_ list: AskPanel.List? = nil) {
+    func expand(_ list: AskPanel.List? = nil, byHover: Bool = false) {
         if let list { self.list = list }
+        openedByHover = byHover
         expanded = true
         position()
         panel.makeKeyAndOrderFront(nil)
@@ -68,8 +72,23 @@ final class NotchBar: ObservableObject {
 
     func collapse() {
         guard expanded else { return }
+        pendingCollapse?.cancel()
+        typing = false
         expanded = false
         position()
+    }
+
+    func hover(_ inside: Bool) {
+        pendingCollapse?.cancel()
+        guard !inside, expanded, openedByHover, !typing else { return }
+        let work = DispatchWorkItem { [weak self] in self?.collapse() }
+        pendingCollapse = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    func type(_ text: String) {
+        typing = !text.isEmpty
+        if typing { pendingCollapse?.cancel() }
     }
 
     func show(_ shown: Bool) {
@@ -140,7 +159,7 @@ private struct AskPanelView: View {
         Group {
             if panel.expanded {
                 VStack(spacing: 12) {
-                    AskBar(onSubmit: panel.collapse)
+                    AskBar(onSubmit: panel.collapse, onType: panel.type)
                     switch panel.list {
                     case .gitHub: WaitingPullRequests(onOpen: panel.collapse)
                     case .jira: AssignedTickets(onOpen: panel.collapse)
@@ -151,6 +170,7 @@ private struct AskPanelView: View {
                     .padding(.bottom, 14)
                     .padding(.horizontal, 14)
                     .onExitCommand(perform: panel.collapse)
+                    .background(HoverArea(onHover: panel.hover))
             } else {
                 HStack {
                     mark(BrandMark.jira, list: .jira)
@@ -175,6 +195,27 @@ private struct AskPanelView: View {
             .padding(6)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand(list) }
+            .background(HoverArea { if $0 { panel.expand(list, byHover: true) } })
+    }
+}
+
+private struct HoverArea: NSViewRepresentable {
+    let onHover: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView { TrackingView() }
+    func updateNSView(_ view: TrackingView, context: Context) { view.onHover = onHover }
+
+    final class TrackingView: NSView {
+        var onHover: (Bool) -> Void = { _ in }
+
+        override func updateTrackingAreas() {
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .assumeInside], owner: self))
+            super.updateTrackingAreas()
+        }
+
+        override func mouseEntered(with event: NSEvent) { onHover(true) }
+        override func mouseExited(with event: NSEvent) { onHover(false) }
     }
 }
 
