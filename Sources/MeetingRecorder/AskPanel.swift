@@ -3,7 +3,7 @@ import Combine
 import SwiftUI
 
 @MainActor
-final class AskPanel: ObservableObject {
+final class AskPanel {
     static let shared = AskPanel()
     static let shownKey = "showAskBar"
 
@@ -12,32 +12,54 @@ final class AskPanel: ObservableObject {
         case jira
     }
 
-    @Published private(set) var expanded = false
-    @Published private(set) var list = List.gitHub
-    @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
-    @Published private(set) var notchWidth: CGFloat = 0
-    private lazy var panel = makePanel()
+    private var bars: [NotchBar] = []
     private var lists: AnyCancellable?
 
     func start() {
         UserDefaults.standard.register(defaults: [Self.shownKey: true])
         let center = NotificationCenter.default
         center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { AskPanel.shared.position() }
+            MainActor.assumeIsolated { AskPanel.shared.rebuild() }
         }
         center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
         }
-        center.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { _ in
-            MainActor.assumeIsolated { AskPanel.shared.collapse() }
-        }
         lists = GitHubModel.shared.objectWillChange.merge(with: JiraModel.shared.objectWillChange).sink { _ in
-            MainActor.assumeIsolated { if AskPanel.shared.expanded { AskPanel.shared.position() } }
+            MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
+        rebuild()
+    }
+
+    private func rebuild() {
+        bars.forEach { $0.close() }
+        bars = NSScreen.screens.map { NotchBar(screen: $0) }
         refresh()
     }
 
-    func expand(_ list: List? = nil) {
+    private func refresh() {
+        let shown = UserDefaults.standard.bool(forKey: Self.shownKey)
+        bars.forEach { $0.show(shown) }
+    }
+}
+
+@MainActor
+final class NotchBar: ObservableObject {
+    @Published private(set) var expanded = false
+    @Published private(set) var list = AskPanel.List.gitHub
+    @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
+    @Published private(set) var notchWidth: CGFloat = 0
+    private let screen: NSScreen
+    private lazy var panel = makePanel()
+    private var resign: NSObjectProtocol?
+
+    init(screen: NSScreen) {
+        self.screen = screen
+        resign = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.collapse() }
+        }
+    }
+
+    func expand(_ list: AskPanel.List? = nil) {
         if let list { self.list = list }
         expanded = true
         position()
@@ -50,8 +72,8 @@ final class AskPanel: ObservableObject {
         position()
     }
 
-    private func refresh() {
-        if UserDefaults.standard.bool(forKey: Self.shownKey) {
+    func show(_ shown: Bool) {
+        if shown {
             position()
             panel.orderFrontRegardless()
         } else {
@@ -60,8 +82,13 @@ final class AskPanel: ObservableObject {
         }
     }
 
-    private func position() {
-        guard let screen = NSScreen.screens.first, let content = panel.contentView else { return }
+    func close() {
+        if let resign { NotificationCenter.default.removeObserver(resign) }
+        panel.orderOut(nil)
+    }
+
+    func position() {
+        guard let content = panel.contentView else { return }
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
         var centre = screen.frame.midX
@@ -71,9 +98,10 @@ final class AskPanel: ObservableObject {
         } else {
             notchWidth = 0
         }
+        let top = screen.frame.maxY
         DispatchQueue.main.async {
             let size = content.fittingSize
-            self.panel.setFrame(NSRect(x: centre - size.width / 2, y: screen.frame.maxY - size.height,
+            self.panel.setFrame(NSRect(x: centre - size.width / 2, y: top - size.height,
                                        width: size.width, height: size.height), display: true)
         }
     }
@@ -86,6 +114,7 @@ final class AskPanel: ObservableObject {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
         let host = NSHostingView(rootView: AskPanelView(panel: self))
         host.sizingOptions = .intrinsicContentSize
         panel.contentView = host
@@ -99,7 +128,7 @@ private final class KeyablePanel: NSPanel {
 
 private struct AskPanelView: View {
     static let wing: CGFloat = 100
-    @ObservedObject var panel: AskPanel
+    @ObservedObject var panel: NotchBar
 
     var body: some View {
         Group {
