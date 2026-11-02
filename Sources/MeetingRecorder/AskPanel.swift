@@ -115,6 +115,7 @@ final class NotchBar: ObservableObject {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
+        panel.onCancel = { [weak self] in self?.collapse() }
         let host = NSHostingView(rootView: AskPanelView(panel: self))
         host.sizingOptions = .intrinsicContentSize
         panel.contentView = host
@@ -123,7 +124,12 @@ final class NotchBar: ObservableObject {
 }
 
 private final class KeyablePanel: NSPanel {
+    var onCancel: () -> Void = {}
     override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onCancel() }
+    override func keyDown(with event: NSEvent) {
+        event.keyCode == 53 ? onCancel() : super.keyDown(with: event)
+    }
 }
 
 private struct AskPanelView: View {
