@@ -35,9 +35,11 @@ final class GitHubModel: ObservableObject {
     private var prefetching = Set<String>()
     private var patches: [String: GitHubActions.Patch] = [:]
 
-    var interval: Int {
-        let stored = UserDefaults.standard.integer(forKey: Self.intervalKey)
-        return Self.intervals.contains(stored) ? stored : 5
+    var interval: Int { Self.storedInterval(Self.intervalKey) }
+
+    static func storedInterval(_ key: String) -> Int {
+        let stored = UserDefaults.standard.integer(forKey: key)
+        return intervals.contains(stored) ? stored : 5
     }
 
     var visible: [GitHubPR] { GitHubLogic.filter(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey)) }

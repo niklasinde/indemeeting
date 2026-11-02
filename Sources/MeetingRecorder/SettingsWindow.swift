@@ -7,6 +7,8 @@ import SwiftUI
 final class SettingsWindow {
     static let shared = SettingsWindow()
 
+    @Published var anchor: SettingsAnchor?
+
     private let models = SpeechModels()
     private let whisper = WhisperModels()
     let speakers = SpeakerRecognitionModels()
@@ -16,7 +18,7 @@ final class SettingsWindow {
         Self.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers, projects: projects, tracker: tracker!))
     }
 
-    func show(tab: SettingsTab? = nil) {
+    func show(tab: SettingsTab? = nil, anchor: SettingsAnchor? = nil) {
         guard tracker != nil else { return }
         models.refresh()
         whisper.refresh()
@@ -24,6 +26,7 @@ final class SettingsWindow {
         projects.refresh()
         if let tab { UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.storageKey) }
         window.show()
+        self.anchor = anchor
     }
 
     static func makeWindow(_ view: SettingsView) -> NSWindow {
@@ -277,6 +280,10 @@ struct SettingsView: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(maxHeight: Self.maxContentHeight)
+                .onReceive(SettingsWindow.shared.$anchor.compactMap { $0 }) { anchor in
+                    SettingsWindow.shared.anchor = nil
+                    DispatchQueue.main.async { withAnimation { proxy.scrollTo(anchor, anchor: .top) } }
+                }
             }
         }
         .padding(24)

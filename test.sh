@@ -40,6 +40,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/GitHubActions.swift \
     Sources/MeetingRecorder/GitHubLink.swift \
     Sources/MeetingRecorder/GitHubClient.swift \
+    Sources/MeetingRecorder/JiraLogic.swift \
+    Sources/MeetingRecorder/JiraClient.swift \
     Sources/MeetingRecorder/ClaudeProcess.swift \
     Sources/MeetingRecorder/EmbeddedTerminal.swift \
     Sources/MeetingRecorder/ClaudeTranscripts.swift \
@@ -72,6 +74,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/GitHubActionsTests.swift \
     Tests/MeetingRecorderTests/MCPGitHubTests.swift \
     Tests/MeetingRecorderTests/GitHubLinkTests.swift \
+    Tests/MeetingRecorderTests/JiraTests.swift \
     Tests/MeetingRecorderTests/EmbeddedTerminalTests.swift \
     Tests/MeetingRecorderTests/ClaudeResumeTests.swift \
     Tests/MeetingRecorderTests/PhoneTests.swift \

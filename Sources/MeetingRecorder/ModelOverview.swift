@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Where a downloadable model's row is in Settings › Meetings, so the overview can scroll to it.
+/// A section of Settings that can be scrolled to: a downloadable model in Meetings, or Jira in Activity.
 enum SettingsAnchor: Hashable {
     case whisper
     case speakers
+    case jira
 }
 
 /// Which model does each step, whether it comes with macOS or is downloaded, and whether it is ready.

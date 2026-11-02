@@ -7,11 +7,17 @@ final class AskPanel: ObservableObject {
     static let shared = AskPanel()
     static let shownKey = "showAskBar"
 
+    enum List {
+        case gitHub
+        case jira
+    }
+
     @Published private(set) var expanded = false
+    @Published private(set) var list = List.gitHub
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
     private lazy var panel = makePanel()
-    private var github: AnyCancellable?
+    private var lists: AnyCancellable?
 
     func start() {
         UserDefaults.standard.register(defaults: [Self.shownKey: true])
@@ -25,13 +31,14 @@ final class AskPanel: ObservableObject {
         center.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { _ in
             MainActor.assumeIsolated { AskPanel.shared.collapse() }
         }
-        github = GitHubModel.shared.objectWillChange.sink { _ in
+        lists = GitHubModel.shared.objectWillChange.merge(with: JiraModel.shared.objectWillChange).sink { _ in
             MainActor.assumeIsolated { if AskPanel.shared.expanded { AskPanel.shared.position() } }
         }
         refresh()
     }
 
-    func expand() {
+    func expand(_ list: List? = nil) {
+        if let list { self.list = list }
         expanded = true
         position()
         panel.makeKeyAndOrderFront(nil)
@@ -99,7 +106,10 @@ private struct AskPanelView: View {
             if panel.expanded {
                 VStack(spacing: 12) {
                     AskBar(onSubmit: panel.collapse)
-                    WaitingPullRequests(onOpen: panel.collapse)
+                    switch panel.list {
+                    case .gitHub: WaitingPullRequests(onOpen: panel.collapse)
+                    case .jira: AssignedTickets(onOpen: panel.collapse)
+                    }
                 }
                     .frame(width: 560)
                     .padding(.top, panel.barHeight)
@@ -108,20 +118,28 @@ private struct AskPanelView: View {
                     .onExitCommand(perform: panel.collapse)
             } else {
                 HStack {
-                    BrandMark.jira.scaledToFit().frame(width: 17, height: 17)
+                    mark(BrandMark.jira, list: .jira)
                     Spacer()
-                    BrandMark.gitHub.scaledToFit().foregroundStyle(.white).frame(width: 17, height: 17)
+                    mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 8)
                 .frame(width: panel.notchWidth + 2 * Self.wing, height: panel.barHeight)
                 .contentShape(Rectangle())
-                .onTapGesture(perform: panel.expand)
+                .onTapGesture { panel.expand() }
             }
         }
         .background(UnevenRoundedRectangle(bottomLeadingRadius: panel.expanded ? 22 : 10,
                                            bottomTrailingRadius: panel.expanded ? 22 : 10, style: .continuous).fill(Color.black))
         .environment(\.colorScheme, .dark)
         .fixedSize()
+    }
+
+    private func mark(_ image: some View, list: AskPanel.List) -> some View {
+        image.scaledToFit()
+            .frame(width: 17, height: 17)
+            .padding(6)
+            .contentShape(Rectangle())
+            .onTapGesture { panel.expand(list) }
     }
 }
 
@@ -160,6 +178,63 @@ private struct WaitingPullRequests: View {
     private func open(_ pr: GitHubPR) {
         onOpen()
         SessionsModel.shared.showGitHub?(GitHubLink.Target(repo: pr.repo, number: pr.number))
+    }
+}
+
+private struct AssignedTickets: View {
+    let onOpen: () -> Void
+    @ObservedObject private var model = JiraModel.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if model.ready {
+                Label { Text(header) } icon: { BrandMark.jira.scaledToFit().frame(width: 12, height: 12) }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                if let error = model.error, model.tickets.isEmpty {
+                    Text(error.message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
+                }
+                ForEach(model.tickets.prefix(6)) { ticket in
+                    Button { open(ticket) } label: {
+                        HStack(spacing: 8) {
+                            Text(ticket.key).foregroundStyle(.secondary).fixedSize()
+                            Text(ticket.summary).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                            Text(ticket.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                        }
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Button(action: setUp) {
+                    Label { Text("Set up Jira in Settings") } icon: { BrandMark.jira.scaledToFit().frame(width: 12, height: 12) }
+                        .padding(.vertical, 5)
+                        .padding(.horizontal, 8)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+    }
+
+    private var header: String {
+        if model.fetched != nil { return JiraLogic.headline(total: model.total, shown: model.tickets.count) }
+        return model.error == nil ? "Fetching your tickets\u{2026}" : "Jira"
+    }
+
+    private func open(_ ticket: JiraTicket) {
+        onOpen()
+        if let url = model.browseURL(ticket) { NSWorkspace.shared.open(url) }
+    }
+
+    private func setUp() {
+        onOpen()
+        SettingsWindow.shared.show(tab: .activity, anchor: .jira)
     }
 }
 
