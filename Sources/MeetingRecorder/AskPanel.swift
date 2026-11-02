@@ -96,7 +96,7 @@ final class NotchBar: ObservableObject {
             notchWidth = right.minX - left.maxX
             centre = (left.maxX + right.minX) / 2
         } else {
-            notchWidth = 0
+            notchWidth = 200
         }
         let top = screen.frame.maxY
         DispatchQueue.main.async {
@@ -127,7 +127,7 @@ private final class KeyablePanel: NSPanel {
 }
 
 private struct AskPanelView: View {
-    static let wing: CGFloat = 100
+    static let wing: CGFloat = 34
     @ObservedObject var panel: NotchBar
 
     var body: some View {
@@ -151,7 +151,7 @@ private struct AskPanelView: View {
                     Spacer()
                     mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 4)
                 .frame(width: panel.notchWidth + 2 * Self.wing, height: panel.barHeight)
                 .contentShape(Rectangle())
                 .onTapGesture { panel.expand() }
