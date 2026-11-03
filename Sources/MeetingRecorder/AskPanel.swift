@@ -190,12 +190,11 @@ private struct AskPanelView: View {
                     .onExitCommand(perform: panel.collapse)
                     .background(HoverArea(onHover: panel.hover))
             }
-            HStack {
+            HStack(spacing: 0) {
                 mark(BrandMark.jira, list: .jira)
                 Spacer()
                 mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
             }
-            .padding(.horizontal, 4)
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
@@ -220,7 +219,7 @@ private struct AskPanelView: View {
             .frame(width: 17, height: 17)
             .opacity(!panel.expanded || panel.list == list ? 1 : 0.45)
             .animation(.easeOut(duration: 0.12), value: panel.list)
-            .padding(6)
+            .frame(width: Self.wing, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand(list) }
             .background(HoverArea { if $0 { panel.expand(list, byHover: true) } })
