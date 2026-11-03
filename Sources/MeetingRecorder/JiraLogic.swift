@@ -179,7 +179,7 @@ enum JiraLogic {
 /// The API token, in the store and nowhere else.
 struct JiraTokenStore {
     static let account = "api-token"
-    static let live = JiraTokenStore(secrets: KeychainSecretStore(service: "com.niklasinde.MeetingRecorder.jira"))
+    static let live = JiraTokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"))
 
     let secrets: PhoneSecretStore
 

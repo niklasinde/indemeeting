@@ -51,7 +51,7 @@ final class PhoneAccess: ObservableObject {
             await GitHubModel.shared.refresh()
             return await GitHubModel.shared.error?.message
         }
-        let server = PhoneServer(store: store, secrets: KeychainSecretStore(), endpoints: endpoints)
+        let server = PhoneServer(store: store, secrets: AppSecretStore(), endpoints: endpoints)
         server.onChange = { [weak self] in Task { @MainActor in self?.sync() } }
         self.server = server
         if enabled { start() }

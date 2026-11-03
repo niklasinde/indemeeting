@@ -20,6 +20,7 @@ enum AppPaths {
     static var models: URL { support.appendingPathComponent("Models", isDirectory: true) }
     /// Where the Claude Code plugin's hooks append their events.
     static var claudeInbox: URL { support.appendingPathComponent("claude-events.jsonl") }
+    static var secrets: URL { support.appendingPathComponent("Secrets", isDirectory: true) }
     static var commandLineLink: URL { support.appendingPathComponent("bin/meetingrecorder") }
 
     private static var support: URL {

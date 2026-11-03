@@ -281,9 +281,9 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
         check(keys.key() == nil, "removed")
     }),
 
-    ("the live key store uses the Keychain service for Anthropic, and no test touches it", {
-        let live = ClaudeAPIKeyStore.live.secrets as? KeychainSecretStore
-        check(live?.service == "com.niklasinde.MeetingRecorder.anthropic", "service name: \(String(describing: live?.service))")
+    ("the live key store uses the service for Anthropic, and no test touches it", {
+        let live = ClaudeAPIKeyStore.live.secrets as? AppSecretStore
+        check(live?.keychain.service == "com.niklasinde.MeetingRecorder.anthropic", "service name: \(String(describing: live?.keychain.service))")
     }),
 
     ("pull request context shows the read-only fields, leaves out a missing description and is capped", {

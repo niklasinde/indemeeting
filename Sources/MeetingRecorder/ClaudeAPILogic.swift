@@ -300,7 +300,7 @@ struct ClaudeAPIKeyProblem: LocalizedError {
 struct ClaudeAPIKeyStore {
     static let account = "api-key"
     static let didChange = Notification.Name("ClaudeAPIKeyDidChange")
-    static let live = ClaudeAPIKeyStore(secrets: KeychainSecretStore(service: "com.niklasinde.MeetingRecorder.anthropic"))
+    static let live = ClaudeAPIKeyStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.anthropic"))
 
     let secrets: PhoneSecretStore
 

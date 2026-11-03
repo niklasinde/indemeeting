@@ -292,6 +292,15 @@ let phoneTests: [(name: String, run: () throws -> Void)] = [
             }
             let permissions = (try? FileManager.default.attributesOfItem(atPath: scratch.folder.appendingPathComponent("phone-secrets.json").path)[.posixPermissions] as? Int) ?? 0
             check(permissions == 0o600, "the key file is private to the user")
+
+            let service = "com.niklasinde.MeetingRecorder.tests.\(UUID().uuidString)"
+            let old = KeychainSecretStore(service: service), key = PhoneSecrets.newKey()
+            try old.save(key, for: "a")
+            let moved = AppSecretStore(service: service, folder: scratch.folder.appendingPathComponent("Secrets"))
+            check(moved.key(for: "a") == key, "a key still in the Keychain is read")
+            check(old.key(for: "a") == nil && moved.file.key(for: "a") == key, "and moved to the file")
+            moved.delete("a")
+            check(moved.key(for: "a") == nil, "deleted from both")
         }
     }),
 
