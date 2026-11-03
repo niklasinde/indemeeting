@@ -44,7 +44,9 @@ final class AskPanel {
 
 @MainActor
 final class NotchBar: ObservableObject {
+    static let motion = Animation.spring(duration: 0.35, bounce: 0.15)
     @Published private(set) var expanded = false
+    @Published private(set) var revealed = false
     @Published private(set) var list = AskPanel.List.gitHub
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
@@ -63,10 +65,12 @@ final class NotchBar: ObservableObject {
     }
 
     func expand(_ list: AskPanel.List? = nil, byHover: Bool = false) {
+        if byHover && revealed { return }
         if let list { self.list = list }
         openedByHover = byHover
+        pendingCollapse?.cancel()
         expanded = true
-        position()
+        position { withAnimation(Self.motion) { self.revealed = true } }
         panel.makeKeyAndOrderFront(nil)
     }
 
@@ -74,8 +78,13 @@ final class NotchBar: ObservableObject {
         guard expanded else { return }
         pendingCollapse?.cancel()
         typing = false
-        expanded = false
-        position()
+        withAnimation(Self.motion) {
+            revealed = false
+        } completion: { [weak self] in
+            guard let self, !self.revealed else { return }
+            self.expanded = false
+            self.position()
+        }
     }
 
     func hover(_ inside: Bool) {
@@ -106,7 +115,7 @@ final class NotchBar: ObservableObject {
         panel.orderOut(nil)
     }
 
-    func position() {
+    func position(then: @escaping () -> Void = {}) {
         guard let content = panel.contentView else { return }
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
@@ -122,6 +131,7 @@ final class NotchBar: ObservableObject {
             let size = content.fittingSize
             self.panel.setFrame(NSRect(x: centre - size.width / 2, y: top - size.height,
                                        width: size.width, height: size.height), display: true)
+            then()
         }
     }
 
@@ -156,7 +166,8 @@ private struct AskPanelView: View {
     @ObservedObject var panel: NotchBar
 
     var body: some View {
-        Group {
+        let collapsedWidth = panel.notchWidth + 2 * Self.wing
+        ZStack(alignment: .top) {
             if panel.expanded {
                 VStack(spacing: 12) {
                     AskBar(onSubmit: panel.collapse, onType: panel.type)
@@ -169,24 +180,38 @@ private struct AskPanelView: View {
                     .padding(.top, panel.barHeight)
                     .padding(.bottom, 14)
                     .padding(.horizontal, 14)
+                    .opacity(panel.revealed ? 1 : 0)
+                    .offset(y: panel.revealed ? 0 : -12)
+                    .animation(panel.revealed ? .easeOut(duration: 0.22).delay(0.08) : .easeIn(duration: 0.12), value: panel.revealed)
                     .onExitCommand(perform: panel.collapse)
                     .background(HoverArea(onHover: panel.hover))
-            } else {
-                HStack {
-                    mark(BrandMark.jira, list: .jira)
-                    Spacer()
-                    mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
-                }
-                .padding(.horizontal, 4)
-                .frame(width: panel.notchWidth + 2 * Self.wing, height: panel.barHeight)
-                .contentShape(Rectangle())
-                .onTapGesture { panel.expand() }
+            }
+            HStack {
+                mark(BrandMark.jira, list: .jira)
+                Spacer()
+                mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
+            }
+            .padding(.horizontal, 4)
+            .frame(width: collapsedWidth, height: panel.barHeight)
+            .contentShape(Rectangle())
+            .onTapGesture { panel.expand() }
+            .opacity(panel.revealed ? 0 : 1)
+            .animation(panel.revealed ? .easeIn(duration: 0.1) : .easeOut(duration: 0.15).delay(0.18), value: panel.revealed)
+            .allowsHitTesting(!panel.expanded)
+        }
+        .background(alignment: .top) {
+            GeometryReader { geo in
+                UnevenRoundedRectangle(bottomLeadingRadius: panel.revealed ? 22 : 10,
+                                       bottomTrailingRadius: panel.revealed ? 22 : 10, style: .continuous)
+                    .fill(Color.black)
+                    .frame(width: panel.revealed ? geo.size.width : collapsedWidth,
+                           height: panel.revealed ? geo.size.height : panel.barHeight)
+                    .frame(maxWidth: .infinity)
             }
         }
-        .background(UnevenRoundedRectangle(bottomLeadingRadius: panel.expanded ? 22 : 10,
-                                           bottomTrailingRadius: panel.expanded ? 22 : 10, style: .continuous).fill(Color.black))
         .environment(\.colorScheme, .dark)
         .fixedSize()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func mark(_ image: some View, list: AskPanel.List) -> some View {
