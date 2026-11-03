@@ -175,6 +175,49 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.filter(rows, GitHubLogic.Filter(), simple: true).map(\.number) == [4], "simple keeps only waiting on me")
     }),
 
+    ("a pull request is mergeable when approved or needing no review, passing, without conflicts and not a draft", {
+        func ready(_ configure: (inout GitHubPR) -> Void = { _ in }) -> Bool {
+            var row = pr(review: .approved)
+            row.mergeable = .mergeable
+            row.mergeState = .clean
+            configure(&row)
+            return GitHubLogic.isMergeable(row)
+        }
+        check(ready(), "approved, clean")
+        check(ready { $0.review = nil }, "no review required")
+        check(ready { $0.checks = .none }, "no checks")
+        check(ready { $0.mergeState = .unknown }, "merge state not known yet")
+        check(!ready { $0.review = .required }, "review required")
+        check(!ready { $0.review = .changesRequested }, "changes requested")
+        check(!ready { $0.checks = .failed }, "failing")
+        check(!ready { $0.checks = .running }, "running")
+        check(!ready { $0.mergeable = .conflicting }, "conflicts")
+        check(!ready { $0.mergeable = .unknown }, "mergeability not known")
+        check(!ready { $0.mergeState = .blocked }, "blocked")
+        check(!ready { $0.mergeState = .behind }, "behind")
+        check(!ready { $0.isDraft = true }, "draft")
+        check(!ready { $0.state = .merged }, "merged")
+        var mergeable = pr(2, review: .approved)
+        mergeable.mergeable = .mergeable
+        check(GitHubLogic.filter([pr(1), mergeable], GitHubLogic.Filter(), mergeable: true).map(\.number) == [2], "the filter keeps the mergeable ones")
+    }),
+
+    ("the merge state is read from the search and kept in the cache", {
+        let parsed = try GitHubLogic.parse(listJSON(nodeExtra: #","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN""#)).first
+        check(parsed?.mergeable == .mergeable && parsed?.mergeState == .clean, "parsed \(String(describing: parsed?.mergeable)) \(String(describing: parsed?.mergeState))")
+        check(try GitHubLogic.parse(listJSON()).first?.mergeable == .unknown, "absent is unknown")
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("githubmerge-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        var row = pr(1)
+        row.mergeable = .conflicting
+        row.mergeState = .dirty
+        try store.saveGitHubPRs([.created: [row]])
+        let read = try store.githubPRs()[.created]?.first
+        check(read?.mergeable == .conflicting && read?.mergeState == .dirty, "round trip")
+    }),
+
     ("the discussion is cached with the pull request and read back", {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("githubactivity-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

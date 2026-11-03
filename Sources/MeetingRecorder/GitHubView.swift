@@ -5,6 +5,7 @@ struct GitHubView: View {
     @ObservedObject var model: GitHubModel
     @AppStorage("githubListWidth") private var listWidth = GitHubLayout.defaultListWidth
     @AppStorage(GitHubModel.simpleKey) private var simple = false
+    @AppStorage(GitHubModel.mergeableKey) private var mergeable = false
     @State private var showsDetail = false
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
@@ -235,6 +236,10 @@ struct GitHubView: View {
                 Toggle("Simple", isOn: $simple)
                     .toggleStyle(.checkbox)
                     .fixedSize()
+                Toggle("Mergeable", isOn: $mergeable)
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+                    .help("Only pull requests that are approved, pass their checks and have no conflicts")
             }
             SearchField(text: $model.filter.query)
         }
@@ -334,6 +339,12 @@ private struct PullRequestRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if GitHubLogic.isMergeable(pr) {
+                    Button("Merge\u{2026}") { actions.begin(.merge, pr) }
+                        .controlSize(.mini)
+                        .disabled(!actions.enabled)
+                        .help(actions.enabled ? "Merge this pull request. You confirm first." : GitHubActions.disabledHelp)
+                }
                 StatusMark(pr: pr)
             }
             Text(pr.title).lineLimit(singleLine ? 1 : 2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)

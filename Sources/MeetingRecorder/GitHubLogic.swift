@@ -50,6 +50,8 @@ struct GitHubPR: Equatable, Identifiable {
     var comments = 0
     var labels: [String] = []
     var activity: GitHubActivity?
+    var mergeable = GitHubPRDetail.Mergeable.unknown
+    var mergeState = GitHubPRDetail.MergeState.unknown
 
     var ticket: String? {
         ActivityLogic.ticket(in: title).flatMap { title.hasPrefix($0) ? $0 : nil }
@@ -128,6 +130,7 @@ enum GitHubLogic {
     static let threadPageSize = 20
 
     private static let discussionFields = """
+        mergeable mergeStateStatus
         lastComment: comments(last: 1) { nodes { author { login __typename } createdAt } }
         reviews { totalCount }
         latestReviews(first: 10) { nodes { author { login __typename } state submittedAt } }
@@ -214,6 +217,8 @@ enum GitHubLogic {
             let latestReviews: Items<LatestReview>?
             let reviewRequests: Items<Request>?
             let reviewThreads: Items<Thread>?
+            let mergeable: String?
+            let mergeStateStatus: String?
         }
         struct Search: Decodable { let nodes: [Node?]? }
         struct Viewer: Decodable { let login: String? }
@@ -278,7 +283,9 @@ enum GitHubLogic {
                         state: node.merged == true ? .merged : node.state == "CLOSED" ? .closed : .open, updated: updated,
                         review: node.reviewDecision.flatMap(review), checks: checks(rollup), author: node.author?.login,
                         additions: node.additions ?? 0, deletions: node.deletions ?? 0, comments: node.comments?.totalCount ?? 0,
-                        labels: node.labels?.nodes?.compactMap { $0?.name } ?? [], activity: activity(node, me: me))
+                        labels: node.labels?.nodes?.compactMap { $0?.name } ?? [], activity: activity(node, me: me),
+                        mergeable: GitHubPRDetail.Mergeable(rawValue: node.mergeable?.lowercased() ?? "") ?? .unknown,
+                        mergeState: GitHubPRDetail.MergeState(rawValue: node.mergeStateStatus ?? "") ?? .unknown)
     }
 
     static func review(_ decision: String) -> GitHubPR.Review? {
@@ -342,12 +349,14 @@ enum GitHubLogic {
         var sort = GitHubSort.updated
     }
 
-    /// The pull requests that pass the filter, in the order of its sort. Simple adds Waiting on me and keeps the first few.
-    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false) -> [GitHubPR] {
+    /// The pull requests that pass the filter, in the order of its sort. Simple adds Waiting on me and keeps the first few;
+    /// mergeable keeps those ready to merge.
+    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
         let quick = simple ? filter.quick.union([.waitingOnMe]) : filter.quick
         let passing = prs.filter { pr in
             guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo else { return false }
+            if mergeable && !isMergeable(pr) { return false }
             if !quick.isEmpty || filter.hideBotOnly {
                 let signals = signals(pr)
                 guard quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly) else { return false }
@@ -360,6 +369,12 @@ enum GitHubLogic {
     }
 
     static let simpleLimit = 6
+
+    /// Open, not a draft, approved or needing no review, checks passing or absent, and no conflict or branch rule in the way.
+    static func isMergeable(_ pr: GitHubPR) -> Bool {
+        pr.state == .open && !pr.isDraft && pr.mergeable == .mergeable && (pr.review == nil || pr.review == .approved)
+            && (pr.checks == .passed || pr.checks == .none) && [.clean, .hasHooks, .unknown].contains(pr.mergeState)
+    }
 
     /// The first few open pull requests, those waiting on me first, then by last update.
     static func waitingFirst(_ prs: [GitHubPR]) -> [GitHubPR] {

@@ -121,7 +121,7 @@ enum GitHubClient {
         for kind in GitHubKind.allCases {
             guard let prs = fetch.prs[kind] else { continue }
             let open = prs.filter { $0.state == .open }.count
-            print("\(kind.tabTitle): \(prs.count) fetched, \(open) open")
+            print("\(kind.tabTitle): \(prs.count) fetched, \(open) open, \(prs.filter(GitHubLogic.isMergeable).count) mergeable")
             for pr in GitHubLogic.filter(prs, .init(state: .open, sort: .needsAttention)).prefix(8) {
                 print("  \(pr.repo) #\(pr.number) [\(pr.state.rawValue)\(pr.isDraft ? ", draft" : ""), checks \(pr.checks.rawValue), "
                       + "review \(pr.review?.rawValue ?? "none")] \(pr.title)  \(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions))")

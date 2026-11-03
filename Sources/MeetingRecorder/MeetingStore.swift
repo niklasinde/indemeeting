@@ -331,6 +331,7 @@ final class MeetingStore: @unchecked Sendable {
         );
         CREATE INDEX api_messages_chat ON api_messages(chat_id);
         """,
+        "ALTER TABLE github_prs ADD COLUMN mergeable TEXT; ALTER TABLE github_prs ADD COLUMN merge_state TEXT;",
     ]
 
     private static let meetingColumns = """
