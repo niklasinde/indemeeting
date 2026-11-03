@@ -291,6 +291,8 @@ private struct HoverArea: NSViewRepresentable {
 private struct AssignedTickets: View {
     let onOpen: () -> Void
     @ObservedObject private var model = JiraModel.shared
+    @ObservedObject private var claude = GitHubClaudeModel.shared
+    @ObservedObject private var github = GitHubModel.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -303,17 +305,20 @@ private struct AssignedTickets: View {
                     Text(error.message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
                 }
                 ForEach(model.tickets.prefix(6)) { ticket in
-                    Button { open(ticket) } label: {
-                        HStack(spacing: 8) {
-                            Text(ticket.key).foregroundStyle(.secondary).fixedSize()
-                            Text(ticket.summary).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
-                            Text(ticket.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                    HStack(spacing: 0) {
+                        Button { open(ticket) } label: {
+                            HStack(spacing: 8) {
+                                Text(ticket.key).foregroundStyle(.secondary).fixedSize()
+                                Text(ticket.summary).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                                Text(ticket.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                            }
+                            .padding(.vertical, 5)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
                         }
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 8)
-                        .contentShape(Rectangle())
+                        .buttonStyle(.plain)
+                        if let pr = claude.pullRequest(for: ticket.key) { OpenInClaudeCodeButton(pr: pr).padding(.trailing, 8) }
                     }
-                    .buttonStyle(.plain)
                 }
             } else {
                 Button(action: setUp) {

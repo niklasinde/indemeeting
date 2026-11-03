@@ -75,6 +75,7 @@ struct WaitingPullRequests: View {
                     .disabled(!actions.enabled)
                     .help(actions.enabled ? "Merge this pull request. You confirm first." : GitHubActions.disabledHelp)
                 }
+                OpenInClaudeCodeButton(pr: pr)
                 StatusMark(pr: pr)
             }
             if let draft, draft.pr.url == pr.url {

@@ -159,6 +159,27 @@ let githubClaudeTests: [(name: String, run: () throws -> Void)] = [
         check(items?.first { $0.name == "folder" }?.value == "/Users/x/git/my repo", "folder round trip")
     }),
 
+    ("a Claude Code link carries the pull request, its folder and where it came from", {
+        let prompt = GitHubClaude.briefing(repo: "quiddly-com/finq.api", number: 2522, title: "QDLY-8959: Add POST & PUT", url: "https://github.com/quiddly-com/finq.api/pull/2522",
+                                           head: "NI/QDLY-8959")
+        check(prompt == "PR quiddly-com/finq.api#2522 QDLY-8959: Add POST & PUT https://github.com/quiddly-com/finq.api/pull/2522 (branch NI/QDLY-8959)", prompt)
+        check(!GitHubClaude.briefing(repo: "a/b", number: 1, title: "t", url: "u", head: nil).contains("branch"), "no branch when it is unknown")
+        let link = GitHubClaude.appLink(prompt: prompt, folder: URL(fileURLWithPath: "/Users/x/git/finq.api"))
+        let items = link.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?.queryItems
+        check(link?.absoluteString.hasPrefix("claude://code/new?") == true, "a new Code session")
+        check(items?.first { $0.name == "q" }?.value == prompt, "prompt round trip")
+        check(items?.first { $0.name == "source" }?.value == "meetingrecorder", "source")
+    }),
+
+    ("a Jira ticket finds its pull request by the title, then by the branch", {
+        let titled = GitHubPR(url: "u1", number: 1, title: "QDLY-1: Fix", repo: "a/b", updated: Date())
+        let branched = GitHubPR(url: "u2", number: 2, title: "Fix the thing", repo: "a/c", updated: Date())
+        let heads = ["u2": "NI/qdly-2"]
+        check(GitHubClaude.pullRequest(for: "QDLY-1", in: [branched, titled]) { heads[$0.url] } == titled, "by title")
+        check(GitHubClaude.pullRequest(for: "QDLY-2", in: [branched, titled]) { heads[$0.url] } == branched, "by branch")
+        check(GitHubClaude.pullRequest(for: "QDLY-3", in: [branched, titled]) { heads[$0.url] } == nil, "none")
+    }),
+
     ("the stream shows the answer as it grows and ends with the result and its cost", {
         var stream = GitHubClaude.Stream()
         stream.consume(#"{"type":"system","subtype":"init"}"#)

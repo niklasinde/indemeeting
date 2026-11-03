@@ -234,6 +234,36 @@ final class GitHubClaudeModel: ObservableObject {
         startNext()
     }
 
+    // MARK: Claude Code in the Claude app
+
+    /// The local clones of repositories, keyed by lowercased `owner/name`, found under `~/git` in the background.
+    @Published private(set) var checkouts: [String: URL] = [:]
+    private var lookedUp: Set<String> = []
+
+    func findCheckouts(_ repos: [String]) {
+        let wanted = Set(repos.map { $0.lowercased() }).subtracting(lookedUp)
+        guard !wanted.isEmpty else { return }
+        lookedUp.formUnion(wanted)
+        Task {
+            let found = await Task.detached {
+                wanted.compactMap { repo in GitHubClaude.checkout(for: repo, under: Self.repositoriesRoot).map { (repo, $0) } }
+            }.value
+            checkouts.merge(found) { $1 }
+        }
+    }
+
+    func checkout(_ pr: GitHubPR) -> URL? { checkouts[pr.repo.lowercased()] }
+
+    func openInClaudeCode(_ pr: GitHubPR) {
+        guard let folder = checkout(pr) else { return }
+        let prompt = GitHubClaude.briefing(repo: pr.repo, number: pr.number, title: pr.title, url: pr.url, head: store?.githubHeadBranch(pr.url))
+        if let link = GitHubClaude.appLink(prompt: prompt, folder: folder) { NSWorkspace.shared.open(link) }
+    }
+
+    func pullRequest(for ticket: String) -> GitHubPR? {
+        GitHubClaude.pullRequest(for: ticket, in: GitHubModel.shared.prs[.created] ?? []) { self.store?.githubHeadBranch($0.url) }
+    }
+
     // MARK: Interactive
 
     func openInClaude(_ pr: GitHubPR, _ detail: GitHubPRDetail?, _ preset: GitHubClaude.Preset) {

@@ -282,3 +282,22 @@ enum ClaudeConfirmation {
         + "the pull request are sent to Claude through your own Claude login. Nothing is posted to GitHub or Jira, and nothing runs "
         + "until you click."
 }
+
+/// Opens a new Claude Code session in the Claude app, in the pull request's local clone, with the pull request as its first message.
+struct OpenInClaudeCodeButton: View {
+    let pr: GitHubPR
+    var size: CGFloat = 22
+    @ObservedObject private var claude = GitHubClaudeModel.shared
+
+    var body: some View {
+        let folder = claude.checkout(pr)
+        Button { claude.openInClaudeCode(pr) } label: {
+            Image(systemName: "chevron.left.forwardslash.chevron.right").frame(width: size, height: size).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(folder == nil ? .tertiary : .secondary)
+        .disabled(folder == nil)
+        .help(folder.map { "Open in Claude Code, in \($0.path)" } ?? "No local clone of \(pr.repo) under ~/git")
+        .task(id: pr.repo) { claude.findCheckouts([pr.repo]) }
+    }
+}

@@ -152,8 +152,18 @@ enum GitHubClaude {
     static func appLink(prompt: String, folder: URL?) -> URL? {
         var query = "q=" + encode(prompt)
         if let folder { query += "&folder=" + encode(folder.path) }
-        let link = "claude://code/new?" + query
+        let link = "claude://code/new?" + query + "&source=meetingrecorder"
         return link.count <= maxLinkLength ? URL(string: link) : nil
+    }
+
+    /// The short context a Claude Code session opened on a pull request starts with.
+    static func briefing(repo: String, number: Int, title: String, url: String, head: String?) -> String {
+        "PR \(repo)#\(number) \(title) \(url)" + (head.map { " (branch \($0))" } ?? "")
+    }
+
+    /// The pull request a Jira ticket is worked on in: its key leads the title, or names the head branch.
+    static func pullRequest(for ticket: String, in prs: [GitHubPR], head: (GitHubPR) -> String?) -> GitHubPR? {
+        prs.first { $0.ticket == ticket } ?? prs.first { head($0)?.localizedCaseInsensitiveContains(ticket) == true }
     }
 
     static func encode(_ text: String) -> String {

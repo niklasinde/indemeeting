@@ -381,6 +381,7 @@ private struct PullRequestRow: View {
                         .disabled(!actions.enabled)
                         .help(actions.enabled ? "Merge this pull request. You confirm first." : GitHubActions.disabledHelp)
                 }
+                OpenInClaudeCodeButton(pr: pr, size: 16)
                 StatusMark(pr: pr)
             }
             Text(pr.title).lineLimit(singleLine ? 1 : 2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
@@ -411,6 +412,8 @@ private struct PullRequestRow: View {
             GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
             Divider()
             Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
+            Button("Open in Claude Code") { claude.openInClaudeCode(pr) }
+                .disabled(claude.checkout(pr) == nil)
             Menu("Open in Claude") {
                 ForEach(GitHubClaude.Preset.allCases) { preset in
                     Button(preset.title) { claude.openInClaude(pr, nil, preset) }
