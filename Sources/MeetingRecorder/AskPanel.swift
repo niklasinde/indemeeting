@@ -54,7 +54,7 @@ final class NotchBar: ObservableObject {
     private let screen: NSScreen
     private lazy var panel = makePanel()
     private var resign: NSObjectProtocol?
-    private var openedByHover = false
+    @Published private(set) var openedByHover = false
     private var typing = false
     private var held = false
     private var pendingCollapse: DispatchWorkItem?
@@ -104,6 +104,13 @@ final class NotchBar: ObservableObject {
     func type(_ text: String) {
         typing = !text.isEmpty
         if typing { pendingCollapse?.cancel() }
+    }
+
+    /// A letter switches the GitHub list's status tab while the Ask field does not have the keyboard.
+    func key(_ key: Character) -> Bool {
+        guard expanded, list == .gitHub, let tab = GitHubStatusTab.tab(for: key) else { return false }
+        UserDefaults.standard.set(tab.rawValue, forKey: GitHubModel.notchStatusKey)
+        return true
     }
 
     func hold(_ on: Bool) {
@@ -156,6 +163,7 @@ final class NotchBar: ObservableObject {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.onCancel = { [weak self] in self?.collapse() }
+        panel.onKey = { [weak self] in self?.key($0) ?? false }
         let host = NSHostingView(rootView: AskPanelView(panel: self))
         host.sizingOptions = .intrinsicContentSize
         panel.contentView = host
@@ -165,10 +173,14 @@ final class NotchBar: ObservableObject {
 
 private final class KeyablePanel: NSPanel {
     var onCancel: () -> Void = {}
+    var onKey: (Character) -> Bool = { _ in false }
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onCancel() }
     override func keyDown(with event: NSEvent) {
-        event.keyCode == 53 ? onCancel() : super.keyDown(with: event)
+        if event.keyCode == 53 { return onCancel() }
+        let plain = event.modifierFlags.intersection([.command, .control, .option]).isEmpty
+        if plain, let key = event.charactersIgnoringModifiers?.first, onKey(key) { return }
+        super.keyDown(with: event)
     }
 }
 
@@ -181,7 +193,7 @@ private struct AskPanelView: View {
         ZStack(alignment: .top) {
             if panel.expanded {
                 VStack(spacing: 12) {
-                    AskBar(onSubmit: panel.collapse, onType: panel.type)
+                    AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover)
                     switch panel.list {
                     case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
                     case .jira: AssignedTickets(onOpen: panel.collapse)

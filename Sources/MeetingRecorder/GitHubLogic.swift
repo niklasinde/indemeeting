@@ -347,15 +347,16 @@ enum GitHubLogic {
         var quick = Set<GitHubQuickFilter>()
         var hideBotOnly = false
         var sort = GitHubSort.updated
+        var status = GitHubStatusTab.all
     }
 
     /// The pull requests that pass the filter, in the order of its sort. Simple adds Waiting on me and keeps the first few;
     /// mergeable keeps those ready to merge.
-    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false) -> [GitHubPR] {
+    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false, capped: Bool = true) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
         let quick = simple ? filter.quick.union([.waitingOnMe]) : filter.quick
         let passing = prs.filter { pr in
-            guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo else { return false }
+            guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo, filter.status.includes(pr) else { return false }
             if mergeable && !isMergeable(pr) { return false }
             if !quick.isEmpty || filter.hideBotOnly {
                 let signals = signals(pr)
@@ -365,7 +366,16 @@ enum GitHubLogic {
             return words.allSatisfy { haystack.contains($0) }
         }
         let ordered = sorted(passing, by: filter.sort)
-        return simple ? Array(ordered.prefix(simpleLimit)) : ordered
+        return simple && capped ? Array(ordered.prefix(simpleLimit)) : ordered
+    }
+
+    /// How many pull requests each status tab would show with the rest of the filter.
+    static func statusCounts(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false) -> [GitHubStatusTab: Int] {
+        Dictionary(uniqueKeysWithValues: GitHubStatusTab.allCases.map { tab in
+            var tabbed = filter
+            tabbed.status = tab
+            return (tab, Self.filter(prs, tabbed, simple: simple, mergeable: mergeable, capped: false).count)
+        })
     }
 
     static let simpleLimit = 6
@@ -377,10 +387,43 @@ enum GitHubLogic {
     }
 
     /// The first few open pull requests, those waiting on me first, then by last update.
-    static func waitingFirst(_ prs: [GitHubPR]) -> [GitHubPR] {
-        let waiting = filter(prs, Filter(quick: [.waitingOnMe]))
-        let rest = filter(prs, Filter()).filter { !waiting.contains($0) }
+    static func waitingFirst(_ prs: [GitHubPR], status: GitHubStatusTab = .all) -> [GitHubPR] {
+        let waiting = filter(prs, Filter(quick: [.waitingOnMe], status: status))
+        let rest = filter(prs, Filter(status: status)).filter { !waiting.contains($0) }
         return Array((waiting + rest).prefix(simpleLimit))
+    }
+
+    /// Open pull requests asking for my review, newest first, in the repository and search of the filter.
+    static func reviewQueue(_ prs: [GitHubPR], _ filter: Filter = Filter(), limit: Int? = nil) -> [GitHubPR] {
+        let open = Self.filter(prs, Filter(repo: filter.repo, query: filter.query))
+        return limit.map { Array(open.prefix($0)) } ?? open
+    }
+
+    // MARK: Status
+
+    /// Where an open pull request stands, checked in this order: on hold, draft, my turn, approved, waiting.
+    static func status(_ pr: GitHubPR) -> GitHubStatus? {
+        guard pr.state == .open else { return nil }
+        if pr.labels.contains(where: isHoldLabel) { return .onHold }
+        if pr.isDraft { return .draft }
+        if isMyTurn(pr) { return .myTurn }
+        return pr.review == .approved ? .approved : .waiting
+    }
+
+    static func isHoldLabel(_ label: String) -> Bool {
+        label.lowercased().split { !$0.isLetter }.contains("hold")
+    }
+
+    /// Someone else's pull request is my turn when it waits on me. My own is when a person commented or asked for changes
+    /// since my last push and I have not asked them to look again.
+    static func isMyTurn(_ pr: GitHubPR) -> Bool {
+        guard let activity = pr.activity else { return pr.review == .changesRequested }
+        guard pr.author == activity.me else { return signals(pr).waitingOnMe }
+        let pushed = activity.lastCommit ?? .distantPast
+        return activity.reviews.contains {
+            $0.actor.login != activity.me && !$0.actor.isBot && feedbackStates.contains($0.state) && $0.date > pushed
+                && !activity.requested.contains($0.actor.login)
+        }
     }
 
     static func repos(in prs: [GitHubPR]) -> [String] {

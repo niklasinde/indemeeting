@@ -202,6 +202,58 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.filter([pr(1), mergeable], GitHubLogic.Filter(), mergeable: true).map(\.number) == [2], "the filter keeps the mergeable ones")
     }),
 
+    ("a pull request's status is on hold, draft, my turn, approved or waiting, in that order", {
+        func status(_ configure: (inout GitHubPR) -> Void) -> GitHubStatus? {
+            var row = pr(activity: GitHubActivity(me: "me", lastCommit: at(1)))
+            configure(&row)
+            return GitHubLogic.status(row)
+        }
+        let commented = GitHubActivity(me: "me", reviews: [review(person("elin"), "COMMENTED", 2)], lastCommit: at(1))
+        check(status { _ in } == .waiting, "nothing yet")
+        check(status { $0.review = .approved } == .approved, "approved")
+        check(status { $0.activity = commented } == .myTurn, "a reviewer commented since my push")
+        check(status { $0.activity = GitHubActivity(me: "me", reviews: [review(person("elin"), "CHANGES_REQUESTED", 2)], lastCommit: at(3)) } == .waiting,
+              "pushed since the review")
+        check(status { $0.activity = GitHubActivity(me: "me", reviews: [review(person("elin"), "COMMENTED", 2)], lastCommit: at(1), requested: ["elin"]) }
+              == .waiting, "asked to look again")
+        check(status { $0.activity = GitHubActivity(me: "me", reviews: [review(robot, "COMMENTED", 2)], lastCommit: at(1)) } == .waiting, "bots do not count")
+        check(status { $0.activity = GitHubActivity(me: "me", reviews: [review(person("elin"), "APPROVED", 2)], lastCommit: at(1)) } == .waiting,
+              "an approving review is not feedback")
+        check(status { $0.activity = nil; $0.review = .changesRequested } == .myTurn, "changes requested with no discussion cached")
+        check(status { $0.activity = commented; $0.review = .approved } == .myTurn, "my turn before approved")
+        check(status { $0.activity = commented; $0.isDraft = true } == .draft, "draft before my turn")
+        check(status { $0.isDraft = true; $0.labels = ["On hold"] } == .onHold, "on hold before draft")
+        check(status { $0.labels = ["on-hold"] } == .onHold && status { $0.labels = ["hold"] } == .onHold, "label spellings")
+        check(status { $0.labels = ["household"] } == .waiting, "a word containing hold")
+        check(status { $0.state = .merged } == nil, "merged has none")
+        check(GitHubLogic.status(pr(author: "elin", activity: GitHubActivity(me: "me", requested: ["me"]))) == .myTurn, "someone else's waiting on me")
+    }),
+
+    ("the status tabs filter and count, with on hold only in its own tab", {
+        var held = pr(1)
+        held.labels = ["on hold"]
+        var draft = pr(2)
+        draft.isDraft = true
+        let rows = [held, draft, pr(3, review: .approved), pr(4), pr(5, state: .merged)]
+        func numbers(_ tab: GitHubStatusTab) -> [Int] { GitHubLogic.filter(rows, GitHubLogic.Filter(state: .all, status: tab)).map(\.number).sorted() }
+        check(numbers(.all) == [2, 3, 4, 5], "all leaves out on hold \(numbers(.all))")
+        check(numbers(.onHold) == [1] && numbers(.draft) == [2] && numbers(.approved) == [3] && numbers(.waiting) == [4] && numbers(.myTurn).isEmpty, "tabs")
+        let counts = GitHubLogic.statusCounts(rows, GitHubLogic.Filter())
+        check(counts[.all] == 3 && counts[.onHold] == 1 && counts[.myTurn] == 0, "counts of the open ones \(counts)")
+        check(GitHubLogic.statusCounts(rows, GitHubLogic.Filter(), simple: true)[.all] == 0, "simple counts what it would show")
+        check(GitHubStatusTab.tab(for: "m") == .myTurn && GitHubStatusTab.tab(for: "P") == .approved && GitHubStatusTab.tab(for: "x") == nil, "hotkeys")
+        check(GitHubLogic.waitingFirst(rows, status: .onHold).map(\.number) == [1], "the notch list keeps the tab")
+    }),
+
+    ("the review queue lists the open requests in the filter's repository and search", {
+        let other = GitHubPR(url: "https://github.com/acme/web/pull/2", number: 2, title: "Web", repo: "acme/web", updated: at(2), author: "elin")
+        let rows = [pr(1, author: "elin", updated: 1), other, pr(3, author: "elin", state: .closed)]
+        check(GitHubLogic.reviewQueue(rows).map(\.number) == [2, 1], "open, newest first")
+        check(GitHubLogic.reviewQueue(rows, GitHubLogic.Filter(repo: "acme/api")).map(\.number) == [1], "repository")
+        check(GitHubLogic.reviewQueue(rows, GitHubLogic.Filter(query: "web")).map(\.number) == [2], "search")
+        check(GitHubLogic.reviewQueue(rows, limit: 1).map(\.number) == [2], "limit")
+    }),
+
     ("the merge state is read from the search and kept in the cache", {
         let parsed = try GitHubLogic.parse(listJSON(nodeExtra: #","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN""#)).first
         check(parsed?.mergeable == .mergeable && parsed?.mergeState == .clean, "parsed \(String(describing: parsed?.mergeable)) \(String(describing: parsed?.mergeState))")

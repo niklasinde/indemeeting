@@ -41,7 +41,7 @@ struct GitHubView: View {
             model.reconcile()
             Task { await model.refresh() }
         }
-        .onChange(of: model.visible.map(\.url)) { model.reconcile() }
+        .onChange(of: model.listed.map(\.url)) { model.reconcile() }
         .onChange(of: model.selectedURL) { if model.selectedURL == nil { showsDetail = false } }
     }
 
@@ -170,6 +170,10 @@ struct GitHubView: View {
                 }
                 .padding(.top, 10)
                 .padding(.leading, -8)
+                GitHubStatusTabs(selection: $model.filter.status, counts: model.statusCounts)
+                    .controlSize(.small)
+                    .padding(.top, 4)
+                    .padding(.leading, -8)
                 filters.padding(.top, 8)
                 quickFilters.padding(.top, 8).padding(.leading, -8)
             }
@@ -270,20 +274,25 @@ struct GitHubView: View {
             }
         } else if let error = model.error, !model.hasData {
             ErrorState(error: error, refresh: { Task { await model.refresh() } })
-        } else if model.visible.isEmpty {
+        } else if model.listed.isEmpty {
             GitHubEmptyState(icon: model.refreshing && !model.hasData ? "arrow.clockwise" : "checkmark.circle",
                        title: model.refreshing && !model.hasData ? "Fetching pull requests\u{2026}"
                        : model.filter == GitHubLogic.Filter() ? "No pull requests" : "Nothing matches",
-                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the state, repository, search or quick filters.") { EmptyView() }
+                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the status, state, repository, search or quick filters.") { EmptyView() }
+                .focusable()
+                .focused($focus, equals: .list)
+                .focusEffectDisabled()
+                .onKeyPress(characters: .letters, action: statusKey)
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(model.visible) { pr in
-                            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
-                                           showsMetadata: showsMetadata, singleLine: singleLine, compact: simple, show: show)
-                            Divider().padding(.horizontal, Self.gutter)
+                        if !model.reviewQueue.isEmpty {
+                            section("Waiting for my review", count: model.reviewQueue.count)
+                            ForEach(model.reviewQueue) { row($0, showsAuthor: true, showsMetadata: showsMetadata, singleLine: singleLine) }
+                            section("My pull requests", count: model.visible.count)
                         }
+                        ForEach(model.visible) { row($0, showsAuthor: false, showsMetadata: showsMetadata, singleLine: singleLine) }
                     }
                     .padding(.horizontal, Self.gutter - 8)
                     .padding(.bottom, 20)
@@ -291,6 +300,7 @@ struct GitHubView: View {
                 .focusable()
                 .focused($focus, equals: .list)
                 .focusEffectDisabled()
+                .onKeyPress(characters: .letters, action: statusKey)
                 .onKeyPress(.upArrow) { step(.previous) }
                 .onKeyPress(.downArrow) { step(.next) }
                 .onKeyPress(.return) {
@@ -305,6 +315,30 @@ struct GitHubView: View {
                 .onChange(of: model.selectedURL) { if let url = model.selectedURL { proxy.scrollTo(url) } }
             }
         }
+    }
+
+    private func row(_ pr: GitHubPR, showsAuthor: Bool, showsMetadata: Bool, singleLine: Bool) -> some View {
+        VStack(spacing: 0) {
+            PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
+                           showsMetadata: showsMetadata, singleLine: singleLine, compact: simple, showsAuthor: showsAuthor, show: show)
+            Divider().padding(.horizontal, Self.gutter)
+        }
+    }
+
+    private func section(_ title: String, count: Int) -> some View {
+        Text("\(title) \u{00B7} \(count)")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+    }
+
+    /// A, M, W, P, D and H switch the status tab while the list has the keyboard.
+    private func statusKey(_ press: KeyPress) -> KeyPress.Result {
+        guard press.modifiers.subtracting(.shift).isEmpty, let key = press.characters.first, let tab = GitHubStatusTab.tab(for: key) else { return .ignored }
+        model.filter.status = tab
+        return .handled
     }
 
     private func step(_ direction: GitHubSelection.Direction) -> KeyPress.Result {
@@ -326,6 +360,7 @@ private struct PullRequestRow: View {
     let showsMetadata: Bool
     let singleLine: Bool
     let compact: Bool
+    let showsAuthor: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
@@ -334,7 +369,8 @@ private struct PullRequestRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 8) {
-                Text("\(GitHubLogic.repoName(pr.repo).name) #\(String(pr.number))")
+                PRStatusDot(pr: pr)
+                Text("\(GitHubLogic.repoName(pr.repo).name) #\(String(pr.number))\(showsAuthor ? pr.author.map { " \u{00B7} \($0)" } ?? "" : "")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -467,6 +503,60 @@ private struct PullRequestRow: View {
     private func showComments(_ scope: GitHubCommentsFilter.Scope) {
         show(pr)
         model.showComments(of: pr, scope)
+    }
+}
+
+/// The status tabs with their counts. Compact leaves out the empty ones, for the notch bar.
+struct GitHubStatusTabs: View {
+    @Binding var selection: GitHubStatusTab
+    let counts: [GitHubStatusTab: Int]
+    var compact = false
+
+    var body: some View {
+        FlowLayout(spacing: compact ? 4 : 2) {
+            ForEach(tabs) { tab in
+                let button = Button { selection = tab } label: { label(tab) }.help("\(tab.title) (\(String(tab.key).uppercased()))")
+                if compact {
+                    button.buttonStyle(NotchChipStyle(selected: selection == tab))
+                } else {
+                    button.buttonStyle(PillButtonStyle(selected: selection == tab))
+                }
+            }
+        }
+    }
+
+    private var tabs: [GitHubStatusTab] {
+        GitHubStatusTab.allCases.filter { !compact || $0 == .all || $0 == selection || (counts[$0] ?? 0) > 0 }
+    }
+
+    private func label(_ tab: GitHubStatusTab) -> some View {
+        HStack(spacing: 4) {
+            if let status = tab.status { Circle().fill(status.color).frame(width: 6, height: 6) }
+            Text(tab.title)
+            Text("\(counts[tab] ?? 0)").foregroundStyle(.tertiary).monospacedDigit()
+        }
+    }
+}
+
+struct PRStatusDot: View {
+    let pr: GitHubPR
+
+    var body: some View {
+        if let status = GitHubLogic.status(pr) {
+            Circle().fill(status.color).frame(width: 7, height: 7).help(status.rawValue)
+        }
+    }
+}
+
+extension GitHubStatus {
+    var color: Color {
+        switch self {
+        case .myTurn: return .accentColor
+        case .waiting: return .orange
+        case .approved: return .green
+        case .draft: return .secondary
+        case .onHold: return .brown
+        }
     }
 }
 

@@ -11,6 +11,7 @@ final class GitHubModel: ObservableObject {
     static let simpleKey = "githubSimpleList"
     static let mergeableKey = "githubMergeableList"
     static let notchMergeableKey = "githubNotchMergeable"
+    static let notchStatusKey = "githubNotchStatus"
     static let intervals = [1, 5, 10, 15, 30, 60]
 
     @Published private(set) var enabled = UserDefaults.standard.bool(forKey: enabledKey)
@@ -48,6 +49,17 @@ final class GitHubModel: ObservableObject {
         GitHubLogic.filter(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey),
                            mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
     }
+    var statusCounts: [GitHubStatusTab: Int] {
+        GitHubLogic.statusCounts(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey),
+                                 mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
+    }
+    /// Above my own pull requests on the All tab: the ones asking for my review.
+    var reviewQueue: [GitHubPR] {
+        guard kind == .created, filter.status == .all, filter.state == .open, !UserDefaults.standard.bool(forKey: Self.mergeableKey) else { return [] }
+        return GitHubLogic.reviewQueue(prs[.reviewRequested] ?? [], filter)
+    }
+    /// The rows in the order the list shows them, for the arrow keys and the selection.
+    var listed: [GitHubPR] { reviewQueue + visible }
     var repos: [String] { GitHubLogic.repos(in: prs[kind] ?? []) }
     var isCapped: Bool { GitHubLogic.isCapped(prs[kind] ?? [], state: filter.state) }
     var showsList: Bool { enabled && (error == nil || hasData) }
@@ -131,15 +143,16 @@ final class GitHubModel: ObservableObject {
     }
 
     func step(_ direction: GitHubSelection.Direction) {
-        select(GitHubSelection.step(direction, from: selectedURL, in: visible))
+        select(GitHubSelection.step(direction, from: selectedURL, in: listed))
     }
 
     /// Keeps the selection through a change of tab, filter, sort or refresh while its pull request is listed; otherwise clears it.
     func reconcile() {
         marked = GitHubActions.pruned(marked, in: visible)
         guard hasData else { return }
-        guard let url = GitHubSelection.preserved(selectedURL, in: visible) ?? (selectedURL == linkedURL ? linkedURL : nil) else { return select(nil) }
-        if page == nil { select(visible.first { $0.url == url }) }
+        let listed = listed
+        guard let url = GitHubSelection.preserved(selectedURL, in: listed) ?? (selectedURL == linkedURL ? linkedURL : nil) else { return select(nil) }
+        if page == nil { select(listed.first { $0.url == url }) }
     }
 
     // MARK: Marking and actions
@@ -183,7 +196,7 @@ final class GitHubModel: ObservableObject {
     private func prefetchNeighbours() {
         let fetched = (try? store?.githubDetailFetched()) ?? [:]
         let slots = GitHubSelection.prefetchSlots - prefetching.count
-        let targets = GitHubSelection.prefetchTargets(selected: selectedURL, in: visible, fetched: fetched, now: Date(),
+        let targets = GitHubSelection.prefetchTargets(selected: selectedURL, in: listed, fetched: fetched, now: Date(),
                                                       excluding: prefetching, slots: slots)
         let cli = GitHubLogic.findCLI()
         for pr in targets {

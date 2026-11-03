@@ -1,50 +1,65 @@
 import SwiftUI
 
-/// The notch bar's GitHub list: the first few created pull requests, with a Mergeable filter and an inline merge.
+/// The notch bar's GitHub list: the reviews asked of me and the first few created pull requests, with status tabs, a Mergeable
+/// filter and an inline merge.
 struct WaitingPullRequests: View {
     let onOpen: () -> Void
     let onHold: (Bool) -> Void
     @ObservedObject private var model = GitHubModel.shared
     @ObservedObject private var actions = GitHubActionsModel.shared
     @AppStorage(GitHubModel.notchMergeableKey) private var mergeable = false
+    @AppStorage(GitHubModel.notchStatusKey) private var status = GitHubStatusTab.all
     @State private var draft: GitHubActionDraft?
     @State private var result: (url: String, text: String, isError: Bool)?
 
     var body: some View {
-        let created = model.enabled ? GitHubLogic.filter(model.prs[.created] ?? [], GitHubLogic.Filter(), mergeable: mergeable) : []
-        let prs = GitHubLogic.waitingFirst(created)
-        if model.enabled && !(model.prs[.created] ?? []).isEmpty {
+        let all = model.prs[.created] ?? []
+        let created = model.enabled ? GitHubLogic.filter(all, GitHubLogic.Filter(status: status), mergeable: mergeable) : []
+        let prs = GitHubLogic.waitingFirst(created, status: status)
+        let reviews = model.enabled && status == .all && !mergeable ? GitHubLogic.reviewQueue(model.prs[.reviewRequested] ?? []) : []
+        if model.enabled && !all.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
+                if !reviews.isEmpty {
+                    heading("\(reviews.count) waiting for my review")
+                    ForEach(reviews.prefix(Self.reviewLimit)) { row($0, showsAuthor: true) }
+                    Spacer().frame(height: 8)
+                }
                 HStack {
-                    Label { Text("\(created.count) \(mergeable ? "mergeable" : "created")") } icon: {
-                        BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12)
-                    }
+                    heading("\(created.count) \(mergeable ? "mergeable" : status == .all ? "created" : status.title.lowercased())")
                     Spacer()
-                    Button { mergeable.toggle() } label: {
-                        Text("Mergeable")
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(Color.white.opacity(mergeable ? 0.22 : 0.08)))
-                            .foregroundStyle(mergeable ? .primary : .secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Only pull requests that are approved, pass their checks and have no conflicts")
+                    Button("Mergeable") { mergeable.toggle() }
+                        .buttonStyle(NotchChipStyle(selected: mergeable))
+                        .help("Only pull requests that are approved, pass their checks and have no conflicts")
                 }
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                ForEach(prs) { pr in row(pr) }
+                .padding(.trailing, 8)
+                GitHubStatusTabs(selection: $status, counts: GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable), compact: true)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 2)
+                ForEach(prs) { row($0, showsAuthor: false) }
             }
             .padding(.horizontal, 16)
         }
     }
 
-    private func row(_ pr: GitHubPR) -> some View {
+    static let reviewLimit = 3
+
+    private func heading(_ text: String) -> some View {
+        Label { Text(text) } icon: { BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12) }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+    }
+
+    private func row(_ pr: GitHubPR, showsAuthor: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
+                PRStatusDot(pr: pr)
                 Button { open(pr) } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(pr.repo) #\(String(pr.number))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text("\(pr.repo) #\(String(pr.number))\(showsAuthor ? pr.author.map { " \u{00B7} \($0)" } ?? "" : "")")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                         Text(pr.title).lineLimit(1).truncationMode(.tail)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -128,5 +143,18 @@ private struct MergeConfirmation: View {
         }
         .font(.caption)
         .controlSize(.small)
+    }
+}
+
+struct NotchChipStyle: ButtonStyle {
+    let selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.white.opacity(selected ? 0.22 : configuration.isPressed ? 0.14 : 0.08)))
+            .foregroundStyle(selected ? .primary : .secondary)
+            .contentShape(Capsule())
     }
 }

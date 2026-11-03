@@ -62,6 +62,55 @@ enum GitHubQuickFilter: String, CaseIterable, Identifiable {
     }
 }
 
+enum GitHubStatus: String, CaseIterable, Identifiable {
+    case myTurn = "My turn"
+    case waiting = "Waiting"
+    case approved = "Approved"
+    case draft = "Draft"
+    case onHold = "On hold"
+
+    var id: String { rawValue }
+}
+
+/// The status tabs over a list. All leaves out what is on hold, which shows only in its own tab.
+enum GitHubStatusTab: String, CaseIterable, Identifiable {
+    case all, myTurn, waiting, approved, draft, onHold
+
+    var id: String { rawValue }
+
+    var status: GitHubStatus? {
+        switch self {
+        case .all: return nil
+        case .myTurn: return .myTurn
+        case .waiting: return .waiting
+        case .approved: return .approved
+        case .draft: return .draft
+        case .onHold: return .onHold
+        }
+    }
+
+    var title: String { status?.rawValue ?? "All" }
+
+    /// The single-letter hotkey of the tab.
+    var key: Character {
+        switch self {
+        case .all: return "a"
+        case .myTurn: return "m"
+        case .waiting: return "w"
+        case .approved: return "p"
+        case .draft: return "d"
+        case .onHold: return "h"
+        }
+    }
+
+    static func tab(for key: Character) -> GitHubStatusTab? { allCases.first { $0.key == Character(key.lowercased()) } }
+
+    func includes(_ pr: GitHubPR) -> Bool {
+        let current = GitHubLogic.status(pr)
+        return status.map { current == $0 } ?? (current != .onHold)
+    }
+}
+
 /// What needs doing about an open pull request, derived from its cached discussion, review decision and checks.
 struct GitHubSignals: Equatable {
     var unresolved = 0
@@ -97,7 +146,7 @@ struct GitHubSignals: Equatable {
 }
 
 extension GitHubLogic {
-    private static let feedbackStates: Set<String> = ["COMMENTED", "CHANGES_REQUESTED"]
+    static let feedbackStates: Set<String> = ["COMMENTED", "CHANGES_REQUESTED"]
 
     static func signals(_ pr: GitHubPR) -> GitHubSignals {
         guard pr.state == .open else { return GitHubSignals() }

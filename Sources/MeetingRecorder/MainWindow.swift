@@ -623,6 +623,7 @@ struct SearchField: View {
 struct AskBar: View {
     var onSubmit: () -> Void = {}
     var onType: (String) -> Void = { _ in }
+    var autofocus = true
     @State private var question = ""
     @FocusState private var focused: Bool
     private let suggestions = ["Summarise this week's meetings", "Check open PRs"]
@@ -656,7 +657,7 @@ struct AskBar: View {
         }
         .frame(maxWidth: 560)
         .padding(.horizontal, 16)
-        .onAppear { focused = true }
+        .onAppear { focused = autofocus }
     }
 
     private func send() {
