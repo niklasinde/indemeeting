@@ -66,8 +66,11 @@ final class NotchBar: ObservableObject {
     }
 
     func expand(_ list: AskPanel.List? = nil, byHover: Bool = false) {
-        if byHover && revealed { return }
         if let list { self.list = list }
+        if expanded && revealed {
+            if !byHover { openedByHover = false }
+            return
+        }
         openedByHover = byHover
         pendingCollapse?.cancel()
         expanded = true
@@ -196,9 +199,6 @@ private struct AskPanelView: View {
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
-            .opacity(panel.revealed ? 0 : 1)
-            .animation(panel.revealed ? .easeIn(duration: 0.06) : .easeOut(duration: 0.1).delay(0.06), value: panel.revealed)
-            .allowsHitTesting(!panel.expanded)
         }
         .background(alignment: .top) {
             GeometryReader { geo in
@@ -218,6 +218,8 @@ private struct AskPanelView: View {
     private func mark(_ image: some View, list: AskPanel.List) -> some View {
         image.scaledToFit()
             .frame(width: 17, height: 17)
+            .opacity(!panel.expanded || panel.list == list ? 1 : 0.45)
+            .animation(.easeOut(duration: 0.12), value: panel.list)
             .padding(6)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand(list) }
