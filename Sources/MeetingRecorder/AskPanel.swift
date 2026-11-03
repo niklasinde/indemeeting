@@ -44,7 +44,8 @@ final class AskPanel {
 
 @MainActor
 final class NotchBar: ObservableObject {
-    static let motion = Animation.spring(duration: 0.35, bounce: 0.15)
+    static let opening = Animation.spring(response: 0.2, dampingFraction: 0.85)
+    static let closing = Animation.easeIn(duration: 0.15)
     @Published private(set) var expanded = false
     @Published private(set) var revealed = false
     @Published private(set) var list = AskPanel.List.gitHub
@@ -70,7 +71,7 @@ final class NotchBar: ObservableObject {
         openedByHover = byHover
         pendingCollapse?.cancel()
         expanded = true
-        position { withAnimation(Self.motion) { self.revealed = true } }
+        position { withAnimation(Self.opening) { self.revealed = true } }
         panel.makeKeyAndOrderFront(nil)
     }
 
@@ -78,7 +79,7 @@ final class NotchBar: ObservableObject {
         guard expanded else { return }
         pendingCollapse?.cancel()
         typing = false
-        withAnimation(Self.motion) {
+        withAnimation(Self.closing) {
             revealed = false
         } completion: { [weak self] in
             guard let self, !self.revealed else { return }
@@ -92,7 +93,7 @@ final class NotchBar: ObservableObject {
         guard !inside, expanded, openedByHover, !typing else { return }
         let work = DispatchWorkItem { [weak self] in self?.collapse() }
         pendingCollapse = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     func type(_ text: String) {
@@ -182,7 +183,7 @@ private struct AskPanelView: View {
                     .padding(.horizontal, 14)
                     .opacity(panel.revealed ? 1 : 0)
                     .offset(y: panel.revealed ? 0 : -12)
-                    .animation(panel.revealed ? .easeOut(duration: 0.22).delay(0.08) : .easeIn(duration: 0.12), value: panel.revealed)
+                    .animation(panel.revealed ? .easeOut(duration: 0.12).delay(0.02) : .easeIn(duration: 0.08), value: panel.revealed)
                     .onExitCommand(perform: panel.collapse)
                     .background(HoverArea(onHover: panel.hover))
             }
@@ -196,7 +197,7 @@ private struct AskPanelView: View {
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
             .opacity(panel.revealed ? 0 : 1)
-            .animation(panel.revealed ? .easeIn(duration: 0.1) : .easeOut(duration: 0.15).delay(0.18), value: panel.revealed)
+            .animation(panel.revealed ? .easeIn(duration: 0.06) : .easeOut(duration: 0.1).delay(0.06), value: panel.revealed)
             .allowsHitTesting(!panel.expanded)
         }
         .background(alignment: .top) {
