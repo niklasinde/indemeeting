@@ -15,6 +15,8 @@ enum GitHubMergeMethod: String, CaseIterable, Identifiable {
 
     var flag: String { "--\(rawValue)" }
 
+    var verb: String { self == .merge ? "Merge" : "\(title) and merge" }
+
     /// The methods the repository allows, in the order they are offered.
     static func allowed(squash: Bool?, merge: Bool?, rebase: Bool?) -> [GitHubMergeMethod] {
         [(GitHubMergeMethod.squash, squash), (.merge, merge), (.rebase, rebase)].compactMap { $1 == true ? $0 : nil }

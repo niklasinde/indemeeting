@@ -56,6 +56,7 @@ final class NotchBar: ObservableObject {
     private var resign: NSObjectProtocol?
     private var openedByHover = false
     private var typing = false
+    private var held = false
     private var pendingCollapse: DispatchWorkItem?
 
     init(screen: NSScreen) {
@@ -82,6 +83,7 @@ final class NotchBar: ObservableObject {
         guard expanded else { return }
         pendingCollapse?.cancel()
         typing = false
+        held = false
         withAnimation(Self.closing) {
             revealed = false
         } completion: { [weak self] in
@@ -93,7 +95,7 @@ final class NotchBar: ObservableObject {
 
     func hover(_ inside: Bool) {
         pendingCollapse?.cancel()
-        guard !inside, expanded, openedByHover, !typing else { return }
+        guard !inside, expanded, openedByHover, !typing, !held else { return }
         let work = DispatchWorkItem { [weak self] in self?.collapse() }
         pendingCollapse = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
@@ -102,6 +104,11 @@ final class NotchBar: ObservableObject {
     func type(_ text: String) {
         typing = !text.isEmpty
         if typing { pendingCollapse?.cancel() }
+    }
+
+    func hold(_ on: Bool) {
+        held = on
+        if on { pendingCollapse?.cancel() }
     }
 
     func show(_ shown: Bool) {
@@ -176,7 +183,7 @@ private struct AskPanelView: View {
                 VStack(spacing: 12) {
                     AskBar(onSubmit: panel.collapse, onType: panel.type)
                     switch panel.list {
-                    case .gitHub: WaitingPullRequests(onOpen: panel.collapse)
+                    case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
                     case .jira: AssignedTickets(onOpen: panel.collapse)
                     }
                 }
@@ -246,44 +253,6 @@ private struct HoverArea: NSViewRepresentable {
     }
 }
 
-private struct WaitingPullRequests: View {
-    let onOpen: () -> Void
-    @ObservedObject private var model = GitHubModel.shared
-
-    var body: some View {
-        let created = model.enabled ? GitHubLogic.filter(model.prs[.created] ?? [], GitHubLogic.Filter()) : []
-        let prs = GitHubLogic.waitingFirst(created)
-        if !prs.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
-                Label { Text("\(created.count) created") } icon: { BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12) }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                ForEach(prs) { pr in
-                    Button { open(pr) } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(pr.repo) #\(String(pr.number))").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                            Text(pr.title).lineLimit(1).truncationMode(.tail)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .overlay(alignment: .trailing) { StatusMark(pr: pr) }
-                        .padding(.vertical, 5)
-                        .padding(.horizontal, 8)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 16)
-        }
-    }
-
-    private func open(_ pr: GitHubPR) {
-        onOpen()
-        SessionsModel.shared.showGitHub?(GitHubLink.Target(repo: pr.repo, number: pr.number))
-    }
-}
-
 private struct AssignedTickets: View {
     let onOpen: () -> Void
     @ObservedObject private var model = JiraModel.shared
@@ -341,7 +310,7 @@ private struct AssignedTickets: View {
     }
 }
 
-private enum BrandMark {
+enum BrandMark {
     static let jira = image("""
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
         <path fill="#2684FF" d="M30.4 15.1 17.6 2.3 16 .7 6.4 10.3 1.6 15.1a1.3 1.3 0 0 0 0 1.8l8.8 8.8L16 31.3l9.6-9.6.2-.2 4.6-4.6a1.3 1.3 0 0 0 0-1.8ZM16 20.4 11.6 16 16 11.6l4.4 4.4Z"/>

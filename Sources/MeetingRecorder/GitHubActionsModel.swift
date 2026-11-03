@@ -190,15 +190,25 @@ final class GitHubActionsModel: ObservableObject {
     // MARK: Running
 
     func confirm(_ draft: GitHubActionDraft) {
-        guard enabled, !draft.running, !draft.checking, draft.confirmation.canConfirm else { return }
-        draft.running = true
-        let request = draft.request
         Task {
-            let outcomes = await execute([request], stop: StopFlag()) { _, _ in }
+            guard let outcome = await run(draft) else { return }
             sheet = nil
-            show(outcomes[0], for: request)
-            afterActions()
+            show(outcome, for: draft.request)
         }
+    }
+
+    /// Runs a single confirmed action and refreshes the lists; nil when it cannot run.
+    func run(_ draft: GitHubActionDraft) async -> GitHubBulk.Outcome? {
+        guard enabled, !draft.running, !draft.checking, draft.confirmation.canConfirm else { return nil }
+        draft.running = true
+        let outcomes = await execute([draft.request], stop: StopFlag()) { _, _ in }
+        afterActions()
+        return outcomes[0]
+    }
+
+    func resultText(_ outcome: GitHubBulk.Outcome, for request: GitHubActionRequest) -> (text: String, isError: Bool) {
+        let banner = bannerFor(outcome, request)
+        return (banner.text, banner.isError)
     }
 
     func confirm(_ draft: GitHubBulkDraft) {

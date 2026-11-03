@@ -418,7 +418,7 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         let runner = all.filter { $0.value.contains("GitHubActionRunner") }.map(\.key).sorted()
         check(runner == ["GitHubActions.swift", "GitHubActionsModel.swift"], "the runner is used by the model only: \(runner)")
         let model = all.filter { $0.value.contains("GitHubActionsModel") }.map(\.key).sorted()
-        let allowed = ["GitHubActionsModel.swift", "GitHubActionsView.swift", "GitHubDetailModel.swift", "GitHubDetailView.swift", "GitHubModel.swift", "GitHubPreview.swift", "GitHubView.swift"]
+        let allowed = ["GitHubActionsModel.swift", "GitHubActionsView.swift", "GitHubDetailModel.swift", "GitHubDetailView.swift", "GitHubModel.swift", "GitHubNotchList.swift", "GitHubPreview.swift", "GitHubView.swift"]
         check(model.allSatisfy(allowed.contains), "the model is used by the GitHub pages only: \(model)")
         let elsewhere = ["ChatToolbox.swift", "ChatEngine.swift", "ChatCommandLine.swift", "ChatModel.swift", "ChatEntryPoints.swift", "MCPServer.swift", "MeetingRecorderApp.swift",
                          "Notifier.swift", "GlobalHotKey.swift", "GitHubClaude.swift", "GitHubClaudeModel.swift", "GitHubClaudeView.swift", "ClaudeProcess.swift",
