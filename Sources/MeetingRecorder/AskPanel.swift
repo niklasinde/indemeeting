@@ -76,7 +76,13 @@ final class NotchBar: ObservableObject {
         pendingCollapse?.cancel()
         expanded = true
         position { withAnimation(Self.opening) { self.revealed = true } }
-        panel.makeKeyAndOrderFront(nil)
+        if byHover { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
+    }
+
+    /// A click inside makes the panel key, so the field, the hotkeys and Esc work; it then stays open until Esc or a click outside.
+    func clicked() {
+        openedByHover = false
+        pendingCollapse?.cancel()
     }
 
     func collapse() {
@@ -89,8 +95,16 @@ final class NotchBar: ObservableObject {
         } completion: { [weak self] in
             guard let self, !self.revealed else { return }
             self.expanded = false
+            self.giveBackKeyboard()
             self.position()
         }
+    }
+
+    /// Ordering the key panel out and back hands the keyboard to the window that had it, without activating this app.
+    private func giveBackKeyboard() {
+        guard panel.isKeyWindow else { return }
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
     }
 
     func hover(_ inside: Bool) {
@@ -164,6 +178,7 @@ final class NotchBar: ObservableObject {
         panel.isReleasedWhenClosed = false
         panel.onCancel = { [weak self] in self?.collapse() }
         panel.onKey = { [weak self] in self?.key($0) ?? false }
+        panel.onClick = { [weak self] in self?.clicked() }
         let host = NSHostingView(rootView: AskPanelView(panel: self))
         host.sizingOptions = .intrinsicContentSize
         panel.contentView = host
@@ -174,7 +189,15 @@ final class NotchBar: ObservableObject {
 private final class KeyablePanel: NSPanel {
     var onCancel: () -> Void = {}
     var onKey: (Character) -> Bool = { _ in false }
+    var onClick: () -> Void = {}
     override var canBecomeKey: Bool { true }
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown {
+            if !isKeyWindow { makeKey() }
+            onClick()
+        }
+        super.sendEvent(event)
+    }
     override func cancelOperation(_ sender: Any?) { onCancel() }
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 { return onCancel() }
