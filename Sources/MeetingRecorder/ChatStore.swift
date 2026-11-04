@@ -91,16 +91,17 @@ extension MeetingStore {
 }
 
 extension MeetingStore {
-    /// Action items nobody has ticked off, newest meeting first.
-    func openActionItems(limit: Int) throws -> [(meeting: Int64, date: Date, title: String, owner: String?, task: String)] {
+    /// Action items nobody has ticked off, newest meeting first, from meetings since the date when one is given.
+    func openActionItems(limit: Int, since: Date? = nil) throws -> [MeetingTodo] {
         try read {
             try db.query("""
-                SELECT m.id, m.created, m.title_override, m.ai_title, a.owner, a.task
+                SELECT a.id, m.id, m.created, m.title_override, m.ai_title, a.owner, a.task
                 FROM action_items a JOIN meetings m ON m.id = a.meeting_id
-                WHERE a.checked = 0 ORDER BY m.created DESC, a.position LIMIT ?
-                """, [limit]) {
-                ($0.int64(0), Date(timeIntervalSince1970: $0.double(1)),
-                 LibraryLogic.title(override: $0.optionalString(2), aiTitle: $0.optionalString(3)), $0.optionalString(4), $0.string(5))
+                WHERE a.checked = 0 AND m.created >= ? ORDER BY m.created DESC, a.position LIMIT ?
+                """, [since?.timeIntervalSince1970 ?? 0, limit]) {
+                MeetingTodo(id: $0.int64(0), meeting: $0.int64(1), date: Date(timeIntervalSince1970: $0.double(2)),
+                            title: LibraryLogic.title(override: $0.optionalString(3), aiTitle: $0.optionalString(4)),
+                            owner: $0.optionalString(5), task: $0.string(6))
             }
         }
     }

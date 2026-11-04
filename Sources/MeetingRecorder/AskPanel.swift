@@ -10,6 +10,16 @@ final class AskPanel {
     enum List {
         case gitHub
         case jira
+        case todo
+
+        static func hotkey(_ key: Character) -> List? {
+            switch key {
+            case "g": .gitHub
+            case "j": .jira
+            case "t": .todo
+            default: nil
+            }
+        }
     }
 
     private var bars: [NotchBar] = []
@@ -24,7 +34,7 @@ final class AskPanel {
         center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
         }
-        lists = GitHubModel.shared.objectWillChange.merge(with: JiraModel.shared.objectWillChange).sink { _ in
+        lists = GitHubModel.shared.objectWillChange.merge(with: JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
         rebuild()
@@ -120,9 +130,14 @@ final class NotchBar: ObservableObject {
         if typing { pendingCollapse?.cancel() }
     }
 
-    /// A letter switches the GitHub list's status tab while the Ask field does not have the keyboard.
+    /// While no field has the keyboard, g, j and t switch the list, and in the GitHub list a letter switches the status tab.
     func key(_ key: Character) -> Bool {
-        guard expanded, list == .gitHub, let tab = GitHubStatusTab.tab(for: key) else { return false }
+        guard expanded else { return false }
+        if let list = AskPanel.List.hotkey(key) {
+            self.list = list
+            return true
+        }
+        guard list == .gitHub, let tab = GitHubStatusTab.tab(for: key) else { return false }
         UserDefaults.standard.set(tab.rawValue, forKey: GitHubModel.notchStatusKey)
         return true
     }
@@ -220,6 +235,7 @@ private struct AskPanelView: View {
                     switch panel.list {
                     case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
                     case .jira: AssignedTickets(onOpen: panel.collapse)
+                    case .todo: TodoNotchList(onHold: panel.hold, onType: panel.type)
                     }
                 }
                     .frame(width: 560)
@@ -234,6 +250,13 @@ private struct AskPanelView: View {
             }
             HStack(spacing: 0) {
                 mark(BrandMark.jira, list: .jira)
+                    .overlay(alignment: .leading) {
+                        if panel.expanded {
+                            mark(Image(systemName: "checklist").resizable().foregroundStyle(.white), list: .todo)
+                                .offset(x: -Self.wing)
+                                .opacity(panel.revealed ? 1 : 0)
+                        }
+                    }
                 Spacer()
                 mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
             }

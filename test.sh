@@ -26,6 +26,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/MCPGitHub.swift \
     Sources/MeetingRecorder/ChatLogic.swift \
     Sources/MeetingRecorder/ChatStore.swift \
+    Sources/MeetingRecorder/TodoLogic.swift \
+    Sources/MeetingRecorder/TodoStore.swift \
     Sources/MeetingRecorder/ChatToolbox.swift \
     Sources/MeetingRecorder/GitHubLogic.swift \
     Sources/MeetingRecorder/GitHubDetail.swift \
@@ -83,6 +85,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/SidebarTests.swift \
     Tests/MeetingRecorderTests/SessionsTests.swift \
     Tests/MeetingRecorderTests/UpgradeTests.swift \
+    Tests/MeetingRecorderTests/TodoTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"
