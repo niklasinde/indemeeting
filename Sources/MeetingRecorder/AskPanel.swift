@@ -61,6 +61,7 @@ final class NotchBar: ObservableObject {
     @Published private(set) var list = AskPanel.List.gitHub
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
+    @Published private(set) var hasNotch = false
     private let screen: NSScreen
     private lazy var panel = makePanel()
     private var resign: NSObjectProtocol?
@@ -167,6 +168,7 @@ final class NotchBar: ObservableObject {
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
         var centre = screen.frame.midX
+        hasNotch = screen.auxiliaryTopLeftArea != nil && screen.auxiliaryTopRightArea != nil
         if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
             notchWidth = right.minX - left.maxX
             centre = (left.maxX + right.minX) / 2
@@ -224,6 +226,7 @@ private final class KeyablePanel: NSPanel {
 
 private struct AskPanelView: View {
     static let wing: CGFloat = 34
+    static var checklist: some View { Image(systemName: "checklist").resizable().foregroundStyle(.white) }
     @ObservedObject var panel: NotchBar
 
     var body: some View {
@@ -231,6 +234,9 @@ private struct AskPanelView: View {
         ZStack(alignment: .top) {
             if panel.expanded {
                 VStack(spacing: 12) {
+                    if panel.hasNotch {
+                        mark(Self.checklist, list: .todo, height: 22).padding(.bottom, -8)
+                    }
                     AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover)
                     switch panel.list {
                     case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
@@ -250,14 +256,11 @@ private struct AskPanelView: View {
             }
             HStack(spacing: 0) {
                 mark(BrandMark.jira, list: .jira)
-                    .overlay(alignment: .leading) {
-                        if panel.expanded {
-                            mark(Image(systemName: "checklist").resizable().foregroundStyle(.white), list: .todo)
-                                .offset(x: -Self.wing)
-                                .opacity(panel.revealed ? 1 : 0)
-                        }
-                    }
                 Spacer()
+                if !panel.hasNotch {
+                    mark(Self.checklist, list: .todo)
+                    Spacer()
+                }
                 mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
             }
             .frame(width: collapsedWidth, height: panel.barHeight)
@@ -279,12 +282,12 @@ private struct AskPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func mark(_ image: some View, list: AskPanel.List) -> some View {
+    private func mark(_ image: some View, list: AskPanel.List, height: CGFloat? = nil) -> some View {
         image.scaledToFit()
             .frame(width: 17, height: 17)
             .opacity(!panel.expanded || panel.list == list ? 1 : 0.45)
             .animation(.easeOut(duration: 0.12), value: panel.list)
-            .frame(width: Self.wing, height: panel.barHeight)
+            .frame(width: Self.wing, height: height ?? panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand(list) }
             .background(HoverArea { if $0 { panel.expand(list, byHover: true) } })
