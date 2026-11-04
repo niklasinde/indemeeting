@@ -12,15 +12,22 @@ final class RemindersStore: TodoStore {
         }
     }
 
-    var listTitle: String? { access == .granted ? events.defaultCalendarForNewReminders()?.title : nil }
+    var lists: [TodoList] {
+        guard access == .granted else { return [] }
+        return events.calendars(for: .reminder).map { TodoList(id: $0.calendarIdentifier, title: $0.title, source: $0.source?.title ?? "") }
+    }
+
+    var defaultListID: String? { access == .granted ? events.defaultCalendarForNewReminders()?.calendarIdentifier : nil }
 
     func requestAccess() async -> Bool {
         (try? await events.requestFullAccessToReminders()) ?? false
     }
 
-    func todos() async throws -> [TodoItem] {
-        guard access == .granted, let list = events.defaultCalendarForNewReminders() else { return [] }
-        let predicate = events.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: [list])
+    func todos(in list: String) async throws -> [TodoItem] {
+        guard access == .granted else { return [] }
+        let calendars = list == TodoLogic.allLists ? nil : events.calendar(withIdentifier: list).map { [$0] }
+        if list != TodoLogic.allLists && calendars == nil { return [] }
+        let predicate = events.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: calendars)
         return await withCheckedContinuation { continuation in
             events.fetchReminders(matching: predicate) { reminders in
                 continuation.resume(returning: (reminders ?? []).map {
@@ -30,8 +37,8 @@ final class RemindersStore: TodoStore {
         }
     }
 
-    func addTodo(_ text: String) throws {
-        guard let list = events.defaultCalendarForNewReminders() else { return }
+    func addTodo(_ text: String, to list: String) throws {
+        guard let list = events.calendar(withIdentifier: list) ?? events.defaultCalendarForNewReminders() else { return }
         let reminder = EKReminder(eventStore: events)
         reminder.title = text
         reminder.calendar = list

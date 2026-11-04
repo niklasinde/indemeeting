@@ -16,6 +16,12 @@ struct MeetingTodo: Identifiable, Equatable {
     var task: String
 }
 
+struct TodoList: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var source: String
+}
+
 enum TodoAccess {
     case unknown
     case granted
@@ -25,10 +31,12 @@ enum TodoAccess {
 /// Where the notch bar's todos come from: Apple Reminders in the app, a fake in the tests.
 protocol TodoStore: AnyObject {
     var access: TodoAccess { get }
-    var listTitle: String? { get }
+    var lists: [TodoList] { get }
+    var defaultListID: String? { get }
     func requestAccess() async -> Bool
-    func todos() async throws -> [TodoItem]
-    func addTodo(_ text: String) throws
+    /// The incomplete todos of one list, or of every list when the id is `TodoLogic.allLists`.
+    func todos(in list: String) async throws -> [TodoItem]
+    func addTodo(_ text: String, to list: String) throws
     func complete(_ id: String) throws
     func delete(_ id: String) throws
 }
@@ -37,6 +45,8 @@ enum TodoLogic {
     static let meetingDays = 14
     static let todoLimit = 8
     static let meetingLimit = 5
+    static let allLists = "all"
+    static let listKey = "todoListID"
 
     static func text(_ input: String) -> String? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,9 +65,26 @@ enum TodoLogic {
         }
     }
 
-    static func load(from store: any TodoStore) async -> [TodoItem] {
-        guard store.access == .granted else { return [] }
-        return ordered((try? await store.todos()) ?? [])
+    /// The stored list while it still exists, otherwise the default list, otherwise the first one.
+    static func selectedList(stored: String?, lists: [TodoList], defaultID: String?) -> String? {
+        if stored == allLists || lists.contains(where: { $0.id == stored }) { return stored }
+        return lists.contains { $0.id == defaultID } ? defaultID : lists.first?.id
+    }
+
+    static func title(of list: String?, in lists: [TodoList]) -> String {
+        list == allLists ? "All" : lists.first { $0.id == list }?.title ?? "Reminders"
+    }
+
+    /// The lists grouped by account, in the order the accounts first appear.
+    static func grouped(_ lists: [TodoList]) -> [(source: String, lists: [TodoList])] {
+        var order: [String] = []
+        for list in lists where !order.contains(list.source) { order.append(list.source) }
+        return order.map { source in (source, lists.filter { $0.source == source }) }
+    }
+
+    static func load(from store: any TodoStore, list: String?) async -> [TodoItem] {
+        guard store.access == .granted, let list else { return [] }
+        return ordered((try? await store.todos(in: list)) ?? [])
     }
 
     static func meetingCutoff(now: Date) -> Date {

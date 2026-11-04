@@ -7,7 +7,8 @@ final class TodoModel: ObservableObject {
     @Published private(set) var todos: [TodoItem] = []
     @Published private(set) var meeting: [MeetingTodo] = []
     @Published private(set) var access = TodoAccess.unknown
-    @Published private(set) var listTitle: String?
+    @Published private(set) var lists: [TodoList] = []
+    @Published private(set) var list: String?
     private var reminders: (any TodoStore)?
     private var store: MeetingStore?
     private var observers: [NSObjectProtocol] = []
@@ -41,11 +42,20 @@ final class TodoModel: ObservableObject {
     func reloadReminders() {
         guard let reminders else { return }
         access = reminders.access
-        listTitle = reminders.listTitle
+        lists = reminders.lists
+        list = TodoLogic.selectedList(stored: UserDefaults.standard.string(forKey: TodoLogic.listKey), lists: lists, defaultID: reminders.defaultListID)
+        let list = list
         Task {
-            let items = await TodoLogic.load(from: reminders)
+            let items = await TodoLogic.load(from: reminders, list: list)
             withAnimation(.easeOut(duration: 0.15)) { todos = items }
         }
+    }
+
+    var title: String { TodoLogic.title(of: list, in: lists) }
+
+    func select(_ id: String) {
+        UserDefaults.standard.set(id, forKey: TodoLogic.listKey)
+        reloadReminders()
     }
 
     func reloadMeetings() {
@@ -54,7 +64,7 @@ final class TodoModel: ObservableObject {
 
     func add(_ input: String) {
         guard let text = TodoLogic.text(input) else { return }
-        try? reminders?.addTodo(text)
+        try? reminders?.addTodo(text, to: list ?? TodoLogic.allLists)
         reloadReminders()
     }
 
@@ -98,7 +108,7 @@ struct TodoNotchList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text(model.listTitle ?? "Reminders").font(.title3.bold()).foregroundStyle(Color.accentColor)
+                listPicker
                 Spacer()
                 Text("\(model.todos.count)").font(.title3.bold()).foregroundStyle(.secondary).monospacedDigit()
             }
@@ -154,6 +164,35 @@ struct TodoNotchList: View {
         .opacity(checked ? 0.6 : 1)
         .animation(.easeOut(duration: 0.15), value: checked)
         .transition(.opacity)
+    }
+
+    private var listPicker: some View {
+        Menu {
+            Button { model.select(TodoLogic.allLists) } label: {
+                if model.list == TodoLogic.allLists { Label("All", systemImage: "checkmark") } else { Text("All") }
+            }
+            let groups = TodoLogic.grouped(model.lists)
+            ForEach(groups, id: \.source) { group in
+                Section(groups.count > 1 ? group.source : "") {
+                    ForEach(group.lists) { list in
+                        Button { model.select(list.id) } label: {
+                            if list.id == model.list { Label(list.title, systemImage: "checkmark") } else { Text(list.title) }
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(model.title).font(.title3.bold())
+                Image(systemName: "chevron.down").font(.caption.bold())
+            }
+            .foregroundStyle(Color.accentColor)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(model.access != .granted)
     }
 
     private var deniedRow: some View {
