@@ -343,6 +343,7 @@ final class MeetingStore: @unchecked Sendable {
             link TEXT
         );
         """,
+        "DROP TABLE todos;",
     ]
 
     private static let meetingColumns = """

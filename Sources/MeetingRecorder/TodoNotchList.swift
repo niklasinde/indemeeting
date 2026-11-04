@@ -1,3 +1,4 @@
+import EventKit
 import SwiftUI
 
 @MainActor
@@ -5,30 +6,56 @@ final class TodoModel: ObservableObject {
     static let shared = TodoModel()
     @Published private(set) var todos: [TodoItem] = []
     @Published private(set) var meeting: [MeetingTodo] = []
-    private var store: (any TodoStore)?
+    @Published private(set) var access = TodoAccess.unknown
+    @Published private(set) var listTitle: String?
+    private var reminders: (any TodoStore)?
+    private var store: MeetingStore?
     private var observers: [NSObjectProtocol] = []
 
-    func start(store: any TodoStore) {
+    func start(store: MeetingStore, reminders: RemindersStore) {
         self.store = store
-        observers = [MeetingStore.todosDidChange, MeetingStore.didChange].map {
-            NotificationCenter.default.addObserver(forName: $0, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { TodoModel.shared.reload() }
-            }
+        self.reminders = reminders
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: .EKEventStoreChanged, object: reminders.events, queue: .main) { _ in
+                MainActor.assumeIsolated { TodoModel.shared.reloadReminders() }
+            },
+            center.addObserver(forName: MeetingStore.didChange, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { TodoModel.shared.reloadMeetings() }
+            },
+        ]
+        reloadMeetings()
+        reloadReminders()
+    }
+
+    /// Asks for Reminders access the first time the list is opened, not at launch.
+    func open() {
+        guard let reminders else { return }
+        guard reminders.access == .unknown else { return reloadReminders() }
+        Task {
+            _ = await reminders.requestAccess()
+            reloadReminders()
         }
-        reload()
     }
 
-    func reload() {
-        let now = Date()
-        todos = TodoLogic.open((try? store?.todos()) ?? [])
-        meeting = (try? store?.meetingTodos(since: TodoLogic.meetingCutoff(now: now))) ?? []
+    func reloadReminders() {
+        guard let reminders else { return }
+        access = reminders.access
+        listTitle = reminders.listTitle
+        Task {
+            let items = await TodoLogic.load(from: reminders)
+            withAnimation(.easeOut(duration: 0.15)) { todos = items }
+        }
     }
 
-    var openCount: Int { todos.count + meeting.count }
+    func reloadMeetings() {
+        meeting = (try? store?.openActionItems(limit: 100, since: TodoLogic.meetingCutoff(now: Date()))) ?? []
+    }
 
     func add(_ input: String) {
-        guard let text = TodoLogic.text(input), let item = try? store?.addTodo(text, link: nil, now: Date()) else { return }
-        withAnimation(.easeOut(duration: 0.15)) { todos.append(item) }
+        guard let text = TodoLogic.text(input) else { return }
+        try? reminders?.addTodo(text)
+        reloadReminders()
     }
 
     func complete(_ id: TodoRow.ID) {
@@ -39,20 +66,20 @@ final class TodoModel: ObservableObject {
             }
         }
         switch id {
-        case .todo(let id): try? store?.setTodo(id, done: true, now: Date())
+        case .todo(let id): try? reminders?.complete(id)
         case .meeting(let id): try? store?.setChecked(actionItem: id, true)
         }
     }
 
-    func delete(_ id: Int64) {
+    func delete(_ id: String) {
         withAnimation(.easeOut(duration: 0.2)) { todos.removeAll { $0.id == id } }
-        try? store?.deleteTodo(id)
+        try? reminders?.delete(id)
     }
 }
 
 enum TodoRow {
     enum ID: Hashable {
-        case todo(Int64)
+        case todo(String)
         case meeting(Int64)
     }
 }
@@ -71,9 +98,9 @@ struct TodoNotchList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline) {
-                Text("Todo").font(.title3.bold()).foregroundStyle(Color.accentColor)
+                Text(model.listTitle ?? "Reminders").font(.title3.bold()).foregroundStyle(Color.accentColor)
                 Spacer()
-                Text("\(model.openCount)").font(.title3.bold()).foregroundStyle(.secondary).monospacedDigit()
+                Text("\(model.todos.count)").font(.title3.bold()).foregroundStyle(.secondary).monospacedDigit()
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 6)
@@ -82,7 +109,11 @@ struct TodoNotchList: View {
                     .contextMenu { Button("Delete", role: .destructive) { model.delete(todo.id) } }
                 separator
             }
-            newReminder
+            if model.access == .denied {
+                deniedRow
+            } else {
+                newReminder
+            }
             if !model.meeting.isEmpty {
                 Text("From meetings")
                     .font(.caption.bold())
@@ -98,6 +129,7 @@ struct TodoNotchList: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
+        .onAppear { model.open() }
         .onDisappear { end(keep: true) }
     }
 
@@ -122,6 +154,20 @@ struct TodoNotchList: View {
         .opacity(checked ? 0.6 : 1)
         .animation(.easeOut(duration: 0.15), value: checked)
         .transition(.opacity)
+    }
+
+    private var deniedRow: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.circle").font(.system(size: 18)).foregroundStyle(.secondary)
+            Text("Allow Reminders access in System Settings").foregroundStyle(.secondary)
+            Spacer()
+            Button("Open") {
+                NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders")!)
+            }
+            .buttonStyle(NotchChipStyle(selected: false))
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
     }
 
     private var newReminder: some View {

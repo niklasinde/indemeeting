@@ -1,13 +1,10 @@
 import Foundation
 
 struct TodoItem: Identifiable, Equatable {
-    var id: Int64
+    var id: String
     var text: String
-    var done: Bool
-    var created: Date
-    var doneAt: Date?
-    var position: Int
-    var link: String?
+    var due: Date?
+    var created: Date?
 }
 
 struct MeetingTodo: Identifiable, Equatable {
@@ -19,14 +16,21 @@ struct MeetingTodo: Identifiable, Equatable {
     var task: String
 }
 
-/// Where the notch bar's todos are kept: the database for now, so a store backed by Apple Reminders can take its place.
+enum TodoAccess {
+    case unknown
+    case granted
+    case denied
+}
+
+/// Where the notch bar's todos come from: Apple Reminders in the app, a fake in the tests.
 protocol TodoStore: AnyObject {
-    func todos() throws -> [TodoItem]
-    @discardableResult func addTodo(_ text: String, link: String?, now: Date) throws -> TodoItem
-    func setTodo(_ id: Int64, done: Bool, now: Date) throws
-    func deleteTodo(_ id: Int64) throws
-    func meetingTodos(since: Date) throws -> [MeetingTodo]
-    func setChecked(actionItem id: Int64, _ checked: Bool) throws
+    var access: TodoAccess { get }
+    var listTitle: String? { get }
+    func requestAccess() async -> Bool
+    func todos() async throws -> [TodoItem]
+    func addTodo(_ text: String) throws
+    func complete(_ id: String) throws
+    func delete(_ id: String) throws
 }
 
 enum TodoLogic {
@@ -39,9 +43,21 @@ enum TodoLogic {
         return text.isEmpty ? nil : text
     }
 
-    /// The todos still to do, in the order they were added.
-    static func open(_ items: [TodoItem]) -> [TodoItem] {
-        items.filter { !$0.done }.sorted { ($0.position, $0.created) < ($1.position, $1.created) }
+    /// As Reminders lists them: those with a due date first, soonest first, then the rest by when they were made.
+    static func ordered(_ items: [TodoItem]) -> [TodoItem] {
+        items.sorted {
+            switch ($0.due, $1.due) {
+            case let (a?, b?) where a != b: return a < b
+            case (_?, nil): return true
+            case (nil, _?): return false
+            default: return ($0.created ?? .distantFuture) < ($1.created ?? .distantFuture)
+            }
+        }
+    }
+
+    static func load(from store: any TodoStore) async -> [TodoItem] {
+        guard store.access == .granted else { return [] }
+        return ordered((try? await store.todos()) ?? [])
     }
 
     static func meetingCutoff(now: Date) -> Date {

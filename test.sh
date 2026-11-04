@@ -27,7 +27,6 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ChatLogic.swift \
     Sources/MeetingRecorder/ChatStore.swift \
     Sources/MeetingRecorder/TodoLogic.swift \
-    Sources/MeetingRecorder/TodoStore.swift \
     Sources/MeetingRecorder/ChatToolbox.swift \
     Sources/MeetingRecorder/GitHubLogic.swift \
     Sources/MeetingRecorder/GitHubDetail.swift \

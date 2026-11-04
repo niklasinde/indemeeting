@@ -28,6 +28,10 @@
     <string>Meeting Recorder asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Meeting Recorder lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
+    <key>NSRemindersFullAccessUsageDescription</key>
+    <string>Meeting Recorder shows your reminders in the notch bar so you can tick them off and add new ones.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>Meeting Recorder shows your reminders in the notch bar so you can tick them off and add new ones.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Meeting Recorder transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>

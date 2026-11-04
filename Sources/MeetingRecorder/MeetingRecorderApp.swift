@@ -196,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GitHubModel.shared.store = store
         GitHubModel.shared.start()
         JiraModel.shared.start()
-        TodoModel.shared.start(store: store)
+        TodoModel.shared.start(store: store, reminders: RemindersStore())
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         ClaudeAPIWindow.shared.configure(store: store)
