@@ -216,14 +216,14 @@ let pluginTests: [(name: String, run: () throws -> Void)] = [
         let home = try tempFolder()
         defer { try? FileManager.default.removeItem(at: home) }
         let repo = home.appendingPathComponent("git/inde/indemeeting")
-        check(ClaudePlugin.localCheckout(app: home.appendingPathComponent("Applications/MeetingRecorder.app"), home: home) == nil, "no checkout")
+        check(ClaudePlugin.localCheckout(app: home.appendingPathComponent("Applications/WorkTime.app"), home: home) == nil, "no checkout")
         try FileManager.default.createDirectory(at: repo.appendingPathComponent(".claude-plugin"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("plugin/.claude-plugin"), withIntermediateDirectories: true)
         try Data().write(to: repo.appendingPathComponent(".claude-plugin/marketplace.json"))
         try Data().write(to: repo.appendingPathComponent("plugin/.claude-plugin/plugin.json"))
-        check(ClaudePlugin.localCheckout(app: home.appendingPathComponent("Applications/MeetingRecorder.app"), home: home)?.path == repo.standardizedFileURL.path,
+        check(ClaudePlugin.localCheckout(app: home.appendingPathComponent("Applications/WorkTime.app"), home: home)?.path == repo.standardizedFileURL.path,
               "checkout under ~/git")
-        check(ClaudePlugin.localCheckout(app: repo.appendingPathComponent("MeetingRecorder.app"), home: home)?.path == repo.standardizedFileURL.path,
+        check(ClaudePlugin.localCheckout(app: repo.appendingPathComponent("WorkTime.app"), home: home)?.path == repo.standardizedFileURL.path,
               "checkout next to the app")
     }),
 ]

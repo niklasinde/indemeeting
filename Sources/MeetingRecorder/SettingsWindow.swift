@@ -348,7 +348,7 @@ struct SettingsView: View {
                 .id(family == WhisperModel.families.first ? SettingsAnchor.whisper : nil)
             }
             if !whisper.leftovers.isEmpty {
-                section("Other model files", footer: "Models Meeting Recorder no longer uses. Delete them to free up space.") {
+                section("Other model files", footer: "Models WorkTime no longer uses. Delete them to free up space.") {
                     ForEach(Array(whisper.leftovers.enumerated()), id: \.element) { index, file in
                         if index > 0 { Divider().padding(.leading, 14) }
                         row(file.deletingPathExtension().lastPathComponent, detail: Self.size(of: file)) {

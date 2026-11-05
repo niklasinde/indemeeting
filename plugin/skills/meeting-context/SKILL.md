@@ -3,7 +3,7 @@ name: meeting-context
 description: Look up the user's own meetings, tracked work and cached GitHub pull requests with the meetingrecorder MCP tools. Use when the user asks about a pull request or review ("what is waiting on me", "my open PRs"), a meeting ("what did we decide in the standup", "who owns the release action item", "what did Anna say about the migration"), what they were working on ("what was I doing this morning", "which branch was I on yesterday"), or how they spent their time ("how many hours on QDLY-8296 this week"), or when that context would make an answer better.
 ---
 
-MeetingRecorder runs on the user's Mac and records meetings (transcript with speakers, summary, action items, notes)
+WorkTime runs on the user's Mac and records meetings (transcript with speakers, summary, action items, notes)
 and their activity (apps, repositories, branches, tickets, Claude Code sessions). Its MCP server `meetingrecorder`
 reads that database without changing it.
 
@@ -20,7 +20,7 @@ Pick the tool:
 - `github_needs_attention` for "what is waiting on me" or "which PRs need a reply"; `github_prs` with `kind` (created,
   review_requested, assigned, mentioned) and `state` for the user's pull requests; `github_pr` with a URL or
   `owner/repo#number` for one PR's branches, reviewers, checks, tickets and description. These read the app's cache
-  only: if the answer says it is empty or GitHub is off, tell the user to open the GitHub view in MeetingRecorder.
+  only: if the answer says it is empty or GitHub is off, tell the user to open the GitHub view in WorkTime.
 
 Say which meeting (title and date) an answer comes from. When nothing matches, say so instead of guessing. Everything
 is local; do not send it anywhere the user did not ask for.

@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>MeetingRecorder</string>
-    <key>CFBundleDisplayName</key><string>Meeting Recorder</string>
+    <key>CFBundleName</key><string>WorkTime</string>
+    <key>CFBundleDisplayName</key><string>WorkTime</string>
     <key>CFBundleIdentifier</key><string>com.niklasinde.MeetingRecorder</string>
     <key>CFBundleExecutable</key><string>MeetingRecorder</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -21,18 +21,18 @@
     </array>
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Meeting Recorder records your microphone together with system audio.</string>
+    <string>WorkTime records your microphone together with system audio.</string>
     <key>NSAudioCaptureUsageDescription</key>
-    <string>Meeting Recorder records system audio so the other meeting participants are in the recording.</string>
+    <string>WorkTime records system audio so the other meeting participants are in the recording.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Meeting Recorder asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
+    <string>WorkTime asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Meeting Recorder lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
+    <string>WorkTime lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
-    <string>Meeting Recorder shows your reminders in the notch bar so you can tick them off and add new ones.</string>
+    <string>WorkTime shows your reminders in the notch bar so you can tick them off and add new ones.</string>
     <key>NSRemindersUsageDescription</key>
-    <string>Meeting Recorder shows your reminders in the notch bar so you can tick them off and add new ones.</string>
+    <string>WorkTime shows your reminders in the notch bar so you can tick them off and add new ones.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
-    <string>Meeting Recorder transcribes your recordings on this Mac. Audio never leaves the device.</string>
+    <string>WorkTime transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>
 </plist>

@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 
 RELEASE=0
 if [ "${1:-}" = --release ]; then RELEASE=1; shift; fi
-APP="${1:-MeetingRecorder.app}"
+APP="${1:-WorkTime.app}"
 IDENTITY="MeetingRecorder Local"
 ARCHS=""
 [ $RELEASE = 1 ] && ARCHS="--arch arm64 --arch x86_64"

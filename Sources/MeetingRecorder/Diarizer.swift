@@ -33,7 +33,7 @@ enum Diarizer {
 }
 
 struct DiarizerUnavailable: LocalizedError {
-    var errorDescription: String? { "This build of Meeting Recorder does not include speaker recognition." }
+    var errorDescription: String? { "This build of WorkTime does not include speaker recognition." }
 }
 #endif
 

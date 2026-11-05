@@ -70,7 +70,7 @@ final class SystemAudioCapture {
         else { throw CoreAudioError(operation: "read tap format", status: kAudioHardwareUnspecifiedError) }
 
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "Meeting Recorder System Audio",
+            kAudioAggregateDeviceNameKey: "WorkTime System Audio",
             kAudioAggregateDeviceUIDKey: UUID().uuidString,
             kAudioAggregateDeviceIsPrivateKey: true,
             kAudioAggregateDeviceTapAutoStartKey: true,

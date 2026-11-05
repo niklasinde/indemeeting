@@ -1,9 +1,12 @@
-# MeetingRecorder
+# WorkTime
 
 Menu-bar app that records you (the microphone) and the meeting (system audio, i.e. the other participants, through a
 Core Audio process tap) into one mono AAC file at `~/Movies/MeetingRecordings/Meeting-YYYY-MM-DD-HHmm.m4a`
 (`-2`, `-3`, … when a minute already has one). All sources are converted to 48 kHz mono float, summed, and encoded.
 Works independently of Notion or any other meeting tool.
+
+WorkTime was called Meeting Recorder before. Its executable, bundle identifier, data folder, Keychain items and signing
+identity still use `MeetingRecorder`, so existing meetings, keys and privacy permissions carry over.
 
 Next to the mix, each source is also written on its own with the same AAC settings: `Meeting-…-HHmm.stem-mic.m4a`
 (you) and `Meeting-…-HHmm.stem-system.m4a` (the others), padded with silence so both line up with the mix. They are
@@ -17,11 +20,11 @@ is in it as raw AAC (48 kHz mono) and can be decoded with ffmpeg's libavcodec.
 
 ## Install (for friends)
 
-Needs macOS 26 (Tahoe) or later. Download `MeetingRecorder-<version>.dmg` from the GitHub release and open it.
+Needs macOS 26 (Tahoe) or later. Download `WorkTime-<version>.dmg` from the GitHub release and open it.
 
-1. Drag Meeting Recorder onto Applications.
+1. Drag WorkTime onto Applications.
 2. Open it. macOS says "Apple could not verify…" because the app is not notarized; click Done.
-3. System Settings → Privacy & Security, scroll down, click **Open Anyway** next to Meeting Recorder and confirm.
+3. System Settings → Privacy & Security, scroll down, click **Open Anyway** next to WorkTime and confirm.
    (Since macOS 15, right-click → Open no longer gets past this.)
 4. In the Setup window, allow the Microphone and System Audio Recording, then record the test.
 5. For summaries, turn on Apple Intelligence (System Settings → Apple Intelligence & Siri). The Siri language and the
@@ -34,7 +37,7 @@ permissions are kept.
 
     ./build.sh
 
-Produces `MeetingRecorder.app`, signed with `MeetingRecorder.entitlements` and the hardened runtime, versioned with
+Produces `WorkTime.app`, signed with `MeetingRecorder.entitlements` and the hardened runtime, versioned with
 `CFBundleShortVersionString` from `Info.plist` and `git rev-list --count HEAD` as the build number. Needs macOS 26+
 (SpeechAnalyzer for transcription, Foundation Models for summaries). Builds with `swift build` (Command Line Tools 27 /
 Swift 6.4 or Xcode); if SwiftPM fails, the script falls back to plain `swiftc`. `./build.sh --release <path>.app`
@@ -51,7 +54,7 @@ builds without it.
     scripts/package.sh
 
 Builds `--release` into `dist/`, verifies the signature (`codesign --verify --deep --strict`, and `spctl`, which
-rejects it because it is not notarized), and creates `dist/MeetingRecorder-<version>.dmg` with the app, an
+rejects it because it is not notarized), and creates `dist/WorkTime-<version>.dmg` with the app, an
 Applications link and `How to open.txt` (from `scripts/`). Upload it as a GitHub release asset. Bump
 `CFBundleShortVersionString` in `Info.plist` for a new version.
 
@@ -70,7 +73,7 @@ stable local signing identity once:
 It creates a self-signed code-signing certificate "MeetingRecorder Local" in the login keychain and trusts it for code
 signing (macOS asks for your password; the first build may ask to let `codesign` use the key, choose Always Allow).
 `build.sh` signs with it whenever `security find-identity -v -p codesigning` lists it and otherwise falls back to ad-hoc
-with a warning. After the first build with the stable identity, remove the old Meeting Recorder entries in Privacy &
+with a warning. After the first build with the stable identity, remove the old WorkTime entries in Privacy &
 Security, grant the permissions once more, and they then persist across rebuilds.
 
 ## Test
@@ -87,7 +90,7 @@ need real permissions, hardware, speech models or Apple Intelligence are not cov
 
 ## Run
 
-    open MeetingRecorder.app
+    open WorkTime.app
 
 A waveform icon appears in the menu bar (no Dock icon). Choose Start Recording; the icon turns red and the menu
 shows elapsed time. Stop Recording reveals the file in Finder.
@@ -102,7 +105,7 @@ Quitting while paused saves the recording like Stop.
 
 ## App window
 
-"Open Meeting Recorder" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
+"Open WorkTime" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
 main window (with a Dock icon while it is open). The sidebar holds the sections: **Meetings** (first), Activity, GitHub,
 Chat and Claude API. Meetings shows the recordings in `~/Movies/MeetingRecordings` in a list beside the selected meeting,
 grouped by Today, Yesterday, This week and Earlier; below 780 points the list and the meeting take turns, with a back
@@ -422,7 +425,7 @@ project, with the main repositories, tickets and websites) save the week through
 projects, apps, repositories with branches, tickets, websites, Claude sessions, window titles, categories, what you
 wrote and the meetings in the window. The same summary prints headlessly:
 
-    MeetingRecorder.app/Contents/MacOS/MeetingRecorder --context 4     # the last 4 hours (8 without a number)
+    WorkTime.app/Contents/MacOS/MeetingRecorder --context 4     # the last 4 hours (8 without a number)
 
 Debug builds also take `--simulate-activity <samples.json>` (an array of `{"offset", "app", "bundle", "title", "url",
 "repo", "branch", "claude": [...], "idle"}`), which feeds the samples through the tracker into the data directory's
@@ -708,7 +711,7 @@ your meetings.
 - **What it shares.** Meetings (summaries, notes, transcripts, audio), activity with the same privacy rules as the app
   (blocked and other-app activity stays stripped, Claude prompts only while Store last prompt is on), the cached GitHub
   pull requests (nothing while GitHub is off) and answers from the on-device chat, which are not stored on the Mac.
-- **Firewall.** The first time the app listens, macOS may ask whether Meeting Recorder may accept incoming connections;
+- **Firewall.** The first time the app listens, macOS may ask whether WorkTime may accept incoming connections;
   allow it, or the phone cannot reach the Mac. The app also declares a local network usage description.
 
 The contract for the phone app, with every endpoint, the pairing flow and the error codes, is in
@@ -740,7 +743,7 @@ checkout while developing), or in Claude Code:
     /plugin marketplace add niklasinde/indemeeting
     /plugin install meetingrecorder@indemeeting
 
-Open MeetingRecorder once first: on launch it links itself as `~/Library/Application Support/MeetingRecorder/bin/meetingrecorder`,
+Open WorkTime once first: on launch it links itself as `~/Library/Application Support/MeetingRecorder/bin/meetingrecorder`,
 which the plugin's MCP server starts. New Claude Code sessions pick the plugin up. Remove it with Remove Plugin or
 `/plugin uninstall meetingrecorder@indemeeting`.
 

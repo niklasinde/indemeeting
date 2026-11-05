@@ -1,14 +1,14 @@
-Meeting Recorder - how to install
+WorkTime - how to install
 
 Needs macOS 26 (Tahoe) or later.
 
-1. Drag "Meeting Recorder" onto the Applications folder in this window.
+1. Drag "WorkTime" onto the Applications folder in this window.
 
 2. Open it from Applications. macOS says "Apple could not verify..." because the app
    is not from the App Store. Click Done (not Move to Trash).
 
 3. Open System Settings > Privacy & Security, scroll down to Security, and click
-   "Open Anyway" next to Meeting Recorder. Confirm with your password.
+   "Open Anyway" next to WorkTime. Confirm with your password.
    (Right-click > Open no longer does this on macOS 15 and later.)
 
 4. The Setup window opens. Allow the Microphone and System Audio Recording,

@@ -24,7 +24,7 @@ struct MCPToolError: LocalizedError {
 struct MCPServer {
     static let protocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
     static let instructions = """
-        Read-only access to MeetingRecorder on this Mac: the user's meetings (summaries, action items, notes, transcripts \
+        Read-only access to WorkTime on this Mac: the user's meetings (summaries, action items, notes, transcripts \
         with speakers) and tracked activity (apps, repositories, branches, tickets, Claude Code sessions, hours).
         """
 
@@ -166,7 +166,7 @@ extension MCPServer {
 
     static func openedStore(_ opened: Result<MeetingStore, Error>) throws -> MeetingStore {
         do { return try opened.get() } catch {
-            throw MCPToolError("The MeetingRecorder database at \(AppPaths.database.path) could not be opened: \(error.localizedDescription)")
+            throw MCPToolError("The WorkTime database at \(AppPaths.database.path) could not be opened: \(error.localizedDescription)")
         }
     }
 

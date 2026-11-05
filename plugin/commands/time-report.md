@@ -1,5 +1,5 @@
 ---
-description: Show the time report for a week from MeetingRecorder, per project, branch and ticket
+description: Show the time report for a week from WorkTime, per project, branch and ticket
 argument-hint: "[week start YYYY-MM-DD, or last]"
 ---
 

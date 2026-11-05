@@ -297,7 +297,7 @@ struct MenuContent: View {
     @ObservedObject private var github = GitHubModel.shared
 
     var body: some View {
-        Button("Open Meeting Recorder") { openApp(nil) }
+        Button("Open WorkTime") { openApp(nil) }
             .keyboardShortcut("o")
         if let error = databaseError {
             Divider()
@@ -377,7 +377,7 @@ struct SettingsButton: View {
 enum MenuIcon {
     static func image(recording: Bool) -> NSImage {
         let name = recording ? "record.circle.fill" : "waveform.circle.fill"
-        let base = NSImage(systemSymbolName: name, accessibilityDescription: "Meeting Recorder") ?? NSImage()
+        let base = NSImage(systemSymbolName: name, accessibilityDescription: "WorkTime") ?? NSImage()
         var config = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
         if recording { config = config.applying(.init(paletteColors: [.systemRed])) }
         let image = base.withSymbolConfiguration(config) ?? base

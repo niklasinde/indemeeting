@@ -100,7 +100,7 @@ enum WhisperModelError: LocalizedError, Equatable {
         case .notInstalled(let model): return "\(model.displayName) is not downloaded. Download it in Settings."
         case .couldNotLoad(let model):
             return "\(model.displayName) could not be loaded. Remove it and download it again in Settings."
-        case .unavailable: return "This build of Meeting Recorder does not include Whisper."
+        case .unavailable: return "This build of WorkTime does not include Whisper."
         }
     }
 }

@@ -80,7 +80,7 @@ enum ClaudeAPIRequest {
     static let historyLimit = 40
     static let timeout: TimeInterval = 120
     static let instructions = """
-        You are Claude, answering in a chat window of the MeetingRecorder Mac app. You have no tools and cannot read files, \
+        You are Claude, answering in a chat window of the WorkTime Mac app. You have no tools and cannot read files, \
         run commands or open links. Answer in the language of the user's last message, and use Markdown where it helps.
         """
 

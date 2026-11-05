@@ -64,7 +64,7 @@ final class MainWindow {
         let controller = NSHostingController(rootView: view)
         controller.sceneBridgingOptions = [.toolbars]
         let window = NSWindow(contentViewController: controller)
-        window.title = "Meeting Recorder"
+        window.title = "WorkTime"
         window.titleVisibility = .hidden
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.setContentSize(NSSize(width: 980, height: 660))
@@ -631,7 +631,7 @@ struct AskBar: View {
     var body: some View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
-                TextField("Ask MeetingRecorder", text: $question)
+                TextField("Ask WorkTime", text: $question)
                     .textFieldStyle(.plain)
                     .focused($focused)
                     .onSubmit(send)

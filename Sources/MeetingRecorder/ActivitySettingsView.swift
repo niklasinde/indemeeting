@@ -283,7 +283,7 @@ struct ActivitySettingsView: View {
     private var accessibilityDetail: String {
         if !enabled { return "Off. Turn on to start; macOS then asks for Accessibility access." }
         return tracker.accessibilityGranted ? "On \u{2014} window titles are read through Accessibility."
-            : "Allow Meeting Recorder under Privacy & Security \u{203A} Accessibility to read window titles."
+            : "Allow WorkTime under Privacy & Security \u{203A} Accessibility to read window titles."
     }
 
     private var classifyDetail: String {

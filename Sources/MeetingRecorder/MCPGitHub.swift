@@ -13,11 +13,11 @@ extension MCPServer {
     static func githubTools(_ opened: Result<MeetingStore, Error>, enabled: @escaping () -> Bool = githubSwitchIsOn,
                             now: @escaping () -> Date = Date.init) -> [MCPTool] {
         func answer(_ body: (MeetingStore, [GitHubKind: [GitHubPR]]) throws -> String) throws -> String {
-            guard enabled() else { return "GitHub is off in Meeting Recorder settings.\n" }
+            guard enabled() else { return "GitHub is off in WorkTime settings.\n" }
             let store = try openedStore(opened)
             let prs = try store.githubPRs()
             guard prs.values.contains(where: { !$0.isEmpty }) else {
-                return "No GitHub pull requests are cached yet. Open the GitHub view in Meeting Recorder to fetch them.\n"
+                return "No GitHub pull requests are cached yet. Open the GitHub view in WorkTime to fetch them.\n"
             }
             return cut(try body(store, prs), at: outputLimit)
         }
@@ -70,7 +70,7 @@ extension MCPServer {
                         return pullRequestDetail(detail, fetched: fetched, now: now())
                     }
                     guard let row = prs.values.joined().first(where: { $0.url == url }) else {
-                        throw MCPToolError("No cached pull request \(text). Open it in the GitHub view in Meeting Recorder to fetch it.")
+                        throw MCPToolError("No cached pull request \(text). Open it in the GitHub view in WorkTime to fetch it.")
                     }
                     return "Its detail is not cached; open it in the GitHub view to fetch it. List fields:\n" + pullRequestLine(row, now: now())
                 }

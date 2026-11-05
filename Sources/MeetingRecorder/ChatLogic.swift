@@ -400,7 +400,7 @@ extension ChatLogic {
     static func instructions(scope: ChatScope, overview: String?, recap: String?, now: Date, calendar: Calendar = .current) -> String {
         let today = now.formatted(Date.FormatStyle(calendar: calendar).weekday(.wide)) + " " + ActivityLogic.dateText(now)
         var text = """
-            You are the assistant inside MeetingRecorder on the user\u{2019}s Mac. You answer questions about the user\u{2019}s own \
+            You are the assistant inside WorkTime on the user\u{2019}s Mac. You answer questions about the user\u{2019}s own \
             meetings and tracked work activity. Today is \(today). \
             Answer only from what the tools and the overview tell you; look things up with the tools instead of guessing. \
             When they hold nothing relevant, say so plainly. Never invent meetings, people, decisions, times or numbers. \

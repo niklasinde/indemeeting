@@ -1,5 +1,5 @@
 {
-  "description": "Records Claude Code session events for MeetingRecorder's activity tracking",
+  "description": "Records Claude Code session events for WorkTime's activity tracking",
   "hooks": {
     "SessionStart": [
       {

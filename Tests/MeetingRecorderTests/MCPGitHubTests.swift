@@ -118,13 +118,13 @@ let mcpGitHubTests: [(name: String, run: () throws -> Void)] = [
         let empty = try MeetingStore.open(at: directory.appendingPathComponent("empty.sqlite"))
         for tool in ["github_prs", "github_needs_attention"] {
             let answer = call(server(.success(empty)), tool)
-            check(!answer.isError && answer.text == "No GitHub pull requests are cached yet. Open the GitHub view in Meeting Recorder to fetch them.\n",
+            check(!answer.isError && answer.text == "No GitHub pull requests are cached yet. Open the GitHub view in WorkTime to fetch them.\n",
                   "empty \(tool): \(answer.text)")
         }
         let off = server(.success(try seeded(directory)), enabled: false)
         for (tool, arguments) in [("github_prs", "{}"), ("github_pr", #"{"pr":"acme/api#7"}"#), ("github_needs_attention", "{}")] {
             let answer = call(off, tool, arguments)
-            check(!answer.isError && answer.text == "GitHub is off in Meeting Recorder settings.\n", "off \(tool): \(answer.text)")
+            check(!answer.isError && answer.text == "GitHub is off in WorkTime settings.\n", "off \(tool): \(answer.text)")
         }
         check(call(server(.failure(SQLiteError(message: "missing"))), "github_prs").isError, "a missing database is a tool error")
     }),

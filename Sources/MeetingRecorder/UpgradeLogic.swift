@@ -8,7 +8,7 @@ struct BuildIdentity: Equatable {
 }
 
 enum UpgradeLogic {
-    static let bannerTitle = "Upgrade is ready. Restart Meeting Recorder to upgrade."
+    static let bannerTitle = "Upgrade is ready. Restart WorkTime to upgrade."
     static let recordingMessage = "A recording is in progress. Restart after it ends."
 
     static var versionLabel: String {

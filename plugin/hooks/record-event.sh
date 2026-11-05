@@ -1,5 +1,5 @@
 #!/bin/sh
-# Appends one line per Claude Code hook event to MeetingRecorder's inbox. Prompt text, tool input and tool output are
+# Appends one line per Claude Code hook event to WorkTime's inbox. Prompt text, tool input and tool output are
 # left out; MEETING_RECORDER_HOOK_PROMPTS=1 keeps the first 500 characters of each prompt. Never fails the session.
 dir="${MEETING_RECORDER_DATA_DIR:-$HOME/Library/Application Support/MeetingRecorder}"
 [ -d "$dir/claude-hooks" ] || mkdir -p "$dir/claude-hooks" 2>/dev/null || exit 0

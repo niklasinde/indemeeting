@@ -70,7 +70,7 @@ let upgradeTests: [(name: String, run: () throws -> Void)] = [
         check(UpgradeLogic.showsBanner(ready: true, dismissed: false), "ready shows the banner")
         check(!UpgradeLogic.showsBanner(ready: true, dismissed: true), "later hides it")
         check(!UpgradeLogic.showsBanner(ready: false, dismissed: false), "nothing ready, no banner")
-        check(UpgradeLogic.bannerTitle == "Upgrade is ready. Restart Meeting Recorder to upgrade.", "title")
+        check(UpgradeLogic.bannerTitle == "Upgrade is ready. Restart WorkTime to upgrade.", "title")
     }),
 
     ("a bundle whose executable cannot be opened is reported before the app quits", {
@@ -82,11 +82,11 @@ let upgradeTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("the relaunch waits for the old process and opens the bundle with open -n", {
-        let arguments = UpgradeLogic.relaunchScript(pid: 4242, bundle: URL(fileURLWithPath: "/Applications/Meeting Recorder.app"))
+        let arguments = UpgradeLogic.relaunchScript(pid: 4242, bundle: URL(fileURLWithPath: "/Applications/WorkTime.app"))
         let script = arguments.joined(separator: " ")
         check(script.contains("/usr/bin/open -n \"$2\""), "opens a new instance")
         check(script.contains("kill -0 \"$1\""), "waits for the old pid")
-        check(arguments.last == "/Applications/Meeting Recorder.app", "the bundle path is the last argument")
+        check(arguments.last == "/Applications/WorkTime.app", "the bundle path is the last argument")
         check(arguments.contains("4242"), "the pid is passed")
     }),
 

@@ -14,7 +14,7 @@ final class OnboardingWindow {
     private lazy var window: AppWindow = AppWindow { [unowned self] in
         let window = NSWindow(contentViewController: NSHostingController(
             rootView: OnboardingView(recorder: recorder!, tracker: tracker!) { [weak self] in self?.window.close() }))
-        window.title = "Meeting Recorder Setup"
+        window.title = "WorkTime Setup"
         window.styleMask = [.titled, .closable]
         return window
     }
@@ -88,11 +88,11 @@ struct OnboardingView: View {
             HStack(spacing: 12) {
                 Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Set up Meeting Recorder").font(.title2.bold())
+                    Text("Set up WorkTime").font(.title2.bold())
                     Text(UpgradeLogic.versionLabel).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            Text("Meeting Recorder lives in the menu bar and has no Dock icon. Allow the microphone and system audio, then run a quick test.")
+            Text("WorkTime lives in the menu bar and has no Dock icon. Allow the microphone and system audio, then run a quick test.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -182,13 +182,13 @@ struct OnboardingView: View {
                 + "and for giving Claude your recent context. Off until you turn it on; nothing is uploaded."
         }
         return tracker.accessibilityGranted ? "On. Pause it any time from the menu bar; browsers ask once for Automation access."
-            : "Allow Meeting Recorder under Privacy & Security \u{203A} Accessibility so it can read window titles."
+            : "Allow WorkTime under Privacy & Security \u{203A} Accessibility so it can read window titles."
     }
 
     private var systemAudioDetail: String {
         switch model.systemAudio {
         case .granted: return "Granted. The other participants are recorded too."
-        case .denied: return "Denied, so only your own voice is recorded. Allow Meeting Recorder under System Audio Recording Only in Settings."
+        case .denied: return "Denied, so only your own voice is recorded. Allow WorkTime under System Audio Recording Only in Settings."
         case .unknown: return "Required to record the meeting: other participants come through system audio. Uses System Audio Recording Only, not Screen Recording."
         }
     }

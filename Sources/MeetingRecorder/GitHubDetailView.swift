@@ -488,7 +488,7 @@ struct PageActionBar: View {
 
     @ViewBuilder private var copyItems: some View {
         Button("Copy Link") { GitHubModel.copy(pr.url) }
-        Button("Copy meetingrecorder link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
+        Button("Copy WorkTime link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
         Button("Copy Title") { GitHubModel.copy(pr.copyText) }
         if let branch = detail?.head, !branch.isEmpty {
             Divider()
