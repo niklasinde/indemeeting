@@ -22,6 +22,12 @@ struct GitHubDiffRow: Equatable {
     let text: String
 }
 
+/// A file's diff rows with their syntax spans, worked out once per patch; `spans` is nil for a language without rules.
+struct GitHubDiffRender {
+    let rows: [GitHubDiffRow]
+    let spans: [[SyntaxSpan]]?
+}
+
 enum GitHubDiffLogic {
     static let pageSize = 100
     /// GitHub lists at most 3000 files of a pull request.
@@ -85,6 +91,34 @@ enum GitHubDiffLogic {
             }
         }
         return rows
+    }
+
+    static func render(_ patch: String, path: String) -> GitHubDiffRender {
+        let rows = Self.rows(patch)
+        return GitHubDiffRender(rows: rows, spans: SyntaxLanguage.forPath(path).map { highlight(rows, language: $0) })
+    }
+
+    /// Tokenizes the old and the new side apart, so a string opened on a removed line does not run into the added ones.
+    static func highlight(_ rows: [GitHubDiffRow], language: SyntaxLanguage) -> [[SyntaxSpan]] {
+        var old = SyntaxState.code, new = SyntaxState.code
+        return rows.map { row in
+            switch row.kind {
+            case .hunk:
+                old = .code
+                new = .code
+                return []
+            case .note:
+                return []
+            case .removed:
+                return SyntaxLogic.tokenize(row.text, language: language, state: &old)
+            case .added:
+                return SyntaxLogic.tokenize(row.text, language: language, state: &new)
+            case .context:
+                let spans = SyntaxLogic.tokenize(row.text, language: language, state: &new)
+                old = new
+                return spans
+            }
+        }
     }
 
     static func hunkStart(_ header: String) -> (old: Int, new: Int) {

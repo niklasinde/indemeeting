@@ -26,6 +26,7 @@ final class GitHubDiffModel: ObservableObject {
     /// Files shown past the first rows.
     @Published var whole = Set<String>()
     private var source: Source?
+    private var renders: [String: GitHubDiffRender] = [:]
     private static var cache: [String: [GitHubFilePatch]] = [:]
 
     init() {}
@@ -40,6 +41,14 @@ final class GitHubDiffModel: ObservableObject {
     }
 
     func collapseAll() { expanded = [] }
+
+    /// The rows and syntax of a file's patch, worked out on first use and kept until the files change.
+    func render(_ path: String, patch: String) -> GitHubDiffRender {
+        if let cached = renders[path] { return cached }
+        let render = GitHubDiffLogic.render(patch, path: path)
+        renders[path] = render
+        return render
+    }
 
     func load(_ next: Source) {
         guard !loading, !(loaded && source == next && error == nil) else { return }
@@ -66,6 +75,7 @@ final class GitHubDiffModel: ObservableObject {
 
     private func show(_ files: [GitHubFilePatch], from next: Source) {
         self.files = files
+        renders = [:]
         patches = Dictionary(files.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
         source = next
         loaded = true

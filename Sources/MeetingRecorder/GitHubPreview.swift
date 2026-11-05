@@ -143,6 +143,11 @@ enum GitHubPreview {
                                             diffs: GitHubDiffModel(sample: [diffPatch], expanded: [diffPatch.path]), source: .commit(repo: "", sha: ""), url: "",
                                             threads: [diffThread], comments: GitHubCommentsModel(pr: commentPR, sample: nil)),
                              appearance: appearance, to: output.appendingPathComponent("diff-\(appearance == .aqua ? "light" : "dark").png"))
+                let python = GitHubFilePatch(path: "finq/jobs/sending.py", change: .modified, additions: 6, deletions: 2,
+                                             patch: "@@ -40,6 +40,10 @@ class Sender:\n     @staticmethod\n-    def order_to_pay(order, retries=3):\n-        \"\"\"Send one order.\"\"\"\n+    def order_to_pay(order: Order, retries: int = 3) -> bool:\n+        \"\"\"Send one order.\n+\n+        Returns False when the API refuses it.\n+        \"\"\"\n+        log.info(f\"sending {order.id!r} ({len(order.lines)} lines)\")  # once\n         return self.client.post('/orders', json=order, timeout=2.5) is not None")
+                await render(GitHubFileDiff(file: GitHubPRDetail.File(path: python.path, additions: 6, deletions: 2, change: .modified),
+                                            diffs: GitHubDiffModel(sample: [python], expanded: [python.path]), source: .commit(repo: "", sha: ""), url: ""),
+                             appearance: appearance, to: output.appendingPathComponent("diff-python-\(appearance == .aqua ? "light" : "dark").png"))
             }
             await renderResume(store: store, sample: claudeSample, directory: directory, output: output)
             await renderActions(model: model, window: window, directory: directory, shot: shot, output: output)

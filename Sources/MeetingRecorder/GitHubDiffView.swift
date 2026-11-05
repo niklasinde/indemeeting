@@ -42,8 +42,8 @@ struct GitHubFileDiff: View {
 
     @ViewBuilder private func content(_ patch: GitHubFilePatch?) -> some View {
         if let text = patch?.patch {
-            let rows = GitHubDiffLogic.rows(text)
-            let placement = GitHubDiffLogic.placement(threads, in: rows)
+            let render = diffs.render(file.path, patch: text)
+            let placement = GitHubDiffLogic.placement(threads, in: render.rows)
             if !placement.unplaced.isEmpty, let comments {
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 8) {
@@ -55,7 +55,7 @@ struct GitHubFileDiff: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            DiffTable(rows: rows, placed: placement.placed, comments: comments, whole: Binding(
+            DiffTable(render: render, placed: placement.placed, comments: comments, whole: Binding(
                 get: { diffs.whole.contains(file.path) },
                 set: { if $0 { diffs.whole.insert(file.path) } else { diffs.whole.remove(file.path) } }))
         } else if diffs.loading {
@@ -77,20 +77,21 @@ struct GitHubFileDiff: View {
 }
 
 private struct DiffTable: View {
-    let rows: [GitHubDiffRow]
+    let render: GitHubDiffRender
     let placed: [Int: [GitHubThread]]
     let comments: GitHubCommentsModel?
     @Binding var whole: Bool
     @State private var width = 0.0
 
     var body: some View {
+        let rows = render.rows
         let shown = whole ? rows.count : min(rows.count, GitHubDiffLogic.visibleRows)
         let digits = String(rows.map { max($0.old ?? 0, $0.new ?? 0) }.max() ?? 0).count
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal) {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(0..<shown, id: \.self) { index in
-                        DiffRowView(row: rows[index], digits: digits)
+                        DiffRowView(row: rows[index], spans: render.spans?[index], digits: digits)
                         if let threads = placed[index], let comments {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(threads) { ThreadCard(thread: $0, model: comments) }
@@ -115,6 +116,7 @@ private struct DiffTable: View {
 
 private struct DiffRowView: View {
     let row: GitHubDiffRow
+    let spans: [SyntaxSpan]?
     let digits: Int
 
     var body: some View {
@@ -131,7 +133,7 @@ private struct DiffRowView: View {
                     number(row.old)
                     number(row.new)
                     Text(marker).foregroundStyle(.secondary).padding(.leading, 8).padding(.trailing, 4)
-                    Text(row.text.isEmpty ? " " : row.text.replacingOccurrences(of: "\t", with: "    "))
+                    Text(code)
                         .fixedSize(horizontal: true, vertical: false)
                         .textSelection(.enabled)
                 }
@@ -146,6 +148,15 @@ private struct DiffRowView: View {
     }
 
     private var gutter: Double { Double(digits) * 7 + 12 }
+
+    private var code: AttributedString {
+        guard !row.text.isEmpty else { return AttributedString(" ") }
+        return (spans ?? [SyntaxSpan(text: row.text)]).reduce(into: AttributedString()) { line, span in
+            var part = AttributedString(span.text.replacingOccurrences(of: "\t", with: "    "))
+            part.foregroundColor = span.kind?.color
+            line += part
+        }
+    }
 
     private func number(_ value: Int?) -> some View {
         Text(value.map(String.init) ?? "").foregroundStyle(.tertiary).frame(width: gutter, alignment: .trailing)
@@ -196,6 +207,28 @@ struct GitHubCommitDiff: View {
         .padding(.leading, 18)
         .padding(.bottom, 6)
         .onAppear { diffs.load(source) }
+    }
+}
+
+extension SyntaxKind {
+    /// Xcode's default theme colours, which stay readable on the tinted added and removed rows.
+    var color: Color { Self.palette[self] ?? .primary }
+
+    private static let palette: [SyntaxKind: Color] = [
+        .keyword: adaptive(light: 0x9B2393, dark: 0xFC5FA3),
+        .builtin: adaptive(light: 0x6C36A9, dark: 0xA167E6),
+        .string: adaptive(light: 0xC41A16, dark: 0xFC6A5D),
+        .number: adaptive(light: 0x1C00CF, dark: 0xD0BF69),
+        .comment: adaptive(light: 0x5D6C79, dark: 0x7F8C98),
+        .decorator: adaptive(light: 0x815F03, dark: 0xBF8555),
+        .definition: adaptive(light: 0x0F68A0, dark: 0x41A1C0),
+    ]
+
+    private static func adaptive(light: Int, dark: Int) -> Color {
+        func rgb(_ hex: Int) -> NSColor {
+            NSColor(srgbRed: Double(hex >> 16 & 0xFF) / 255, green: Double(hex >> 8 & 0xFF) / 255, blue: Double(hex & 0xFF) / 255, alpha: 1)
+        }
+        return Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? rgb(dark) : rgb(light) })
     }
 }
 
