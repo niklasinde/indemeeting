@@ -8,3 +8,4 @@ DerivedData/
 xcuserdata/
 ios/MeetingRecorderPhoneSim.xcodeproj/
 ios/.project-sim.yml
+bench/

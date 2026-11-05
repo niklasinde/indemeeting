@@ -50,6 +50,9 @@ enum Main {
         if let job = LanguageLogic.detectArguments(CommandLine.arguments) {
             LanguageDetector.runFromCommandLine(job.audio, among: job.candidates ?? MeetingLanguage.listened())
         }
+        if let job = ASRBenchmarkLogic.arguments(CommandLine.arguments) {
+            ASRBenchmark.runFromCommandLine(output: job.output, config: job.config, clips: job.clips)
+        }
         if CommandLine.arguments.contains("--download-speaker-model") { downloadSpeakerModel() }
         if let hours = ActivityLogic.contextArguments(CommandLine.arguments) { printContext(hours: hours) }
         #if DEBUG

@@ -6,13 +6,30 @@ import whisper
 final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     static let sampleRate: Double = 16_000
 
-    private let model: WhisperModel
+    let id: String
     private let language: String
     private let context: OpaquePointer
     private let queue = DispatchQueue(label: "whisper", qos: .userInitiated)
 
-    init(model: WhisperModel, language: MeetingLanguage) throws {
+    convenience init(model: WhisperModel, language: MeetingLanguage) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
+        guard let engine = Self.context(file: model.url()) else { throw WhisperModelError.couldNotLoad(model) }
+        self.init(context: engine, id: model.id, language: language.locale.language.languageCode?.identifier ?? "auto")
+    }
+
+    /// A ggml model file outside the catalogue; `language` is a Whisper code, or `auto` to detect it per call.
+    convenience init?(file: URL, id: String, language: String = "auto") {
+        guard let context = Self.context(file: file) else { return nil }
+        self.init(context: context, id: id, language: language)
+    }
+
+    private init(context: OpaquePointer, id: String, language: String) {
+        self.context = context
+        self.id = id
+        self.language = language
+    }
+
+    private static func context(file: URL) -> OpaquePointer? {
         whisper_log_set({ level, text, _ in
             guard level == GGML_LOG_LEVEL_ERROR, let text, case let message = String(cString: text), !message.contains("Core ML")
             else { return }
@@ -21,12 +38,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         var params = whisper_context_default_params()
         params.use_gpu = true
         params.flash_attn = true
-        guard let context = whisper_init_from_file_with_params(model.url().path, params) else {
-            throw WhisperModelError.couldNotLoad(model)
-        }
-        self.model = model
-        self.language = language.locale.language.languageCode?.identifier ?? "auto"
-        self.context = context
+        return whisper_init_from_file_with_params(file.path, params)
     }
 
     deinit { whisper_free(context) }
@@ -34,10 +46,30 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         let samples = try Self.samples(of: audio)
         let segments = try await withCheckedThrowingContinuation { continuation in
-            queue.async { continuation.resume(with: Result { try self.run(samples, progress: progress) }) }
+            queue.async { continuation.resume(with: Result { try self.run(samples, progress: progress).segments }) }
         }
         guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
-        return Transcript(segments: segments, engine: model.id)
+        return Transcript(segments: segments, engine: id)
+    }
+
+    /// A stretch of 16 kHz samples starting `offset` seconds in, with the language Whisper transcribed it in.
+    func transcribe(_ samples: [Float], offset: TimeInterval, language: String? = nil) throws
+        -> (segments: [TranscriptSegment], language: String) {
+        let result = try queue.sync { try run(samples, language: language ?? self.language) { _ in } }
+        return (result.segments.map { TranscriptSegment(start: $0.start + offset, text: $0.text) }, result.language)
+    }
+
+    /// The most likely language of a stretch of 16 kHz samples, from its first 30 seconds.
+    func detectLanguage(_ samples: [Float]) -> (code: String, probability: Double)? {
+        queue.sync {
+            let threads = Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2)))
+            guard samples.withUnsafeBufferPointer({ whisper_pcm_to_mel(context, $0.baseAddress, Int32($0.count), threads) }) == 0
+            else { return nil }
+            var probabilities = [Float](repeating: 0, count: Int(whisper_lang_max_id()) + 1)
+            let id = whisper_lang_auto_detect(context, 0, threads, &probabilities)
+            guard id >= 0 else { return nil }
+            return (String(cString: whisper_lang_str(id)), Double(probabilities[Int(id)]))
+        }
     }
 
     private final class ProgressBox {
@@ -45,8 +77,10 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         init(_ report: @escaping TranscriptionProgress) { self.report = report }
     }
 
-    private func run(_ samples: [Float], progress: @escaping TranscriptionProgress) throws -> [TranscriptSegment] {
-        guard samples.count >= Int(Self.sampleRate / 2) else { return [] }
+    private func run(_ samples: [Float], language: String? = nil,
+                     progress: @escaping TranscriptionProgress) throws -> (segments: [TranscriptSegment], language: String) {
+        let language = language ?? self.language
+        guard samples.count >= Int(Self.sampleRate / 2) else { return ([], language) }
         let box = ProgressBox(progress)
         var params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH)
         params.n_threads = Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2)))
@@ -69,7 +103,8 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         let pieces = (0..<whisper_full_n_segments(context)).map { index in
             (text: String(cString: whisper_full_get_segment_text(context, index)), start: whisper_full_get_segment_t0(context, index))
         }
-        return ProcessingLogic.whisperSentences(pieces)
+        let used = language == "auto" ? String(cString: whisper_lang_str(whisper_full_lang_id(context))) : language
+        return (ProcessingLogic.whisperSentences(pieces), used)
     }
 
     /// The audio as 16 kHz mono floats, the input whisper.cpp expects.
