@@ -52,6 +52,7 @@ struct Meeting: Equatable {
     var summarised = false
     /// Whether the language was detected rather than chosen.
     var languageDetected = false
+    var transcribedAt: Date?
 
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle) }
 }
@@ -344,11 +345,12 @@ final class MeetingStore: @unchecked Sendable {
         );
         """,
         "DROP TABLE todos;",
+        "ALTER TABLE meetings ADD COLUMN transcribed_at REAL",
     ]
 
     private static let meetingColumns = """
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
-        transcribed, summarised, language_detected
+        transcribed, summarised, language_detected, transcribed_at
         """
 
     let openError: DatabaseUnavailable?
@@ -472,7 +474,7 @@ final class MeetingStore: @unchecked Sendable {
                 SELECT \(columns.joined(separator: ", ")), snippet(meetings_fts, -1, '**', '**', '\u{2026}', 16)
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
                 WHERE meetings_fts MATCH ? ORDER BY rank LIMIT ?
-                """, [match, limit]) { (Self.meeting($0), $0.string(14)) }
+                """, [match, limit]) { (Self.meeting($0), $0.string(15)) }
         }
     }
 
@@ -505,13 +507,15 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
-    /// Replaces the transcript and the meeting's speakers.
+    /// Replaces the transcript and the meeting's speakers; a nil `transcribedAt` keeps the time stored before.
     func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, detected: Bool = false,
-                        engine: String, speakers: [SpeakerProfile] = []) throws {
+                        engine: String, transcribedAt: Date? = nil, speakers: [SpeakerProfile] = []) throws {
         try write {
             let id = try ensure(audioFile)
-            try db.run("UPDATE meetings SET language = ?, language_detected = ?, transcript_engine = ? WHERE id = ?",
-                       [language.rawValue, detected, engine, id])
+            try db.run("""
+                UPDATE meetings SET language = ?, language_detected = ?, transcript_engine = ?,
+                                    transcribed_at = coalesce(?, transcribed_at) WHERE id = ?
+                """, [language.rawValue, detected, engine, transcribedAt?.timeIntervalSince1970, id])
             try replaceSegments(id, segments)
             try db.run("DELETE FROM speakers WHERE meeting_id = ?", [id])
             for profile in speakers {
@@ -654,7 +658,7 @@ final class MeetingStore: @unchecked Sendable {
                 titleOverride: row.optionalString(5), aiTitle: row.optionalString(6), notes: row.string(7),
                 status: ProcessingStatus(rawValue: row.string(8)) ?? .none, statusMessage: row.optionalString(9),
                 transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12),
-                languageDetected: row.bool(13))
+                languageDetected: row.bool(13), transcribedAt: row.optionalDouble(14).map(Date.init(timeIntervalSince1970:)))
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {

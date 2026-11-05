@@ -120,6 +120,35 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         check(try store.knownVoices().isEmpty, "no voices")
     }),
 
+    ("the last migration adds when a meeting was transcribed, empty for existing meetings", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.dropLast()))
+        try old.run("INSERT INTO meetings (id, audio_file, created, transcript_engine) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0, 'x')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
+        let meeting = try store.content(of: "Meeting-2026-10-14-0900.m4a")?.meeting
+        check(meeting?.transcriptEngine == "x" && meeting?.transcribedAt == nil, "old meeting has no time")
+    }),
+
+    ("the time of the last transcription is kept until the meeting is transcribed again", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            let first = Date(timeIntervalSince1970: 1_793_887_320)
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "SpeechTranscriber", transcribedAt: first)
+            check(try store.content(of: name)?.meeting.transcribedAt == first, "stored")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "SpeechTranscriber")
+            check(try store.content(of: name)?.meeting.transcribedAt == first, "recognising speakers keeps it")
+            let second = first.addingTimeInterval(3600)
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "ggml-large-v3-turbo", transcribedAt: second)
+            let meeting = try store.meetings().first
+            check(meeting?.transcribedAt == second && meeting?.transcriptEngine == "ggml-large-v3-turbo", "replaced")
+            check(try store.searchMeetings("testdata", limit: 5).first?.snippet.contains("**Testdata**") == true, "search snippet")
+        }
+    }),
+
     ("naming a speaker names it in the meeting and remembers its voice", {
         try withStore { store, folder in
             let name = "Meeting-2026-10-15-1430.m4a"

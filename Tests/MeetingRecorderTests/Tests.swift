@@ -912,6 +912,20 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(LibraryLogic.minutesText(25 * 60 + 10) == "25 min" && LibraryLogic.minutesText(20) == "<1 min"
               && LibraryLogic.minutesText(65 * 60) == "1 h 5 min", "minutes")
     }),
+
+    ("transcription info names when and with which engine a meeting was transcribed", {
+        check(TranscriptionEngine.displayName(stored: "ggml-large-v3-turbo") == "Whisper Large v3 Turbo", "whisper model")
+        check(TranscriptionEngine.displayName(stored: "SpeechTranscriber") == "Apple Speech"
+              && TranscriptionEngine.displayName(stored: "DictationTranscriber") == "Apple Speech", "apple")
+        check(TranscriptionEngine.displayName(stored: "kb-whisper-medium") == "kb-whisper-medium", "unknown kept as is")
+        let date = Date(timeIntervalSince1970: 1_793_887_320)
+        let info = LibraryLogic.transcriptionInfo(at: date, engine: "ggml-large-v3-turbo", locale: Locale(identifier: "en_GB"),
+                                                  timeZone: TimeZone(identifier: "UTC")!)
+        check(info?.hasPrefix("Transcribed ") == true && info?.contains("5 Nov") == true && info?.contains("14:02") == true
+              && info?.hasSuffix(" \u{00B7} Whisper Large v3 Turbo") == true, "info \(info ?? "nil")")
+        check(LibraryLogic.transcriptionInfo(at: date, engine: nil)?.contains("\u{00B7}") == false, "no engine")
+        check(LibraryLogic.transcriptionInfo(at: nil, engine: "SpeechTranscriber") == nil, "old meetings show nothing")
+    }),
 ]
 
 private func segment(_ start: TimeInterval, _ text: String, _ speaker: Speaker? = nil) -> TranscriptSegment {

@@ -96,15 +96,27 @@ struct RecordingDetail: View {
                 if !entry.inProgress, let meeting = library.meeting(of: entry) {
                     AskButton(meeting: meeting, title: library.title(of: entry), notes: library.tab == .notes)
                 }
+                if !entry.inProgress { RetranscribeButton(entry: entry, recorder: recorder, processor: processor) }
                 if !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
             }
             HStack(spacing: 8) {
                 Text(subtitle)
                 if recorder.meeting == entry.audio { RecordingStatus(recorder: recorder) }
+                if processor.processing == entry.audio {
+                    ProgressView().controlSize(.mini)
+                    Text(processor.status ?? "Working\u{2026}").lineLimit(1)
+                }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
+            if let meeting = library.meeting(of: entry),
+               let info = LibraryLogic.transcriptionInfo(at: meeting.transcribedAt, engine: meeting.transcriptEngine) {
+                Text(info)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
+            }
             HStack(spacing: 2) {
                 ForEach(DetailTab.allCases, id: \.self) { tab in
                     Button(tab.rawValue) { library.tab = tab }
@@ -180,6 +192,24 @@ struct RecordingDetail: View {
         guard let row = rows.last(where: { $0.paragraph.start <= target }) ?? rows.first else { return }
         withAnimation { proxy.scrollTo(row.paragraph.start, anchor: .top) }
         library.seekTarget = nil
+    }
+}
+
+/// Transcribes, recognises speakers and summarises the stored audio again with the current transcription settings.
+private struct RetranscribeButton: View {
+    let entry: RecordingEntry
+    @ObservedObject var recorder: Recorder
+    @ObservedObject var processor: MeetingProcessor
+
+    private var audioMissing: Bool { !FileManager.default.fileExists(atPath: entry.audio.path) }
+
+    var body: some View {
+        Button { processor.process(entry.audio) } label: {
+            Label("Re-transcribe", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
+        }
+        .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio || audioMissing)
+        .help(audioMissing ? "The recording\u{2019}s audio file is missing"
+              : "Transcribe, recognise speakers and summarise again with the current transcription settings")
     }
 }
 

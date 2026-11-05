@@ -144,6 +144,16 @@ enum LibraryLogic {
         return minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h \(minutes % 60) min"
     }
 
+    /// "Transcribed 5 Nov 14:02 · Whisper Large v3 Turbo", or nil for a meeting transcribed before this was recorded.
+    static func transcriptionInfo(at date: Date?, engine: String?, locale: Locale = .current,
+                                  timeZone: TimeZone = .current) -> String? {
+        guard let date else { return nil }
+        var style = Date.FormatStyle(locale: locale, timeZone: timeZone).day().month(.abbreviated).hour().minute()
+        style.calendar = Calendar(identifier: .gregorian)
+        let parts = ["Transcribed " + date.formatted(style), engine.map { TranscriptionEngine.displayName(stored: $0) }]
+        return parts.compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
     static func markdownBlocks(_ markdown: String) -> [MarkdownBlock] {
         markdown.components(separatedBy: .newlines).compactMap { raw in
             let line = raw.trimmingCharacters(in: .whitespaces)

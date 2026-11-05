@@ -128,6 +128,12 @@ enum TranscriptionEngine: Hashable {
         return "Apple"
     }
 
+    /// The name of the engine stored with a transcript: a Whisper model's id, or Apple's speech module.
+    static func displayName(stored engine: String) -> String {
+        if let model = WhisperModel.with(id: engine) { return model.displayName }
+        return ["SpeechTranscriber", "DictationTranscriber"].contains(engine) ? "Apple Speech" : engine
+    }
+
     /// The engines Settings offers: Apple, then each downloaded model, best first.
     static func choices(installed: [WhisperModel]) -> [TranscriptionEngine] { [.apple] + installed.map(Self.whisper) }
 
