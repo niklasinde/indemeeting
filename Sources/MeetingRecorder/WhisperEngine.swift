@@ -1,4 +1,22 @@
 import AVFoundation
+
+/// How Whisper transcribes: the languages each stretch may be in (Whisper codes; empty for any), the one to use when
+/// detection has nothing to go on, a prompt with the words to expect, and beam search instead of greedy decoding.
+struct WhisperOptions {
+    var languages: [String] = []
+    var fallback = "auto"
+    var prompt: String? = nil
+    var beamSearch = true
+}
+
+/// A stretch of audio Whisper transcribed in one language.
+struct WhisperChunk {
+    let start: TimeInterval
+    let end: TimeInterval
+    let language: String
+    let segments: [TranscriptSegment]
+}
+
 #if canImport(whisper)
 import whisper
 
@@ -7,26 +25,20 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     static let sampleRate: Double = 16_000
 
     let id: String
-    private let language: String
+    private let options: WhisperOptions
     private let context: OpaquePointer
     private let queue = DispatchQueue(label: "whisper", qos: .userInitiated)
 
-    convenience init(model: WhisperModel, language: MeetingLanguage) throws {
+    convenience init(model: WhisperModel, options: WhisperOptions) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
         guard let engine = Self.context(file: model.url()) else { throw WhisperModelError.couldNotLoad(model) }
-        self.init(context: engine, id: model.id, language: language.locale.language.languageCode?.identifier ?? "auto")
+        self.init(context: engine, id: model.id, options: options)
     }
 
-    /// A ggml model file outside the catalogue; `language` is a Whisper code, or `auto` to detect it per call.
-    convenience init?(file: URL, id: String, language: String = "auto") {
-        guard let context = Self.context(file: file) else { return nil }
-        self.init(context: context, id: id, language: language)
-    }
-
-    private init(context: OpaquePointer, id: String, language: String) {
+    private init(context: OpaquePointer, id: String, options: WhisperOptions) {
         self.context = context
         self.id = id
-        self.language = language
+        self.options = options
     }
 
     private static func context(file: URL) -> OpaquePointer? {
@@ -45,46 +57,57 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
 
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         let samples = try Self.samples(of: audio)
-        let segments = try await withCheckedThrowingContinuation { continuation in
-            queue.async { continuation.resume(with: Result { try self.run(samples, progress: progress).segments }) }
+        let chunks = try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try self.chunks(of: samples, progress: progress) }) }
         }
+        let segments = chunks.flatMap(\.segments)
         guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
         return Transcript(segments: segments, engine: id)
     }
 
-    /// A stretch of 16 kHz samples starting `offset` seconds in, with the language Whisper transcribed it in.
-    func transcribe(_ samples: [Float], offset: TimeInterval, language: String? = nil) throws
-        -> (segments: [TranscriptSegment], language: String) {
-        let result = try queue.sync { try run(samples, language: language ?? self.language) { _ in } }
-        return (result.segments.map { TranscriptSegment(start: $0.start + offset, text: $0.text) }, result.language)
+    /// The samples cut at pauses, each stretch transcribed in the language detected for it.
+    func transcribeChunks(_ samples: [Float]) throws -> [WhisperChunk] {
+        try queue.sync { try chunks(of: samples) { _ in } }
     }
 
-    /// The most likely language of a stretch of 16 kHz samples, from its first 30 seconds.
-    func detectLanguage(_ samples: [Float]) -> (code: String, probability: Double)? {
-        queue.sync {
-            let threads = Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2)))
-            guard samples.withUnsafeBufferPointer({ whisper_pcm_to_mel(context, $0.baseAddress, Int32($0.count), threads) }) == 0
-            else { return nil }
-            var probabilities = [Float](repeating: 0, count: Int(whisper_lang_max_id()) + 1)
-            let id = whisper_lang_auto_detect(context, 0, threads, &probabilities)
-            guard id >= 0 else { return nil }
-            return (String(cString: whisper_lang_str(id)), Double(probabilities[Int(id)]))
+    private func chunks(of samples: [Float], progress: @escaping TranscriptionProgress) throws -> [WhisperChunk] {
+        let ranges = SpeechChunks.ranges(of: samples, sampleRate: Self.sampleRate)
+        return try ranges.enumerated().map { index, range in
+            let piece = Array(samples[range])
+            let language = options.languages.count == 1 ? options.languages[0]
+                : WhisperLogic.language(probabilities(of: piece), allowed: options.languages, fallback: options.fallback)
+            let start = Double(range.lowerBound) / Self.sampleRate
+            let segments = try run(piece, language: language) { progress((Double(index) + $0) / Double(ranges.count)) }
+            return WhisperChunk(start: start, end: Double(range.upperBound) / Self.sampleRate, language: language,
+                                segments: segments.map { TranscriptSegment(start: $0.start + start, text: $0.text) })
         }
     }
+
+    /// How likely each language is in the first 30 seconds of `samples`.
+    private func probabilities(of samples: [Float]) -> [String: Double] {
+        let threads = Self.threads
+        guard samples.withUnsafeBufferPointer({ whisper_pcm_to_mel(context, $0.baseAddress, Int32($0.count), threads) }) == 0
+        else { return [:] }
+        var probabilities = [Float](repeating: 0, count: Int(whisper_lang_max_id()) + 1)
+        guard whisper_lang_auto_detect(context, 0, threads, &probabilities) >= 0 else { return [:] }
+        return Dictionary(uniqueKeysWithValues: probabilities.indices.map { (String(cString: whisper_lang_str(Int32($0))), Double(probabilities[$0])) })
+    }
+
+    private static var threads: Int32 { Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2))) }
 
     private final class ProgressBox {
         let report: TranscriptionProgress
         init(_ report: @escaping TranscriptionProgress) { self.report = report }
     }
 
-    private func run(_ samples: [Float], language: String? = nil,
-                     progress: @escaping TranscriptionProgress) throws -> (segments: [TranscriptSegment], language: String) {
-        let language = language ?? self.language
-        guard samples.count >= Int(Self.sampleRate / 2) else { return ([], language) }
+    private func run(_ samples: [Float], language: String, progress: @escaping TranscriptionProgress) throws -> [TranscriptSegment] {
+        guard samples.count >= Int(Self.sampleRate / 2) else { return [] }
         let box = ProgressBox(progress)
-        var params = whisper_full_default_params(WHISPER_SAMPLING_BEAM_SEARCH)
-        params.n_threads = Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2)))
+        var params = whisper_full_default_params(options.beamSearch ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY)
+        if options.beamSearch { params.beam_search.beam_size = 5 }
+        params.n_threads = Self.threads
         params.translate = false
+        params.no_context = true
         params.print_progress = false
         params.print_realtime = false
         params.print_timestamps = false
@@ -95,16 +118,18 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         params.progress_callback_user_data = Unmanaged.passUnretained(box).toOpaque()
         let status = withExtendedLifetime(box) {
             language.withCString { language in
-                params.language = language
-                return samples.withUnsafeBufferPointer { whisper_full(context, params, $0.baseAddress, Int32($0.count)) }
+                (options.prompt ?? "").withCString { prompt in
+                    params.language = language
+                    if options.prompt?.isEmpty == false { params.initial_prompt = prompt }
+                    return samples.withUnsafeBufferPointer { whisper_full(context, params, $0.baseAddress, Int32($0.count)) }
+                }
             }
         }
         guard status == 0 else { throw NSError(domain: "whisper", code: Int(status)) }
         let pieces = (0..<whisper_full_n_segments(context)).map { index in
             (text: String(cString: whisper_full_get_segment_text(context, index)), start: whisper_full_get_segment_t0(context, index))
         }
-        let used = language == "auto" ? String(cString: whisper_lang_str(whisper_full_lang_id(context))) : language
-        return (ProcessingLogic.whisperSentences(pieces), used)
+        return ProcessingLogic.whisperSentences(pieces)
     }
 
     /// The audio as 16 kHz mono floats, the input whisper.cpp expects.
@@ -124,7 +149,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
 }
 #else
 final class WhisperEngine: SpeechEngine {
-    init(model: WhisperModel, language: MeetingLanguage) throws { throw WhisperModelError.unavailable }
+    init(model: WhisperModel, options: WhisperOptions) throws { throw WhisperModelError.unavailable }
 
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         throw WhisperModelError.unavailable

@@ -16,7 +16,7 @@ func check(_ condition: @autoclosure () throws -> Bool, _ message: String, line:
 
 private let rate = PCMNormalizer.format.sampleRate
 
-private func kb(_ name: String) -> WhisperModel { WhisperModel.with(id: "kb-whisper-\(name)")! }
+private func whisper(_ name: String) -> WhisperModel { WhisperModel.with(id: "ggml-large-v3\(name)")! }
 
 private func sine(_ frequency: Double, seconds: Double, amplitude: Float = 0.2) -> [Float] {
     (0..<Int(seconds * rate)).map { amplitude * Float(sin(2 * .pi * frequency * Double($0) / rate)) }
@@ -548,49 +548,96 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ModelState.downloading.text == "Still downloading" && ModelState.notDownloaded.text == "Not downloaded", "text")
     }),
 
-    ("KB-Whisper models name their files and engines", {
-        check(WhisperModel.all.map(\.id) == ["kb-whisper-tiny", "kb-whisper-base", "kb-whisper-small",
-                                              "kb-whisper-medium-q5_0", "kb-whisper-large-q5_0"], "engines")
-        check(kb("medium-q5_0").remoteURL.absoluteString
-              == "https://huggingface.co/KBLab/kb-whisper-medium/resolve/main/ggml-model-q5_0.bin", "quantized url")
-        check(kb("tiny").remoteURL.absoluteString.hasSuffix("kb-whisper-tiny/resolve/main/ggml-model.bin"), "full url")
-        check(kb("large-q5_0").fileName == "kb-whisper-large-q5_0.bin" && kb("base").name == "Base", "names")
-        check(kb("tiny").sizeText.hasSuffix(" MB") && kb("large-q5_0").sizeText.hasSuffix(" GB"), kb("large-q5_0").sizeText)
-        check(WhisperModel.all.allSatisfy { $0.sha256.count == 64 && $0.family == .kb && $0.languages == [.swedish] }, "catalogue")
-        check(WhisperModel.families == [.kb] && WhisperModel.with(id: "x") == nil, "families")
+    ("Whisper models are multilingual, ranked best first and name their files", {
+        check(WhisperModel.all.map(\.id) == ["ggml-large-v3", "ggml-large-v3-turbo", "ggml-large-v3-turbo-q8_0", "ggml-large-v3-q5_0",
+                                              "ggml-large-v3-turbo-q5_0"], "catalogue")
+        check(whisper("-turbo-q8_0").remoteURL.absoluteString
+              == "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin", "url")
+        check(whisper("-q5_0").fileName == "ggml-large-v3-q5_0.bin" && whisper("").name == "Large v3", "names")
+        check(whisper("").sizeText.hasSuffix(" GB") && whisper("-turbo-q5_0").sizeText.hasSuffix(" MB"), whisper("").sizeText)
+        check(WhisperModel.all.allSatisfy { $0.sha256.count == 64 && $0.languages == Set(MeetingLanguage.allCases) && $0.hint != nil },
+              "every model transcribes every language")
+        check(WhisperModel.all.filter(\.recommended) == [whisper("")], "one recommended")
+        check(WhisperModel.families == [.openAI] && WhisperModel.with(id: "kb-whisper-medium-q5_0") == nil, "no Swedish-only models")
     }),
 
-    ("KB-Whisper models are installed only when the whole file is there", {
+    ("Whisper models are installed only when the whole file is there", {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("models-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let tiny = kb("tiny")
+        let fastest = whisper("-turbo-q5_0")
         check(WhisperModel.installed(in: folder).isEmpty, "empty")
-        try Data(count: 10).write(to: tiny.url(in: folder))
-        check(!tiny.isInstalled(in: folder), "partial file")
-        check((try? tiny.verify(tiny.url(in: folder))) == nil, "wrong size rejected")
+        try Data(count: 10).write(to: fastest.url(in: folder))
+        check(!fastest.isInstalled(in: folder), "partial file")
         do {
-            try tiny.verify(tiny.url(in: folder))
+            try fastest.verify(fastest.url(in: folder))
+            check(false, "wrong size accepted")
         } catch let error as WhisperModelError {
-            check(error == .wrongSize(expected: tiny.bytes, got: 10), "\(error)")
+            check(error == .wrongSize(expected: fastest.bytes, got: 10), "\(error)")
         }
         check(AppPaths.models.lastPathComponent == "Models", AppPaths.models.path)
     }),
 
-    ("transcription engine choice falls back to Apple", {
-        let (tiny, medium) = (kb("tiny"), kb("medium-q5_0"))
-        check(TranscriptionEngine(storedValue: "kb-whisper-medium-q5_0") == .whisper(medium), "stored whisper")
+    ("model files no longer in the catalogue are leftovers", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("models-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder.appendingPathComponent("speaker-diarization"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        for name in ["kb-whisper-medium-q5_0.bin", "ggml-large-v3.bin", "notes.txt"] {
+            try Data(count: 1).write(to: folder.appendingPathComponent(name))
+        }
+        check(WhisperModel.leftovers(in: folder).map(\.lastPathComponent) == ["kb-whisper-medium-q5_0.bin"], "leftovers")
+    }),
+
+    ("transcription engine choice falls back to the best downloaded model, then Apple", {
+        let (best, fastest) = (whisper(""), whisper("-turbo-q5_0"))
+        check(TranscriptionEngine(storedValue: "ggml-large-v3") == .whisper(best), "stored whisper")
         check(TranscriptionEngine(storedValue: nil) == .apple && TranscriptionEngine(storedValue: "x") == .apple, "default")
-        check(TranscriptionEngine.whisper(kb("small")).storedValue == "kb-whisper-small", "stores engine name")
-        check(TranscriptionEngine.whisper(kb("large-q5_0")).displayName == "KB-Whisper Large", "display")
-        check(TranscriptionEngine.choices(for: .swedish, installed: [tiny, medium]) == [.apple, .whisper(tiny), .whisper(medium)],
-              "swedish choices")
-        check(TranscriptionEngine.choices(for: .english, installed: [tiny]) == [.apple], "english is Apple")
-        check(TranscriptionEngine.selected(for: .swedish, stored: "kb-whisper-tiny", installed: [tiny]) == .whisper(tiny), "kept")
-        check(TranscriptionEngine.selected(for: .swedish, stored: "kb-whisper-tiny", installed: []) == .apple, "removed model")
-        check(TranscriptionEngine.selected(for: .english, stored: "kb-whisper-tiny", installed: [tiny]) == .apple, "english")
-        check(TranscriptionEngine.whisperLanguages == [.swedish], "languages with a choice")
-        check(TranscriptionEngine.storageKey(for: .swedish) == "transcriptionEngine.sv-SE", "key")
+        check(TranscriptionEngine.whisper(fastest).storedValue == "ggml-large-v3-turbo-q5_0", "stores the model")
+        check(TranscriptionEngine.whisper(best).displayName == "Whisper Large v3", "display")
+        check(TranscriptionEngine.choices(installed: [best, fastest]) == [.apple, .whisper(best), .whisper(fastest)], "choices")
+        check(TranscriptionEngine.selected(stored: nil, installed: [best]) == .apple, "nothing chosen stays Apple")
+        check(TranscriptionEngine.selected(stored: "apple", installed: [best]) == .apple, "Apple chosen")
+        check(TranscriptionEngine.selected(stored: "ggml-large-v3-turbo-q5_0", installed: [best, fastest]) == .whisper(fastest), "kept")
+        check(TranscriptionEngine.selected(stored: "kb-whisper-medium-q5_0", installed: [fastest]) == .whisper(fastest),
+              "a KB model falls back to the best downloaded")
+        check(TranscriptionEngine.selected(stored: "kb-whisper-medium-q5_0", installed: []) == .apple, "or Apple")
+        let defaults = UserDefaults(suiteName: "engine-\(UUID().uuidString)")!
+        defaults.set("kb-whisper-medium-q5_0", forKey: "transcriptionEngine.sv-SE")
+        check(TranscriptionEngine.stored(in: defaults) == "kb-whisper-medium-q5_0", "the old per-language choice is read")
+        check(TranscriptionEngine.beamSearch(defaults: defaults), "beam search is on by default")
+        defaults.set(false, forKey: TranscriptionEngine.beamSearchKey)
+        check(!TranscriptionEngine.beamSearch(defaults: defaults), "beam search off")
+    }),
+
+    ("Whisper picks the likeliest of the languages listened for", {
+        let detected = ["nn": 0.5, "sv": 0.3, "en": 0.2]
+        check(WhisperLogic.language(detected, allowed: ["sv", "en"], fallback: "en") == "sv", "Norwegian is not listened for")
+        check(WhisperLogic.language(detected, allowed: [], fallback: "en") == "nn", "any language")
+        check(WhisperLogic.language([:], allowed: ["sv", "en"], fallback: "en") == "en", "fallback")
+    }),
+
+    ("the vocabulary prompt spells domain terms, names, projects and ticket terms within the limit", {
+        let prompt = WhisperLogic.vocabularyPrompt(names: ["Anna Berg", "anna berg", ""],
+                                                   ticketKeys: ["QDLY-1", "QDLY-2", "ISD-9"],
+                                                   ticketTitles: ["Send Strawbay cases to execution", "Fees for Strawbay in GraphQL", "Fix the bug"])
+        check(prompt == "Quiddly, finq, QDLY, Jira, PR, Anna Berg, ISD, Strawbay, GraphQL.", prompt)
+        let short = WhisperLogic.vocabularyPrompt(names: ["Anna Berg"], ticketKeys: [], ticketTitles: [], limit: 24)
+        check(short == "Quiddly, finq, QDLY.", short)
+        check(WhisperLogic.vocabularyPrompt(names: [], ticketKeys: [], ticketTitles: [], limit: 1) == "", "nothing fits")
+    }),
+
+    ("Whisper's silence hallucinations and loops are dropped", {
+        check(ProcessingLogic.isHallucination("Tack för att ni tittade!") && ProcessingLogic.isHallucination(" Textning: Stina Hedin"),
+              "Swedish")
+        check(ProcessingLogic.isHallucination("Thanks for watching.") && ProcessingLogic.isHallucination("Subtitles by the Amara.org community"),
+              "English")
+        check(!ProcessingLogic.isHallucination("Tack för att ni tittade på demon, nu går vi vidare till nästa punkt på listan"), "real speech")
+        check(ProcessingLogic.collapseRepeats("the the the the the plan") == "the plan", "word loop")
+        check(ProcessingLogic.collapseRepeats("ja vi ses vi ses vi ses vi ses då") == "ja vi ses då", "phrase loop")
+        check(ProcessingLogic.collapseRepeats("nej nej nej det går") == "nej nej nej det går", "three is speech")
+        let sentences = ProcessingLogic.whisperSentences([(" We're good, we're good, we're good, we're good.", 0), (" .", 100),
+                                                          (" Tack för att ni tittade!", 200)])
+        check(sentences == [TranscriptSegment(start: 0, text: "We're good,")], "\(sentences)")
     }),
 
     ("whisper segments become sentences without sound labels", {

@@ -540,6 +540,19 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
+    /// The words Whisper should expect, from the people named in meetings and the Jira tickets seen.
+    func vocabularyPrompt() throws -> String {
+        try read {
+            let names = try db.query("""
+                SELECT name FROM known_voices UNION SELECT name FROM speakers WHERE name IS NOT NULL AND name <> ''
+                """, []) { $0.string(0) }
+            let tickets = try db.query("SELECT key, title FROM tickets ORDER BY updated DESC LIMIT 500", []) {
+                ($0.string(0), $0.optionalString(1) ?? "")
+            }
+            return WhisperLogic.vocabularyPrompt(names: names, ticketKeys: tickets.map(\.0), ticketTitles: tickets.map(\.1))
+        }
+    }
+
     func knownVoices() throws -> [KnownVoice] {
         try read {
             try db.query("SELECT id, name, embedding, updated FROM known_voices ORDER BY name COLLATE NOCASE") {

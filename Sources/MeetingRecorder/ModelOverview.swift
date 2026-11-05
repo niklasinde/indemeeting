@@ -14,7 +14,7 @@ struct ModelOverview: View {
     @ObservedObject var speakers: SpeakerRecognitionModels
     @ObservedObject var tracker: ActivityTracker
     @ObservedObject private var listened = ListenedLanguages.shared
-    @AppStorage(TranscriptionEngine.storageKey(for: .swedish)) private var swedishEngine = TranscriptionEngine.appleValue
+    @AppStorage(TranscriptionEngine.storageKey) private var storedEngine: String?
     let show: (SettingsAnchor) -> Void
 
     private enum Source {
@@ -43,7 +43,7 @@ struct ModelOverview: View {
                 Divider().padding(.leading, 14)
                 step("Transcription", "Apple speech", .builtIn, detail: "About 400 MB per language \u{00B7} the default", state: speechState)
                 Divider().padding(.leading, 14)
-                step("Transcription", "KB-Whisper", .download, detail: whisperDetail, state: whisperState, anchor: .whisper)
+                step("Transcription", "Whisper", .download, detail: whisperDetail, state: whisperState, anchor: .whisper)
                 Divider().padding(.leading, 14)
                 step("Speaker recognition", "FluidAudio", .download, detail: "\(SpeakerModel.sizeText) \u{00B7} tells the other participants apart",
                      state: ModelState(speakers.status), anchor: .speakers)
@@ -67,9 +67,9 @@ struct ModelOverview: View {
         let sizes = WhisperModel.all.map(\.bytes)
         let range = [sizes.min() ?? 0, sizes.max() ?? 0].map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
             .joined(separator: "\u{2013}")
-        let engine = TranscriptionEngine.selected(for: .swedish, stored: swedishEngine, installed: whisper.installed)
-        if engine != .apple { return "\(range) \u{00B7} \(engine.displayName) transcribes Svenska" }
-        return "\(range) \u{00B7} " + (whisper.installed.isEmpty ? "Swedish" : "Apple still transcribes Svenska")
+        let engine = TranscriptionEngine.selected(stored: storedEngine ?? TranscriptionEngine.stored(), installed: whisper.installed)
+        if engine != .apple { return "\(range) \u{00B7} \(engine.displayName) transcribes meetings" }
+        return "\(range) \u{00B7} " + (whisper.installed.isEmpty ? "Multilingual" : "Apple still transcribes meetings")
     }
 
     private var categoryState: ModelState {

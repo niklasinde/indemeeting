@@ -122,6 +122,7 @@ final class SpeechModels: ObservableObject {
 @MainActor
 final class WhisperModels: ObservableObject {
     @Published var statuses: [WhisperModel: SpeechModelStatus] = [:]
+    @Published var leftovers: [URL] = []
     private var downloads: [WhisperModel: (task: URLSessionDownloadTask, progress: AnyCancellable)] = [:]
 
     var installed: [WhisperModel] { WhisperModel.all.filter { status(of: $0) == .installed } }
@@ -129,6 +130,7 @@ final class WhisperModels: ObservableObject {
     func status(of model: WhisperModel) -> SpeechModelStatus { statuses[model] ?? .notDownloaded }
 
     func refresh() {
+        leftovers = WhisperModel.leftovers()
         for model in WhisperModel.all where downloads[model] == nil {
             if model.isInstalled() {
                 statuses[model] = .installed
@@ -162,6 +164,11 @@ final class WhisperModels: ObservableObject {
     func remove(_ model: WhisperModel) {
         try? FileManager.default.removeItem(at: model.url())
         statuses[model] = .notDownloaded
+    }
+
+    func delete(_ leftover: URL) {
+        try? FileManager.default.removeItem(at: leftover)
+        leftovers = WhisperModel.leftovers()
     }
 
     private func finish(_ model: WhisperModel, _ result: Result<Void, Error>) {
@@ -252,6 +259,7 @@ struct SettingsView: View {
     @ObservedObject var tracker: ActivityTracker
     @ObservedObject private var listened = ListenedLanguages.shared
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
+    @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -319,12 +327,15 @@ struct SettingsView: View {
                     speechRow(language)
                 }
             }
-            section("Transcription", footer: nil) {
-                ForEach(Array(TranscriptionEngine.whisperLanguages.enumerated()), id: \.element) { index, language in
-                    if index > 0 { Divider().padding(.leading, 14) }
-                    row("Transcribe \(language.displayName) with") {
-                        EnginePicker(language: language, installed: whisper.installed)
-                    }
+            section("Transcription", footer: "Apple needs no download but writes Swedish without punctuation. A Whisper model "
+                    + "is more accurate and follows a meeting from one language to another.") {
+                row("Transcribe with") { EnginePicker(installed: whisper.installed) }
+                Divider().padding(.leading, 14)
+                row("Higher accuracy", detail: "Beam search with Whisper, slower") {
+                    Toggle("Higher accuracy", isOn: $beamSearch)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
                 }
             }
             ForEach(WhisperModel.families, id: \.self) { family in
@@ -335,6 +346,16 @@ struct SettingsView: View {
                     }
                 }
                 .id(family == WhisperModel.families.first ? SettingsAnchor.whisper : nil)
+            }
+            if !whisper.leftovers.isEmpty {
+                section("Other model files", footer: "Models Meeting Recorder no longer uses. Delete them to free up space.") {
+                    ForEach(Array(whisper.leftovers.enumerated()), id: \.element) { index, file in
+                        if index > 0 { Divider().padding(.leading, 14) }
+                        row(file.deletingPathExtension().lastPathComponent, detail: Self.size(of: file)) {
+                            Button("Delete") { whisper.delete(file) }
+                        }
+                    }
+                }
             }
             section(SpeakerModel.name, footer: "Tells the other participants apart as Speaker 1, Speaker 2, \u{2026} on this Mac "
                     + "with FluidAudio\u{2019}s pyannote models, downloaded once from Hugging Face. Click a speaker in a "
@@ -389,14 +410,20 @@ struct SettingsView: View {
     }
 
     private func whisperRow(_ model: WhisperModel) -> some View {
-        modelRow(model.name, size: model.sizeText, status: whisper.status(of: model), download: { whisper.download(model) },
-                 cancel: { whisper.cancel(model) }, remove: { whisper.remove(model) })
+        modelRow(model.name, size: [model.sizeText, model.hint].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                 badge: model.recommended ? "Recommended" : nil, status: whisper.status(of: model),
+                 download: { whisper.download(model) }, cancel: { whisper.cancel(model) }, remove: { whisper.remove(model) })
+    }
+
+    private static func size(of file: URL) -> String? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64)
+            .map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
     }
 
     /// A downloadable model: its size and status, with Download, a cancellable progress bar, or Remove.
-    private func modelRow(_ title: String, size: String, status: SpeechModelStatus, download: @escaping () -> Void,
-                          cancel: @escaping () -> Void, remove: @escaping () -> Void) -> some View {
-        row(title, detail: status == .unsupported ? status.text : "\(size) \u{00B7} \(status.text)") {
+    private func modelRow(_ title: String, size: String, badge: String? = nil, status: SpeechModelStatus,
+                          download: @escaping () -> Void, cancel: @escaping () -> Void, remove: @escaping () -> Void) -> some View {
+        SettingsRow(title, detail: status == .unsupported ? status.text : "\(size) \u{00B7} \(status.text)", badge: badge) {
             switch status {
             case .downloading(let fraction):
                 ProgressView(value: fraction ?? 0).frame(width: 120)
@@ -459,18 +486,30 @@ struct SettingsSection<Content: View>: View {
 struct SettingsRow<Trailing: View>: View {
     let title: String
     let detail: String?
+    var badge: String? = nil
     let trailing: Trailing
 
-    init(_ title: String, detail: String? = nil, @ViewBuilder trailing: () -> Trailing) {
+    init(_ title: String, detail: String? = nil, badge: String? = nil, @ViewBuilder trailing: () -> Trailing) {
         self.title = title
         self.detail = detail
+        self.badge = badge
         self.trailing = trailing()
     }
 
     var body: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                HStack(spacing: 6) {
+                    Text(title)
+                    if let badge {
+                        Text(badge)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.accentColor))
+                    }
+                }
                 if let detail {
                     Text(detail)
                         .font(.callout)
@@ -487,23 +526,16 @@ struct SettingsRow<Trailing: View>: View {
     }
 }
 
-/// Picks what transcribes a language: Apple, or a downloaded Whisper model that supports it.
+/// Picks what transcribes meetings: Apple, or a downloaded Whisper model.
 private struct EnginePicker: View {
-    let language: MeetingLanguage
     let installed: [WhisperModel]
-    @AppStorage private var stored: String
-
-    init(language: MeetingLanguage, installed: [WhisperModel]) {
-        self.language = language
-        self.installed = installed
-        _stored = AppStorage(wrappedValue: TranscriptionEngine.appleValue, TranscriptionEngine.storageKey(for: language))
-    }
+    @AppStorage(TranscriptionEngine.storageKey) private var stored: String?
 
     var body: some View {
-        Picker("Transcribe \(language.displayName) with", selection: Binding(
-            get: { TranscriptionEngine.selected(for: language, stored: stored, installed: installed) },
+        Picker("Transcribe with", selection: Binding(
+            get: { TranscriptionEngine.selected(stored: stored ?? TranscriptionEngine.stored(), installed: installed) },
             set: { stored = $0.storedValue })) {
-            ForEach(TranscriptionEngine.choices(for: language, installed: installed), id: \.self) { Text($0.displayName).tag($0) }
+            ForEach(TranscriptionEngine.choices(installed: installed), id: \.self) { Text($0.displayName).tag($0) }
         }
         .labelsHidden()
         .fixedSize()

@@ -17,7 +17,8 @@ enum MeetingPipeline {
         try await recordingFailure(of: audio, in: store) {
             let language = await detectLanguage(of: audio, among: languages, progress: progress)
             await progress(.transcribing())
-            let transcript = try await Transcriber.transcribeMeeting(audio, language: language.language) { fraction in
+            let transcript = try await Transcriber.transcribeMeeting(audio, language: language.language, among: languages,
+                                                                     vocabulary: try? store.vocabularyPrompt()) { fraction in
                 Task { @MainActor in progress(.transcribing(progress: fraction)) }
             }
             let recognised = await recogniseSpeakers(transcript.segments, in: audio, store: store, progress: progress)

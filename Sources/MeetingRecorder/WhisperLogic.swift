@@ -6,11 +6,13 @@ struct WhisperFamily: Hashable {
     let name: String
     let about: String
 
-    static let kb = WhisperFamily(name: "KB-Whisper", about: "Swedish speech models from the National Library of Sweden, downloaded "
-                                  + "from Hugging Face and run on this Mac with whisper.cpp. Larger models are more accurate and slower.")
+    static let openAI = WhisperFamily(name: "Whisper", about: "OpenAI\u{2019}s multilingual speech models, downloaded from Hugging "
+                                      + "Face and run on this Mac with whisper.cpp. The language is detected for each stretch of "
+                                      + "speech, so a meeting can switch between the languages you listen for.")
 }
 
-/// A whisper.cpp model that can be downloaded from Hugging Face. Add one to `all` to offer it in Settings.
+/// A whisper.cpp model that can be downloaded from Hugging Face. Add one to `all` to offer it in Settings; the list is
+/// ranked best quality first.
 struct WhisperModel: Hashable, Identifiable {
     let id: String
     let name: String
@@ -20,25 +22,27 @@ struct WhisperModel: Hashable, Identifiable {
     let bytes: Int64
     let sha256: String
     let languages: Set<MeetingLanguage>
+    var hint: String? = nil
+    var recommended = false
 
     static let all: [WhisperModel] = [
-        .kb("tiny", bytes: 77_691_730,
-            sha256: "054187c95948ee0455d428db0c0d6c84d6c6157dab72e86857ced13233118b03"),
-        .kb("base", bytes: 147_951_482,
-            sha256: "f5e3cdb33e537eedfa2a749b5cae28c4c511873a1b13362f87dffbe07891d3fe"),
-        .kb("small", bytes: 487_601_984,
-            sha256: "de6911330cbdc131362f7a955682b65c8a5a2394caba73e7ea821a9822efb8c6"),
-        .kb("medium", quantization: "q5_0", bytes: 539_212_484,
-            sha256: "7f8762e0ade9e0073674c0d5acae942a0b1ea98add9baa008ee89c94eaba43d0"),
-        .kb("large", quantization: "q5_0", bytes: 1_081_140_203,
-            sha256: "6d2863812d7410322bb7d8647a5c7260761300fa946714c9ed66d22bb30bcb19"),
+        .openAI("ggml-large-v3.bin", name: "Large v3", hint: "Best quality, slowest", recommended: true, bytes: 3_095_033_483,
+                sha256: "64d182b440b98d5203c4f9bd541544d84c605196c4f7b845dfa11fb23594d1e2"),
+        .openAI("ggml-large-v3-turbo.bin", name: "Large v3 Turbo", hint: "Near-best quality, faster", bytes: 1_624_555_275,
+                sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"),
+        .openAI("ggml-large-v3-turbo-q8_0.bin", name: "Large v3 Turbo (8-bit)", hint: "Best quality for its size",
+                bytes: 874_188_075, sha256: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"),
+        .openAI("ggml-large-v3-q5_0.bin", name: "Large v3 (5-bit)", hint: "Smaller, slightly less accurate", bytes: 1_081_140_203,
+                sha256: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"),
+        .openAI("ggml-large-v3-turbo-q5_0.bin", name: "Large v3 Turbo (5-bit)", hint: "Fastest", bytes: 574_041_195,
+                sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"),
     ]
 
-    /// A KBLab model, named after its size and quantization: `kb-whisper-medium-q5_0`.
-    static func kb(_ size: String, quantization: String? = nil, bytes: Int64, sha256: String) -> WhisperModel {
-        let suffix = quantization.map { "-" + $0 } ?? ""
-        return WhisperModel(id: "kb-whisper-\(size)\(suffix)", name: size.capitalized, family: .kb, repo: "KBLab/kb-whisper-\(size)",
-                            file: "ggml-model\(suffix).bin", bytes: bytes, sha256: sha256, languages: [.swedish])
+    /// A model from whisper.cpp's own repository, named after its file: `ggml-large-v3-turbo-q8_0`.
+    static func openAI(_ file: String, name: String, hint: String, recommended: Bool = false, bytes: Int64,
+                       sha256: String) -> WhisperModel {
+        WhisperModel(id: String(file.dropLast(".bin".count)), name: name, family: .openAI, repo: "ggerganov/whisper.cpp", file: file,
+                     bytes: bytes, sha256: sha256, languages: Set(MeetingLanguage.allCases), hint: hint, recommended: recommended)
     }
 
     static func with(id: String) -> WhisperModel? { all.first { $0.id == id } }
@@ -57,6 +61,14 @@ struct WhisperModel: Hashable, Identifiable {
     }
 
     static func installed(in folder: URL = AppPaths.models) -> [WhisperModel] { all.filter { $0.isInstalled(in: folder) } }
+
+    /// Model files in the folder that no model in the catalogue uses, such as KB-Whisper's.
+    static func leftovers(in folder: URL = AppPaths.models) -> [URL] {
+        let names = Set(all.map(\.fileName))
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "bin" && !names.contains($0.lastPathComponent) }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    }
 
     /// Checks a downloaded file is this model, byte for byte.
     func verify(_ file: URL) throws {
@@ -88,17 +100,19 @@ enum WhisperModelError: LocalizedError, Equatable {
         case .notInstalled(let model): return "\(model.displayName) is not downloaded. Download it in Settings."
         case .couldNotLoad(let model):
             return "\(model.displayName) could not be loaded. Remove it and download it again in Settings."
-        case .unavailable: return "This build of Meeting Recorder does not include KB-Whisper."
+        case .unavailable: return "This build of Meeting Recorder does not include Whisper."
         }
     }
 }
 
-/// What transcribes a language: Apple's on-device speech models, or a downloaded Whisper model that supports it.
+/// What transcribes meetings: Apple's on-device speech models, or a downloaded Whisper model.
 enum TranscriptionEngine: Hashable {
     case apple
     case whisper(WhisperModel)
 
     static let appleValue = "apple"
+    static let storageKey = "transcriptionEngine"
+    static let beamSearchKey = "whisperBeamSearch"
 
     init(storedValue: String?) {
         self = storedValue.flatMap(WhisperModel.with(id:)).map(Self.whisper) ?? .apple
@@ -114,39 +128,189 @@ enum TranscriptionEngine: Hashable {
         return "Apple"
     }
 
-    static func storageKey(for language: MeetingLanguage) -> String { "transcriptionEngine.\(language.rawValue)" }
+    /// The engines Settings offers: Apple, then each downloaded model, best first.
+    static func choices(installed: [WhisperModel]) -> [TranscriptionEngine] { [.apple] + installed.map(Self.whisper) }
 
-    /// The languages some Whisper model in the catalogue can transcribe, so Settings offers a choice for them.
-    static var whisperLanguages: [MeetingLanguage] {
-        MeetingLanguage.allCases.filter { language in WhisperModel.all.contains { $0.languages.contains(language) } }
+    /// The stored choice. Nothing stored is Apple; a model that is gone, or one no longer offered, falls back to the best
+    /// downloaded model, or Apple when there is none.
+    static func selected(stored: String?, installed: [WhisperModel]) -> TranscriptionEngine {
+        guard let stored, stored != appleValue else { return .apple }
+        if let model = installed.first(where: { $0.id == stored }) { return .whisper(model) }
+        return installed.first.map(Self.whisper) ?? .apple
     }
 
-    /// The engines Settings offers for a language: Apple, then each downloaded model that supports it.
-    static func choices(for language: MeetingLanguage, installed: [WhisperModel]) -> [TranscriptionEngine] {
-        [.apple] + installed.filter { $0.languages.contains(language) }.map(Self.whisper)
+    /// The stored choice, or the one stored per language before there was a single setting.
+    static func stored(in defaults: UserDefaults = .standard) -> String? {
+        defaults.string(forKey: storageKey)
+            ?? MeetingLanguage.allCases.lazy.compactMap { defaults.string(forKey: "\(storageKey).\($0.rawValue)") }.first
     }
 
-    /// The stored choice for a language, or Apple when that model is no longer downloaded.
-    static func selected(for language: MeetingLanguage, stored: String?, installed: [WhisperModel]) -> TranscriptionEngine {
-        let engine = TranscriptionEngine(storedValue: stored)
-        return choices(for: language, installed: installed).contains(engine) ? engine : .apple
+    static func current(defaults: UserDefaults = .standard) -> TranscriptionEngine {
+        selected(stored: stored(in: defaults), installed: WhisperModel.installed())
     }
 
-    static func current(for language: MeetingLanguage, defaults: UserDefaults = .standard) -> TranscriptionEngine {
-        selected(for: language, stored: defaults.string(forKey: storageKey(for: language)), installed: WhisperModel.installed())
+    static func beamSearch(defaults: UserDefaults = .standard) -> Bool { defaults.object(forKey: beamSearchKey) as? Bool ?? true }
+}
+
+/// Where to cut audio into stretches Whisper detects the language of one by one: at the middle of a pause once a stretch
+/// is long enough, or at its quietest frame when it reaches the maximum.
+enum SpeechChunks {
+    static let frameLength: TimeInterval = 0.1
+    static let minimumPause: TimeInterval = 0.5
+    static let minimumChunk: TimeInterval = 8
+    static let maximumChunk: TimeInterval = 28
+
+    /// Frame ranges; `levels` is the RMS of each frame.
+    static func chunks(levels: [Double], threshold: Double = LevelMeter.soundThreshold) -> [Range<Int>] {
+        let minimum = Int(minimumChunk / frameLength), maximum = Int(maximumChunk / frameLength)
+        let pause = Int(minimumPause / frameLength)
+        var ranges: [Range<Int>] = []
+        var start = 0
+        var quiet = 0
+        var index = 0
+        while index < levels.count {
+            quiet = levels[index] < threshold ? quiet + 1 : 0
+            let length = index + 1 - start
+            if length >= minimum, quiet >= pause {
+                let cut = index + 1 - quiet / 2
+                ranges.append(start..<cut)
+                start = cut
+                quiet = 0
+            } else if length >= maximum {
+                let window = (start + minimum)...index
+                let cut = window.min { levels[$0] < levels[$1] }.map { $0 + 1 } ?? index + 1
+                ranges.append(start..<cut)
+                start = cut
+                quiet = 0
+                index = cut - 1
+            }
+            index += 1
+        }
+        if start < levels.count { ranges.append(start..<levels.count) }
+        return ranges
+    }
+
+    /// Sample ranges of `samples` at `sampleRate`.
+    static func ranges(of samples: [Float], sampleRate: Double) -> [Range<Int>] {
+        let frame = Int(frameLength * sampleRate)
+        let levels = stride(from: 0, to: samples.count, by: frame).map { start in
+            var meter = LevelMeter()
+            meter.add(Array(samples[start..<min(samples.count, start + frame)]))
+            return meter.rms
+        }
+        return chunks(levels: levels).map { $0.lowerBound * frame..<min(samples.count, $0.upperBound * frame) }
+    }
+}
+
+enum WhisperLogic {
+    static let domainTerms = ["Quiddly", "finq", "QDLY", "Jira", "PR"]
+    /// Whisper reads at most 224 prompt tokens; this many characters stays under that in Swedish and English.
+    static let promptLimit = 550
+
+    /// A prompt that spells the words meetings are likely to use: the domain terms, people's names, Jira project keys,
+    /// then the names and acronyms most used in ticket titles. Whatever does not fit in `limit` characters is dropped.
+    static func vocabularyPrompt(names: [String], ticketKeys: [String], ticketTitles: [String], limit: Int = promptLimit) -> String {
+        let projects = ticketKeys.compactMap { $0.split(separator: "-").first.map(String.init) }
+        var counts: [String: Int] = [:]
+        for title in ticketTitles {
+            for (index, word) in words(title).enumerated() where isDistinctive(word, first: index == 0) { counts[word, default: 0] += 1 }
+        }
+        let titleTerms = counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.map(\.key)
+        var seen: Set<String> = []
+        var prompt = ""
+        for term in domainTerms + names + byFrequency(projects) + titleTerms {
+            let term = term.trimmingCharacters(in: .whitespaces)
+            guard !term.isEmpty, seen.insert(term.lowercased()).inserted else { continue }
+            let next = prompt.isEmpty ? term : prompt + ", " + term
+            guard next.count + 1 <= limit else { break }
+            prompt = next
+        }
+        return prompt.isEmpty ? "" : prompt + "."
+    }
+
+    /// The most likely of `allowed` (Whisper codes) in `probabilities`; any language when none is allowed, and `fallback`
+    /// when there is nothing to go on.
+    static func language(_ probabilities: [String: Double], allowed: [String], fallback: String) -> String {
+        let candidates = allowed.isEmpty ? probabilities : probabilities.filter { allowed.contains($0.key) }
+        return candidates.max { $0.value < $1.value }?.key ?? fallback
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.split { $0.isWhitespace || ",.:;()[]\"'/".contains($0) }.map(String.init)
+    }
+
+    /// A name, product or acronym: capitalised mid-title, or with capitals, digits or dots inside, as `GraphQL` or `SIE4`.
+    private static func isDistinctive(_ word: String, first: Bool) -> Bool {
+        guard word.count >= 3, word.first?.isLetter == true, !word.contains("-") else { return false }
+        let inner = word.dropFirst()
+        if inner.contains(where: \.isUppercase) || inner.contains(where: \.isNumber) { return true }
+        return !first && word.first?.isUppercase == true
+    }
+
+    private static func byFrequency(_ values: [String]) -> [String] {
+        Dictionary(values.map { ($0, 1) }, uniquingKeysWith: +).sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .map(\.key)
     }
 }
 
 extension ProcessingLogic {
+    static let hallucinations = ["tack för att ni tittade", "tack för att du tittade", "tack för att ni lyssnade", "textning",
+                                 "undertexter", "thanks for watching", "thank you for watching", "subtitles by"]
+
     /// Whisper's hallucinations on silence and its bracketed sound labels, such as `[MUSIK]` or `(skratt)`.
     static func isWhisperNoise(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first, let last = trimmed.last else { return true }
-        return "[(*♪".contains(first) && "])*♪".contains(last)
+        return "[(*♪".contains(first) && "])*♪".contains(last) || isHallucination(trimmed)
+    }
+
+    /// A known phrase Whisper writes over silence, such as "Tack för att ni tittade!" or "Textning: …", alone in a
+    /// segment of a few words.
+    static func isHallucination(_ text: String) -> Bool {
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
+        let normalized = words.joined(separator: " ")
+        return hallucinations.contains { phrase in
+            normalized.hasPrefix(phrase) && words.count <= phrase.split(separator: " ").count + 4
+        }
+    }
+
+    /// The text with any run of a word or phrase of up to four words repeated four or more times kept once, as Whisper
+    /// loops on "the the the the" or "vi ses vi ses vi ses vi ses".
+    static func collapseRepeats(_ text: String, minimum: Int = 4) -> String {
+        let words = text.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
+        let keys = words.map { $0.lowercased().filter { $0.isLetter || $0.isNumber } }
+        var kept: [String] = []
+        var index = 0
+        while index < words.count {
+            var skipped = false
+            for length in 1...4 where index + length * minimum <= words.count {
+                let phrase = keys[index..<index + length]
+                guard phrase.contains(where: { !$0.isEmpty }) else { continue }
+                var repeats = 1
+                while index + (repeats + 1) * length <= words.count,
+                      keys[index + repeats * length..<index + (repeats + 1) * length].elementsEqual(phrase) { repeats += 1 }
+                if repeats >= minimum {
+                    kept += words[index..<index + length]
+                    index += repeats * length
+                    skipped = true
+                    break
+                }
+            }
+            if !skipped {
+                kept.append(words[index])
+                index += 1
+            }
+        }
+        return kept.joined(separator: " ")
     }
 
     /// Sentences from whisper.cpp segments, whose times are in hundredths of a second.
     static func whisperSentences(_ segments: [(text: String, start: Int64)]) -> [TranscriptSegment] {
         sentences(segments.filter { !isWhisperNoise($0.text) }.map { ($0.text, TimeInterval($0.start) / 100) }, from: 0)
+            .compactMap { segment in
+                let text = collapseRepeats(segment.text)
+                guard text.contains(where: { $0.isLetter || $0.isNumber }), !isWhisperNoise(text) else { return nil }
+                return TranscriptSegment(start: segment.start, text: text)
+            }
     }
 }

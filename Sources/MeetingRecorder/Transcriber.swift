@@ -29,17 +29,22 @@ protocol SpeechEngine {
 }
 
 enum Transcriber {
-    static func engine(for language: MeetingLanguage) throws -> any SpeechEngine {
-        switch TranscriptionEngine.current(for: language) {
+    /// Apple transcribes the whole meeting in `language`; Whisper detects each stretch's language among `languages`.
+    static func engine(for language: MeetingLanguage, among languages: [MeetingLanguage], vocabulary: String?) throws -> any SpeechEngine {
+        switch TranscriptionEngine.current() {
         case .apple: return AppleSpeechEngine(language: language)
-        case .whisper(let model): return try WhisperEngine(model: model, language: language)
+        case .whisper(let model):
+            let options = WhisperOptions(languages: (languages.isEmpty ? [language] : languages).map(\.code), fallback: language.code,
+                                         prompt: vocabulary, beamSearch: TranscriptionEngine.beamSearch())
+            return try WhisperEngine(model: model, options: options)
         }
     }
 
     /// A meeting with stems is transcribed per stem, so every segment has a speaker; others from the mix.
-    static func transcribeMeeting(_ audio: URL, language: MeetingLanguage,
+    static func transcribeMeeting(_ audio: URL, language: MeetingLanguage, among languages: [MeetingLanguage] = [],
+                                  vocabulary: String? = nil,
                                   progress: @escaping TranscriptionProgress = { _ in }) async throws -> Transcript {
-        let engine = try engine(for: language)
+        let engine = try engine(for: language, among: languages, vocabulary: vocabulary)
         guard let stems = RecordingLogic.stems(of: audio) else { return try await engine.transcribe(audio, progress: progress) }
         var transcripts: [Transcript?] = []
         for (index, stem) in stems.enumerated() {
