@@ -136,12 +136,15 @@ enum MeetingPipeline {
         FileHandle.standardError.write(Data((message + "\n").utf8))
     }
 
-    static func runFromCommandLine(_ audio: URL, languages: [MeetingLanguage], recogniseOnly: Bool, store: MeetingStore) -> Never {
+    static func runFromCommandLine(_ audio: URL, languages: [MeetingLanguage], mode: ProcessingLogic.ProcessMode, store: MeetingStore) -> Never {
         Task {
             do {
                 let progress: @MainActor (ProcessingStage) -> Void = { print($0.text(for: audio.lastPathComponent)) }
-                let result = recogniseOnly ? try await recogniseSpeakers(audio, store: store, progress: progress)
-                    : try await run(audio, languages: languages, store: store, progress: progress)
+                let result = switch mode {
+                case .process: try await run(audio, languages: languages, store: store, progress: progress)
+                case .recogniseSpeakers: try await recogniseSpeakers(audio, store: store, progress: progress)
+                case .resummarise: try await resummarise(audio, store: store, progress: progress)
+                }
                 print("Saved to \(AppPaths.database.path)")
                 if let content = try store.content(of: audio.lastPathComponent) {
                     let meeting = content.meeting

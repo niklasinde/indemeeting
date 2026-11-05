@@ -19,11 +19,20 @@ struct ClaudeAPIClient {
     var endpoint = ClaudeAPIRequest.endpoint
     var transport: ClaudeTransport = ClaudeAPIClient.urlSession
 
-    func reply(key: String, model: String, system: String?, messages: [ClaudeAPIMessage]) -> AsyncThrowingStream<ClaudeAPIEvent, Error> {
+    /// Extra request fields, beta headers and a longer timeout, for requests other than the chat's.
+    struct Options {
+        var maxTokens = ClaudeAPIRequest.maxTokens
+        var extra: [String: Any] = [:]
+        var betas: [String] = []
+        var timeout = ClaudeAPIRequest.timeout
+    }
+
+    func reply(key: String, model: String, system: String?, messages: [ClaudeAPIMessage],
+               options: Options = Options()) -> AsyncThrowingStream<ClaudeAPIEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await stream(key: key, model: model, system: system, messages: messages, into: continuation)
+                    try await stream(key: key, model: model, system: system, messages: messages, options: options, into: continuation)
                     continuation.finish()
                 } catch is CancellationError {
                     continuation.finish()
@@ -37,12 +46,13 @@ struct ClaudeAPIClient {
         }
     }
 
-    private func stream(key: String, model: String, system: String?, messages: [ClaudeAPIMessage],
+    private func stream(key: String, model: String, system: String?, messages: [ClaudeAPIMessage], options: Options,
                         into continuation: AsyncThrowingStream<ClaudeAPIEvent, Error>.Continuation) async throws {
-        var request = URLRequest(url: endpoint, timeoutInterval: ClaudeAPIRequest.timeout)
+        var request = URLRequest(url: endpoint, timeoutInterval: options.timeout)
         request.httpMethod = "POST"
-        request.httpBody = try ClaudeAPIRequest.body(model: model, system: system, messages: messages)
-        for (name, value) in ClaudeAPIRequest.headers(key: key) { request.setValue(value, forHTTPHeaderField: name) }
+        request.httpBody = try ClaudeAPIRequest.body(model: model, system: system, messages: messages, maxTokens: options.maxTokens,
+                                                     extra: options.extra)
+        for (name, value) in ClaudeAPIRequest.headers(key: key, betas: options.betas) { request.setValue(value, forHTTPHeaderField: name) }
 
         let response = try await transport(request)
         guard (200..<300).contains(response.status) else {
@@ -57,6 +67,7 @@ struct ClaudeAPIClient {
             if !text.isEmpty { continuation.yield(.text(text)) }
         }
         guard reader.finished else { throw ClaudeAPIError.incomplete }
+        if reader.stopReason == "refusal" { throw ClaudeAPIError.refused }
         continuation.yield(.finished(reader.usage))
     }
 

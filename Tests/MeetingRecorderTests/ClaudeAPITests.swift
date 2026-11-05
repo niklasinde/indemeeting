@@ -241,6 +241,33 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
         let echoed = replyOutcome(ClaudeAPIClient(transport: fake(status: 400, lines: [#"{"type":"error","error":{"type":"invalid_request_error","message":"bad \#(fakeKey) here"}}"#])))
         check(echoed.error?.message.contains(fakeKey) == false, "the key is redacted from a server message")
         check(echoed.error?.message.contains("sk-ant-\u{2026}") == true, "the redacted key is replaced by the marker")
+        let refusal = replyLines(["partial"]).map { $0.replacingOccurrences(of: "end_turn", with: "refusal") }
+        check(replyOutcome(ClaudeAPIClient(transport: fake(lines: refusal))).error == .refused, "a refusal stop reason is an error")
+    }),
+
+    ("extra fields, beta headers and the timeout reach the request", {
+        let seen = Seen()
+        let client = ClaudeAPIClient(transport: fake(lines: replyLines(["{}"]), seen: seen))
+        let options = ClaudeAPIClient.Options(maxTokens: 64000, extra: ClaudeSummarizer.requestFields,
+                                              betas: [ClaudeSummarizer.fallbackBeta], timeout: 600)
+        let done = DispatchSemaphore(value: 0)
+        Task {
+            let replies = client.reply(key: fakeKey, model: ClaudeSummarizer.model, system: "S",
+                                       messages: [ClaudeAPIMessage(role: .user, text: "T")], options: options)
+            do { for try await _ in replies {} } catch {}
+            done.signal()
+        }
+        done.wait()
+        let request = seen.requests.first ?? URLRequest(url: ClaudeAPIRequest.endpoint)
+        let body = parsed(request)
+        let config = body["output_config"] as? [String: Any]
+        check(body["model"] as? String == "claude-opus-5-5" && body["max_tokens"] as? Int == 64000, "model and max tokens")
+        check(config?["effort"] as? String == "medium", "medium effort")
+        check((config?["format"] as? [String: Any])?["type"] as? String == "json_schema", "json schema output")
+        check(body["fallbacks"] as? String == "default" && body["thinking"] == nil, "server fallback, adaptive thinking by default")
+        check(request.value(forHTTPHeaderField: "anthropic-beta") == "server-side-fallback-2026-07-01", "beta header")
+        check(request.timeoutInterval == 600, "longer timeout")
+        check(ClaudeAPIRequest.headers(key: fakeKey)["anthropic-beta"] == nil, "the chat sends no beta header")
     }),
 
     ("API key shape: a valid key passes, and wrong prefix, spaces, empty and short keys are refused", {
@@ -350,7 +377,7 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("the Claude API chat is reachable only from the app window: the MCP server and the phone API never mention it", {
-        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "MeetingRecorderApp.swift", "MeetingStore.swift"]
+        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "MeetingRecorderApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift"]
         for file in try sourceFiles() {
             let name = file.lastPathComponent
             guard !name.hasPrefix("ClaudeAPI") else { continue }

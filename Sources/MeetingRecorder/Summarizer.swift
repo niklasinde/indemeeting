@@ -7,8 +7,13 @@ enum Summarizer {
     static func summarise(_ segments: [TranscriptSegment], names: SpeakerNames = [:], language: MeetingLanguage,
                           progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary {
         #if canImport(FoundationModels)
-        return try await OnDeviceSummarizer(language: language)
-            .summarise(segments.map { $0.line(language, names: names) }, progress: progress)
+        let lines = segments.map { $0.line(language, names: names) }
+        do {
+            return try await OnDeviceSummarizer(language: language).summarise(lines, progress: progress)
+        } catch where ClaudeSummarizer.shouldFallBack(error) {
+            await progress(.summarisingWithClaude)
+            return try await ClaudeSummarizer.summarise(lines, language: language)
+        }
         #else
         throw SummaryUnavailable.requiresMacOS26
         #endif
@@ -94,24 +99,7 @@ private struct OnDeviceSummarizer {
         return summary
     }
 
-    private var instructions: String {
-        let you = Speaker.you.name(in: language), others = Speaker.others.name(in: language)
-        let speaker = Speaker.numbered(1).name(in: language)
-        return """
-        You write meeting notes from transcripts. Write every field in \(language.englishName). \
-        Use only information from the input; do not invent facts, names or owners. \
-        Transcript lines may name their speaker: "\(you)" is the user who recorded the meeting, \
-        "\(others)" and numbered speakers such as "\(speaker)" are other participants, any other name is a participant \
-        with that name. \
-        title: a short title of at most eight words naming the kind of meeting and its main subjects, \
-        e.g. "Daily standup \u{2013} bug fixes, validation and release". \
-        actionItems: concrete follow-ups, each task starting with a verb and keeping any deadline; \
-        owner: the first name of the person who will do it, only when the input names them or they speak the line, \
-        or "\(you)" when the user takes it on. \
-        topics: the two to five main subjects in the order discussed; each with a short title and two to five \
-        brief points holding the facts, numbers and decisions.
-        """
-    }
+    private var instructions: String { ClaudeSummarizer.instructions(language: language) }
 
     private func respond(_ prompt: String) async throws -> MeetingSummary {
         let session = LanguageModelSession(model: model, instructions: instructions)

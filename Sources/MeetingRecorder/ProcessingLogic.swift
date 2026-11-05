@@ -237,6 +237,7 @@ enum ProcessingStage: Equatable {
     case detectingLanguage
     case summarising(part: Int, of: Int)
     case combining
+    case summarisingWithClaude
 
     func text(for name: String) -> String {
         switch self {
@@ -248,6 +249,7 @@ enum ProcessingStage: Equatable {
         case .summarising(let part, let total) where total > 1: return "Summarising \(name)\u{2026} (\(part)/\(total))"
         case .summarising: return "Summarising \(name)\u{2026}"
         case .combining: return "Summarising \(name)\u{2026} (combining)"
+        case .summarisingWithClaude: return "Summarising \(name) with Claude\u{2026}"
         }
     }
 }
@@ -434,12 +436,18 @@ enum ProcessingLogic {
 
     /// `--process <audio>` transcribes, recognises speakers and summarises; `--recognise-speakers <audio>` only
     /// recognises the speakers of its stored transcript.
-    static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?, recogniseOnly: Bool)? {
-        guard let index = arguments.firstIndex(where: { $0 == "--process" || $0 == "--recognise-speakers" }),
-              index + 1 < arguments.count else { return nil }
+    enum ProcessMode: String {
+        case process = "--process"
+        case recogniseSpeakers = "--recognise-speakers"
+        case resummarise = "--resummarise"
+    }
+
+    static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?, mode: ProcessMode)? {
+        guard let index = arguments.firstIndex(where: { ProcessMode(rawValue: $0) != nil }), index + 1 < arguments.count,
+              let mode = ProcessMode(rawValue: arguments[index]) else { return nil }
         let language = arguments.firstIndex(of: "--language").flatMap {
             $0 + 1 < arguments.count ? MeetingLanguage(rawValue: arguments[$0 + 1]) : nil
         }
-        return (URL(fileURLWithPath: arguments[index + 1]), language, arguments[index] == "--recognise-speakers")
+        return (URL(fileURLWithPath: arguments[index + 1]), language, mode)
     }
 }

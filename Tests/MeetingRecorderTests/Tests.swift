@@ -78,7 +78,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
@@ -737,8 +737,10 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         let job = ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a", "--language", "en-US"])
         check(job?.audio.path == "/x/a.m4a" && job?.language == .english, "flag with language")
         check(ProcessingLogic.processArguments(["app", "--process", "/x/a.m4a"])?.language == nil, "language optional")
-        check(job?.recogniseOnly == false, "process runs everything")
-        check(ProcessingLogic.processArguments(["app", "--recognise-speakers", "/x/a.m4a"])?.recogniseOnly == true, "recognise only")
+        check(job?.mode == .process, "process runs everything")
+        check(ProcessingLogic.processArguments(["app", "--recognise-speakers", "/x/a.m4a"])?.mode == .recogniseSpeakers, "recognise only")
+        check(ProcessingLogic.processArguments(["app", "--resummarise", "/x/a.m4a"])?.mode == .resummarise, "summarise again")
+        check(ProcessingStage.summarisingWithClaude.text(for: "a.m4a") == "Summarising a.m4a with Claude\u{2026}", "with Claude")
         check(ProcessingStage.recognisingSpeakers(progress: 0.5).text(for: "a.m4a") == "Recognising speakers in a.m4a\u{2026} 50%",
               "recognising")
     }),

@@ -45,7 +45,7 @@ enum Main {
                 exit(1)
             }
             MeetingPipeline.runFromCommandLine(job.audio, languages: job.language.map { [$0] } ?? MeetingLanguage.listened(),
-                                               recogniseOnly: job.recogniseOnly, store: store)
+                                               mode: job.mode, store: store)
         }
         if let job = LanguageLogic.detectArguments(CommandLine.arguments) {
             LanguageDetector.runFromCommandLine(job.audio, among: job.candidates ?? MeetingLanguage.listened())

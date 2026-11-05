@@ -84,8 +84,10 @@ enum ClaudeAPIRequest {
         run commands or open links. Answer in the language of the user's last message, and use Markdown where it helps.
         """
 
-    static func headers(key: String) -> [String: String] {
-        ["x-api-key": key, "anthropic-version": apiVersion, "content-type": "application/json"]
+    static func headers(key: String, betas: [String] = []) -> [String: String] {
+        var headers = ["x-api-key": key, "anthropic-version": apiVersion, "content-type": "application/json"]
+        if !betas.isEmpty { headers["anthropic-beta"] = betas.joined(separator: ",") }
+        return headers
     }
 
     /// The system prompt, with the pull request the user attached as data to read, not as instructions.
@@ -108,13 +110,14 @@ enum ClaudeAPIRequest {
         return turns
     }
 
-    static func body(model: String, system: String?, messages: [ClaudeAPIMessage], maxTokens: Int = maxTokens) throws -> Data {
-        var object: [String: Any] = [
+    static func body(model: String, system: String?, messages: [ClaudeAPIMessage], maxTokens: Int = maxTokens,
+                     extra: [String: Any] = [:]) throws -> Data {
+        var object: [String: Any] = extra.merging([
             "model": model,
             "max_tokens": maxTokens,
             "stream": true,
             "messages": turns(messages).map { ["role": $0.role.rawValue, "content": $0.text] },
-        ]
+        ]) { $1 }
         if let system { object["system"] = system }
         return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
@@ -196,6 +199,7 @@ struct ClaudeStreamReader {
     private var parser = SSEParser()
     private(set) var inputTokens: Int?
     private(set) var outputTokens: Int?
+    private(set) var stopReason: String?
     private(set) var finished = false
 
     /// Consumes a piece of the stream and returns the text it added. Throws the error of an `error` event.
@@ -205,7 +209,9 @@ struct ClaudeStreamReader {
             switch ClaudeStreamEvent.decode(sse) {
             case .textDelta(let piece): text += piece
             case .messageStart(let input): inputTokens = input ?? inputTokens
-            case .messageDelta(_, let output): outputTokens = output ?? outputTokens
+            case .messageDelta(let reason, let output):
+                stopReason = reason ?? stopReason
+                outputTokens = output ?? outputTokens
             case .messageStop: finished = true
             case .error(let error): throw error
             case .ignored: break
@@ -230,6 +236,7 @@ enum ClaudeAPIError: Error, Equatable {
     case server(String)
     case network(String)
     case incomplete
+    case refused
 
     /// The error for an HTTP status and its body. The body is read for the message only.
     static func from(status: Int, body: String, retryAfter: Int?) -> ClaudeAPIError {
@@ -286,6 +293,7 @@ enum ClaudeAPIError: Error, Equatable {
         case .server(let text): text
         case .network(let text): "Could not reach the Anthropic API: \(text)"
         case .incomplete: "The reply ended before it was complete."
+        case .refused: "Claude declined to answer this."
         }
     }
 }
