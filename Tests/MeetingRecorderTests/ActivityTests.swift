@@ -1129,18 +1129,73 @@ let activityTests: [(name: String, run: () throws -> Void)] = [
                       block(5000, 5900, app: "Safari", url: "papercut.work/invoices"),
                       block(6000, 6100, app: "Slack", url: "app.slack.com/x"), block(7000, 8000, idle: true)]
         let rules = [ProjectRule(id: 1, projectID: 1, field: .host, pattern: "papercut.work")]
-        let groups = ProjectSetup.groups(blocks, rules: rules)
-        func group(_ field: RuleField, _ pattern: String) -> SetupGroup? { groups.first { $0.field == field && $0.pattern == pattern } }
-        check(group(.repo, "finq.api")?.seconds == 1800 && group(.repo, "finq.api")?.suggestedName == "Quiddly", "repository \(groups)")
-        check(group(.owner, "quiddly-com")?.suggestedName == "Quiddly" && group(.ticket, "QDLY")?.suggestedName == "Quiddly", "organisation and prefix")
-        check(group(.ticket, "ISD")?.suggestedName == "Quiddly" && group(.host, "quiddly.atlassian.net")?.suggestedName == "Quiddly", "service desk")
-        check(group(.repo, "indemeeting")?.seconds == 1600 && group(.repo, "indemeeting")?.suggestedName == "Niklasinde", "own repository")
-        check(group(.host, "papercut.work") == nil, "assigned time is left out")
-        check(group(.host, "app.slack.com") == nil && !groups.contains { $0.field == .host && $0.pattern == "github.com" }, "short visits and code hosts are left out")
+        let groups = ProjectSuggestionLogic.suggestions(blocks, rules: rules, projects: [])
+        func group(_ pattern: String) -> SetupSuggestion? { groups.first { $0.members.contains { $0.pattern == pattern } } }
+        let quiddly = group("finq.api")
+        check(quiddly?.name == "Quiddly" && quiddly?.seconds == 1200 + 600 + 400, "one Quiddly group \(groups)")
+        check(["quiddly-com", "QDLY", "ISD", "quiddly.atlassian.net"].allSatisfy { group($0)?.id == quiddly?.id }, "organisation, prefixes and Jira site join it")
+        check(group("indemeeting")?.name == "Niklasinde" && group("indemeeting")?.seconds == 1600, "own repository")
+        check(group("papercut.work") == nil && group("app.slack.com") == nil, "assigned time and short visits are left out")
+        check(!groups.contains { $0.members.contains { $0.pattern == "github.com" } }, "code hosts are left out")
         check(groups.map(\.seconds) == groups.map(\.seconds).sorted(by: >), "longest first")
-        check(ProjectSetup.groups(blocks, rules: rules, minimumSeconds: 60).contains { $0.pattern == "app.slack.com" }, "minimum is adjustable")
-        check(ProjectSetup.suggestedName(for: "quiddly-com") == "Quiddly" && ProjectSetup.suggestedName(for: "www.youtube.com") == "Youtube"
-              && ProjectSetup.suggestedName(for: "finq.admin-ui") == "Finq", "names")
+        check(ProjectSuggestionLogic.suggestions(blocks, rules: rules, projects: [], minimumSeconds: 60, memberSeconds: 60).contains { $0.members.contains { $0.pattern == "slack.com" || $0.pattern == "app.slack.com" } },
+              "minimum is adjustable")
+    }),
+
+    ("the setup suggestion turns the screenshot's activity into organisations, not first labels", {
+        var start: TimeInterval = 0
+        func next(_ minutes: Double, app: String = "Safari", title: String? = nil, host: String? = nil, repo: String? = nil) -> ActivityBlock {
+            defer { start += minutes * 60 + 10 }
+            return block(start, start + minutes * 60, app: app, title: title, url: host.map { "\($0)/x" }, repo: repo)
+        }
+        let fixed = [next(23, app: "DataGrip", repo: "datagrip_finq.api"), next(12, app: "PyCharm", repo: "indehouse3"),
+                     next(7, app: "PyCharm", repo: "devops.indepower.se"), next(70, title: "finq fees - Google Search", host: "www.google.com"),
+                     next(62, host: "mail.google.com"), next(47, host: "www.instagram.com"), next(46, title: "Quiddly Admin", host: "testadmin.quiddly.com"),
+                     next(44, host: "flow-and-partners-se-test-admin.quiddly.com"), next(39, host: "claude.ai"), next(33, host: "env-p-admin.quiddly.dev"),
+                     next(27, host: "console.cloud.google.com"), next(23, host: "ads.google.com")]
+        let projects = [Project(id: 3, name: "Quiddly", color: "#000"), Project(id: 5, name: "Niklasinde", color: "#000")]
+        let rules = [ProjectRule(id: 1, projectID: 3, field: .owner, pattern: "quiddly-com"), ProjectRule(id: 2, projectID: 5, field: .owner, pattern: "niklasinde")]
+        let owners = ["finq.api": "quiddly-com", "devops.indepower.se": "niklasinde"]
+        let groups = ProjectSuggestionLogic.suggestions(fixed, rules: rules, projects: projects, owners: owners)
+        func group(_ pattern: String) -> SetupSuggestion? { groups.first { $0.members.contains { $0.pattern == pattern } } }
+
+        let quiddly = group("quiddly.com")
+        check(quiddly?.projectID == 3 && quiddly?.name == "Quiddly" && !quiddly!.generic, "Quiddly sites go to the existing project \(groups.map { ($0.name, $0.members.map(\.pattern)) })")
+        check(group("quiddly.dev")?.id == quiddly?.id && group("datagrip_finq.api")?.id == quiddly?.id, "quiddly.dev and the DataGrip folder join Quiddly")
+        check(group("devops.indepower.se")?.projectID == 5, "a cloned repository goes to its owner's project")
+        check(group("indehouse3")?.name == "Indehouse" && group("indehouse3")?.projectID == nil, "a repository on its own is named after itself")
+        check(group("google.com")?.generic == true && group("google.com")?.members.count == 1, "all of Google is one unchecked site")
+        check(group("instagram.com")?.generic == true && group("claude.ai")?.generic == true, "social media and chat are not projects")
+        check(quiddly?.samples.first == "Quiddly Admin" || quiddly?.samples.contains("Quiddly Admin") == true, "samples \(quiddly?.samples ?? [])")
+        check(!groups.contains { ["Mail", "Env", "Console", "Ads", "Testadmin", "Flow"].contains($0.name) }, "no first-label names")
+
+        var sentry = block(start, start + 600, app: "Chrome", title: "Issue - Google Chrome - Niklas (quiddly.com)", url: "auth0.com/x")
+        sentry.aiWork = true
+        let joined = ProjectSuggestionLogic.suggestions(fixed + [sentry], rules: rules, projects: projects, owners: owners)
+        check(joined.first { $0.members.contains { $0.pattern == "auth0.com" } }?.projectID == 3, "a site used in the Quiddly browser profile joins Quiddly")
+    }),
+
+    ("the setup's pieces: sites, organisations, repository names, owners and the button", {
+        check(ProjectSuggestionLogic.site("www.testadmin.quiddly.com") == "quiddly.com" && ProjectSuggestionLogic.site("papyrus-se.atlassian.net") == "papyrus-se.atlassian.net"
+              && ProjectSuggestionLogic.site("www.bbc.co.uk") == "bbc.co.uk", "sites")
+        check(ProjectSuggestionLogic.organisation(site: "quiddly.dev") == "quiddly" && ProjectSuggestionLogic.organisation(site: "papyrus-se.atlassian.net") == "papyrus"
+              && ProjectSuggestionLogic.organisation(owner: "quiddly-com") == "quiddly", "organisations")
+        check(ProjectSuggestionLogic.cleanName(repo: "datagrip_finq.api") == "finq" && ProjectSuggestionLogic.cleanName(repo: "indehousev2") == "indehouse"
+              && ProjectSuggestionLogic.cleanName(repo: "papercut") == "papercut", "repository names")
+        check(ProjectSuggestionLogic.profileOrganisation(title: "pgAdmin 4 - Google Chrome - Niklas (quiddly.com)") == "quiddly"
+              && ProjectSuggestionLogic.profileOrganisation(title: "Inbox (3)") == nil, "browser profile")
+        check(ProjectSuggestionLogic.cleanTitle("Instagram - Audio playing - Google Chrome - Niklas") == "Instagram", "titles lose the browser")
+        check(ProjectSuggestionLogic.isAddress("127.0.0.1") && ProjectSuggestionLogic.isAddress("localhost") && !ProjectSuggestionLogic.isAddress("quiddly.com"), "addresses")
+        check(ProjectSuggestionLogic.isGeneric(site: "google.co.jp") && !ProjectSuggestionLogic.isGeneric(site: "quiddly.com"), "generic organisations")
+        let known = ["finq.api": "quiddly-com", "api": "x"]
+        check(ProjectSuggestionLogic.owner(of: "datagrip_finq.api", known: known) == "quiddly-com" && ProjectSuggestionLogic.owner(of: "finq.apiary", known: known) == nil,
+              "owners from known repositories")
+        let choices = [SetupChoice(field: .host, pattern: "quiddly.com", name: "Quiddly"), SetupChoice(field: .repo, pattern: "indehouse3", name: "Indehouse"),
+                       SetupChoice(field: .repo, pattern: "indehousev2", name: "indehouse")]
+        let summary = ProjectSuggestionLogic.summary(choices, projects: [Project(id: 3, name: "Quiddly", color: "")], rules: [])
+        check(summary.projects == 1 && summary.rules == 3, "summary \(summary)")
+        check(ProjectSuggestionLogic.buttonTitle(projects: 1, rules: 3) == "Create 1 project, add 3 rules"
+              && ProjectSuggestionLogic.buttonTitle(projects: 0, rules: 1) == "Add 1 rule", "button")
     }),
 
     ("the setup creates projects and rules, reusing projects by name and skipping rules that exist", {

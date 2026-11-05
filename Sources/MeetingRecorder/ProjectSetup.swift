@@ -43,16 +43,6 @@ extension ActivityLogic {
     }
 }
 
-/// One repository, organisation, ticket prefix or website found in unassigned activity, with the project name suggested for it.
-struct SetupGroup: Equatable, Identifiable {
-    let field: RuleField
-    let pattern: String
-    let seconds: TimeInterval
-    let suggestedName: String
-
-    var id: String { "\(field.rawValue):\(pattern)" }
-}
-
 /// A rule to create and the project it goes to.
 struct SetupChoice: Equatable {
     let field: RuleField
@@ -61,54 +51,6 @@ struct SetupChoice: Equatable {
 }
 
 enum ProjectSetup {
-    /// Groups of unassigned activity, longest first. Groups that appear together in a block (a repository and the
-    /// organisation or ticket prefix of its pages) get the same suggested name.
-    static func groups(_ blocks: [ActivityBlock], rules: [ProjectRule], minimumSeconds: TimeInterval = 300) -> [SetupGroup] {
-        var seconds: [String: TimeInterval] = [:]
-        var items: [String: (RuleField, String)] = [:]
-        var parent: [String: String] = [:]
-        func root(_ id: String) -> String {
-            var id = id
-            while let up = parent[id], up != id { id = up }
-            return id
-        }
-        for block in blocks where !block.key.idle && !ActivityLogic.hasResolvedProject(block, rules: rules) {
-            let key = block.key
-            let found: [(RuleField, String?)] = [(.owner, key.owner), (.repo, key.repo), (.ticket, key.ticketPrefix),
-                                                 (.host, key.owner == nil ? key.host : nil)]
-            let ids = found.compactMap { field, pattern -> String? in
-                guard let pattern, !pattern.isEmpty else { return nil }
-                let id = "\(field.rawValue):\(pattern.lowercased())"
-                items[id] = items[id] ?? (field, pattern)
-                seconds[id, default: 0] += block.duration
-                return id
-            }
-            for id in ids {
-                parent[id] = parent[id] ?? id
-                parent[root(id)] = root(ids[0])
-            }
-        }
-        let ranked = [RuleField.owner, .repo, .host, .ticket]
-        var names: [String: String] = [:]
-        for top in Set(items.keys.map(root)) {
-            let best = items.keys.filter { root($0) == top }.min { a, b in
-                (ranked.firstIndex(of: items[a]!.0)!, -seconds[a]!, a) < (ranked.firstIndex(of: items[b]!.0)!, -seconds[b]!, b)
-            }!
-            names[top] = suggestedName(for: items[best]!.1)
-        }
-        return items.compactMap { id, item in
-            seconds[id]! >= minimumSeconds ? SetupGroup(field: item.0, pattern: item.1, seconds: seconds[id]!, suggestedName: names[root(id)]!) : nil
-        }.sorted { $0.seconds != $1.seconds ? $0.seconds > $1.seconds : $0.id < $1.id }
-    }
-
-    /// `quiddly-com` and `quiddly.atlassian.net` suggest "Quiddly", `finq.api` "Finq".
-    static func suggestedName(for pattern: String) -> String {
-        var name = pattern.lowercased()
-        if name.hasPrefix("www.") { name.removeFirst(4) }
-        let word = name.split(whereSeparator: { ".-_".contains($0) }).first.map(String.init) ?? name
-        return word.prefix(1).uppercased() + word.dropFirst()
-    }
-
     /// The choices that still need a rule: named, and not already a rule of the same field and pattern.
     static func plan(_ choices: [SetupChoice], rules: [ProjectRule]) -> [SetupChoice] {
         choices.compactMap { choice in

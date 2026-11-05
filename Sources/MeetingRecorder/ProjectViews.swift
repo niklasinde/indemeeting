@@ -91,79 +91,148 @@ struct ProjectSetupHint: View {
     }
 }
 
-/// Lists the organisations, repositories, ticket prefixes and websites of the last month's unassigned activity, each
-/// with a project name, and creates the chosen projects and rules.
+/// The last month's unassigned activity grouped by organisation, each group with the project it goes to: an existing one
+/// when it matches, else a new one. Search, mail and social media are offered unchecked.
 struct ProjectSetupView: View {
     let store: MeetingStore
     let done: () -> Void
-    @State private var groups: [SetupGroup] = []
+    @State private var suggestions: [SetupSuggestion] = []
+    @State private var projects: [Project] = []
+    @State private var rules: [ProjectRule] = []
     @State private var names: [String: String] = [:]
     @State private var selected: Set<String> = []
-
-    private static let sections: [(RuleField, String)] = [(.owner, "Organisations"), (.repo, "Repositories"), (.ticket, "Ticket prefixes"), (.host, "Websites")]
+    @State private var expanded: Set<String> = []
 
     init(store: MeetingStore, done: @escaping () -> Void) {
         self.store = store
         self.done = done
         let end = Date()
         let blocks = (try? store.blocks(in: end.addingTimeInterval(-30 * 86_400)..<end)) ?? []
-        let groups = ProjectSetup.groups(blocks, rules: (try? store.rules()) ?? [])
-        _groups = State(initialValue: groups)
-        _names = State(initialValue: Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0.suggestedName) }))
-        _selected = State(initialValue: Set(groups.map(\.id)))
+        let projects = (try? store.projects()) ?? []
+        let rules = (try? store.rules()) ?? []
+        let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("git")
+        let suggestions = ProjectSuggestionLogic.suggestions(blocks, rules: rules, projects: projects,
+                                                             owners: ProjectSuggestionLogic.cloneOwners(under: root))
+        _suggestions = State(initialValue: suggestions)
+        _projects = State(initialValue: projects)
+        _rules = State(initialValue: rules)
+        _names = State(initialValue: Dictionary(uniqueKeysWithValues: suggestions.map { ($0.id, $0.name) }))
+        _selected = State(initialValue: Set(suggestions.filter { !$0.generic }.flatMap { group in group.members.map { Self.key(group, $0) } }))
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Set up projects from your activity").font(.title3.weight(.medium))
-            Text("What the last 30 days of unassigned activity were about. Items with the same project name become one project; "
-                 + "each checked item gets a rule.")
+            Text("What the last 30 days of unassigned activity were about, grouped by organisation. Each checked item becomes a rule "
+                 + "for the project on its row.")
                 .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if groups.isEmpty {
+            if suggestions.isEmpty {
                 Text("Nothing left to assign.").foregroundStyle(.secondary).padding(.vertical, 20)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(Self.sections, id: \.0) { field, title in
-                            let items = groups.filter { $0.field == field }
-                            if !items.isEmpty {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                                    ForEach(items) { row($0) }
-                                }
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 16) {
+                        section("Projects", detail: nil, suggestions.filter { !$0.generic })
+                        section("Not projects", detail: "Search, mail, social media and the like. Left unchecked; check one to track it as a project.",
+                                suggestions.filter(\.generic))
                     }
                     .padding(3)
                 }
-                .frame(maxHeight: 380)
+                .frame(maxHeight: 420)
             }
             HStack {
                 Spacer()
                 Button("Cancel", action: done).keyboardShortcut(.cancelAction)
-                Button("Create projects & rules", action: create).keyboardShortcut(.defaultAction).disabled(choices.isEmpty)
+                let summary = ProjectSuggestionLogic.summary(choices, projects: projects, rules: rules)
+                Button(ProjectSuggestionLogic.buttonTitle(projects: summary.projects, rules: summary.rules), action: create)
+                    .keyboardShortcut(.defaultAction).disabled(summary.rules == 0)
             }
         }
         .padding(20)
-        .frame(width: 540)
+        .frame(width: 600)
     }
 
-    private func row(_ group: SetupGroup) -> some View {
-        HStack(spacing: 8) {
-            Toggle(group.pattern, isOn: Binding(get: { selected.contains(group.id) },
-                                                set: { if $0 { selected.insert(group.id) } else { selected.remove(group.id) } }))
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            Text(ActivityLogic.hoursText(group.seconds)).foregroundStyle(.secondary).monospacedDigit()
-            TextField("Project", text: Binding(get: { names[group.id] ?? "" }, set: { names[group.id] = $0 }))
-                .textFieldStyle(.roundedBorder).frame(width: 150)
+    @ViewBuilder
+    private func section(_ title: String, detail: String?, _ items: [SetupSuggestion]) -> some View {
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                if let detail { Text(detail).font(.caption).foregroundStyle(.tertiary) }
+                ForEach(items) { row($0) }
+            }
+        }
+    }
+
+    private func row(_ group: SetupSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Toggle(isOn: groupBinding(group)) { Text(title(group)).lineLimit(1).truncationMode(.middle) }
+                Button { toggle(expanded: group.id) } label: {
+                    Image(systemName: expanded.contains(group.id) ? "chevron.down" : "chevron.right").font(.caption2)
+                }
+                .buttonStyle(.borderless).foregroundStyle(.secondary).help("Show what is in this group")
+                Spacer(minLength: 6)
+                Text(ActivityLogic.hoursText(group.seconds)).foregroundStyle(.secondary).monospacedDigit()
+                nameField(group)
+            }
+            if !group.samples.isEmpty {
+                Text(group.samples.joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.secondary).lineLimit(1).padding(.leading, 22)
+            }
+            if expanded.contains(group.id) {
+                ForEach(group.members) { member in
+                    HStack {
+                        Toggle(isOn: memberBinding(group, member)) {
+                            Text("\(member.pattern)  \(Text(member.field.label.lowercased()).foregroundStyle(.tertiary))")
+                        }
+                        Spacer()
+                        Text(ActivityLogic.hoursText(member.seconds)).foregroundStyle(.secondary).monospacedDigit()
+                    }
+                    .font(.caption).padding(.leading, 22)
+                }
+            }
         }
         .font(.callout)
     }
 
+    private func nameField(_ group: SetupSuggestion) -> some View {
+        let name = names[group.id] ?? ""
+        let existing = projects.contains { $0.name.caseInsensitiveCompare(name.trimmingCharacters(in: .whitespaces)) == .orderedSame }
+        return HStack(spacing: 2) {
+            Text(existing ? "Add to" : "New").font(.caption).foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
+            TextField("Project", text: Binding(get: { names[group.id] ?? "" }, set: { names[group.id] = $0 }))
+                .textFieldStyle(.roundedBorder).frame(width: 140)
+            Menu {
+                ForEach(projects) { project in Button(project.name) { names[group.id] = project.name } }
+            } label: { Image(systemName: "chevron.up.chevron.down") }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().disabled(projects.isEmpty).help("Pick an existing project")
+        }
+    }
+
+    private func title(_ group: SetupSuggestion) -> String {
+        let shown = group.members.prefix(2).map(\.pattern).joined(separator: ", ")
+        return group.members.count > 2 ? "\(shown) +\(group.members.count - 2)" : shown
+    }
+
+    private static func key(_ group: SetupSuggestion, _ member: SetupMember) -> String { "\(group.id)|\(member.id)" }
+
+    private func groupBinding(_ group: SetupSuggestion) -> Binding<Bool> {
+        Binding(get: { group.members.contains { selected.contains(Self.key(group, $0)) } },
+                set: { on in for member in group.members { if on { selected.insert(Self.key(group, member)) } else { selected.remove(Self.key(group, member)) } } })
+    }
+
+    private func memberBinding(_ group: SetupSuggestion, _ member: SetupMember) -> Binding<Bool> {
+        Binding(get: { selected.contains(Self.key(group, member)) },
+                set: { if $0 { selected.insert(Self.key(group, member)) } else { selected.remove(Self.key(group, member)) } })
+    }
+
+    private func toggle(expanded id: String) {
+        if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
+    }
+
     private var choices: [SetupChoice] {
-        groups.filter { selected.contains($0.id) }.map { SetupChoice(field: $0.field, pattern: $0.pattern, name: names[$0.id] ?? "") }
-            .filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
+        suggestions.flatMap { group in
+            group.members.filter { selected.contains(Self.key(group, $0)) }
+                .map { SetupChoice(field: $0.field, pattern: $0.pattern, name: names[group.id] ?? "") }
+        }
     }
 
     private func create() {

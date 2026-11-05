@@ -20,6 +20,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ActivityLogic.swift \
     Sources/MeetingRecorder/ActivityLinks.swift \
     Sources/MeetingRecorder/ProjectSetup.swift \
+    Sources/MeetingRecorder/ProjectSuggestionLogic.swift \
     Sources/MeetingRecorder/ActivityStore.swift \
     Sources/MeetingRecorder/ClaudeEvents.swift \
     Sources/MeetingRecorder/ClaudePlugin.swift \
