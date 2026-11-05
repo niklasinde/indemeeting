@@ -159,6 +159,8 @@ enum SpeechChunks {
     static let minimumPause: TimeInterval = 0.5
     static let minimumChunk: TimeInterval = 8
     static let maximumChunk: TimeInterval = 28
+    /// A chunk with less sound than this is silence, which Whisper fills with phrases such as "Thank you."
+    static let minimumSpeech: TimeInterval = 1
 
     /// Frame ranges; `levels` is the RMS of each frame.
     static func chunks(levels: [Double], threshold: Double = LevelMeter.soundThreshold) -> [Range<Int>] {
@@ -198,7 +200,13 @@ enum SpeechChunks {
             meter.add(Array(samples[start..<min(samples.count, start + frame)]))
             return meter.rms
         }
-        return chunks(levels: levels).map { $0.lowerBound * frame..<min(samples.count, $0.upperBound * frame) }
+        return spoken(chunks(levels: levels), levels: levels).map { $0.lowerBound * frame..<min(samples.count, $0.upperBound * frame) }
+    }
+
+    /// The chunks with at least `minimumSpeech` of sound in them.
+    static func spoken(_ chunks: [Range<Int>], levels: [Double], threshold: Double = LevelMeter.soundThreshold) -> [Range<Int>] {
+        let minimum = Int(minimumSpeech / frameLength)
+        return chunks.filter { chunk in levels[chunk].lazy.filter { $0 >= threshold }.count >= minimum }
     }
 }
 
@@ -256,6 +264,10 @@ enum WhisperLogic {
 extension ProcessingLogic {
     static let hallucinations = ["tack för att ni tittade", "tack för att du tittade", "tack för att ni lyssnade", "textning",
                                  "undertexter", "thanks for watching", "thank you for watching", "subtitles by"]
+    /// Phrases no meeting says, which Whisper adds to whatever it heard over silence.
+    static let channelPhrases = ["subscribe to my channel", "please subscribe", "like and subscribe", "prenumerera på kanalen"]
+    /// Above this no-speech probability a Whisper segment is taken for silence.
+    static let noSpeechLimit = 0.6
 
     /// Whisper's hallucinations on silence and its bracketed sound labels, such as `[MUSIK]` or `(skratt)`.
     static func isWhisperNoise(_ text: String) -> Bool {
@@ -271,7 +283,7 @@ extension ProcessingLogic {
         let normalized = words.joined(separator: " ")
         return hallucinations.contains { phrase in
             normalized.hasPrefix(phrase) && words.count <= phrase.split(separator: " ").count + 4
-        }
+        } || words.count <= 16 && channelPhrases.contains { normalized.contains($0) }
     }
 
     /// The text with any run of a word or phrase of up to four words repeated four or more times kept once, as Whisper

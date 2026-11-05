@@ -631,6 +631,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
               "Swedish")
         check(ProcessingLogic.isHallucination("Thanks for watching.") && ProcessingLogic.isHallucination("Subtitles by the Amara.org community"),
               "English")
+        check(ProcessingLogic.isHallucination("Thank you for watching! Please subscribe to my channel!"), "channel outro")
         check(!ProcessingLogic.isHallucination("Tack för att ni tittade på demon, nu går vi vidare till nästa punkt på listan"), "real speech")
         check(ProcessingLogic.collapseRepeats("the the the the the plan") == "the plan", "word loop")
         check(ProcessingLogic.collapseRepeats("ja vi ses vi ses vi ses vi ses då") == "ja vi ses då", "phrase loop")

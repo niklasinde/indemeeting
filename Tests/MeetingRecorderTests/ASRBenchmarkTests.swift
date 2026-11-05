@@ -22,6 +22,11 @@ let asrBenchmarkTests: [(name: String, run: () throws -> Void)] = [
         check(chunks.first == 0..<201, "first \(chunks)")
         check(chunks.allSatisfy { $0.count <= 280 } && chunks.last?.upperBound == 400, "all within the maximum \(chunks)")
     }),
+    ("chunks with under a second of sound are skipped as silence", {
+        let levels = Array(repeating: quiet, count: 100) + Array(repeating: loud, count: 5) + Array(repeating: quiet, count: 100)
+            + Array(repeating: loud, count: 20)
+        check(SpeechChunks.spoken([0..<105, 105..<225], levels: levels) == [105..<225], "only the spoken chunk")
+    }),
     ("--benchmark-asr reads the output folder, setup and clips", {
         let job = ASRBenchmarkLogic.arguments(["app", "--benchmark-asr", "/out", "--config", "turbo", "/a.caf", "/b.caf"])
         check(job?.config == .turbo && job?.output.path == "/out" && job?.clips.map(\.path) == ["/a.caf", "/b.caf"], "\(String(describing: job))")

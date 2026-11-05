@@ -126,9 +126,11 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
             }
         }
         guard status == 0 else { throw NSError(domain: "whisper", code: Int(status)) }
-        let pieces = (0..<whisper_full_n_segments(context)).map { index in
-            (text: String(cString: whisper_full_get_segment_text(context, index)), start: whisper_full_get_segment_t0(context, index))
-        }
+        let pieces = (0..<whisper_full_n_segments(context))
+            .filter { Double(whisper_full_get_segment_no_speech_prob(context, $0)) <= ProcessingLogic.noSpeechLimit }
+            .map { index in
+                (text: String(cString: whisper_full_get_segment_text(context, index)), start: whisper_full_get_segment_t0(context, index))
+            }
         return ProcessingLogic.whisperSentences(pieces)
     }
 
