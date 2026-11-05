@@ -34,6 +34,8 @@ struct GitHubThread: Equatable, Identifiable {
     var isResolved = false
     var isOutdated = false
     var isFile = false
+    /// On a removed line, numbered in the old file.
+    var isLeft = false
     var resolvedBy: String?
     /// The last lines of the first comment's diff hunk.
     var diff: [GitHubDiffLine] = []
@@ -118,7 +120,7 @@ extension GitHubLogic {
               reviewThreads(first: \(commentsPageSize), after: $threads) {
                 totalCount pageInfo { hasNextPage endCursor }
                 nodes {
-                  id isResolved isOutdated path line originalLine startLine subjectType resolvedBy { login }
+                  id isResolved isOutdated path line originalLine startLine diffSide subjectType resolvedBy { login }
                   head: comments(first: 1) { nodes { diffHunk } }
                   comments(first: \(commentsPageSize)) {
                     totalCount
@@ -172,6 +174,7 @@ extension GitHubLogic {
             let line: Int?
             let originalLine: Int?
             let startLine: Int?
+            let diffSide: String?
             let subjectType: String?
             let resolvedBy: Resolver?
             let head: Connection<Hunk>?
@@ -240,6 +243,7 @@ extension GitHubLogic {
         let hunk = node.head?.nodes?.compactMap { $0?.diffHunk }.first ?? ""
         return GitHubThread(id: id, path: path, line: node.line, originalLine: node.originalLine, startLine: node.startLine,
                             isResolved: node.isResolved ?? false, isOutdated: node.isOutdated ?? false, isFile: node.subjectType == "FILE",
+                            isLeft: node.diffSide == "LEFT",
                             resolvedBy: node.resolvedBy?.login, diff: diffLines(hunk), comments: comments,
                             commentCount: node.comments?.totalCount ?? comments.count)
     }

@@ -111,7 +111,7 @@ private struct FilterPill: View {
     }
 }
 
-private struct ThreadCard: View {
+struct ThreadCard: View {
     let thread: GitHubThread
     @ObservedObject var model: GitHubCommentsModel
 

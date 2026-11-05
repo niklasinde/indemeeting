@@ -135,6 +135,15 @@ enum GitHubPreview {
                                              comments: GitHubCommentsModel(pr: commentPR, sample: sampleComments, filter: GitHubCommentsFilter(scope: .unresolved)),
                                              directory: directory, ask: {}, lazyComments: false),
                          appearance: .aqua, to: output.appendingPathComponent("comments-page-light.png"))
+            let diffPatch = GitHubFilePatch(path: "store/auth.js", change: .modified, additions: 3, deletions: 1,
+                                            patch: "@@ -1,5 +1,7 @@ import { defineStore } from 'pinia'\n import api from '../api'\n-import { load } from '../storage'\n+import { readToken, writeToken } from '../helpers/token_cookie'\n+\n+const cookieName = `${import.meta.env.VITE_APP_PROJECT_NAME}_auth_and_a_very_long_line_that_scrolls_sideways_instead_of_wrapping`\n \n export const useAuth = defineStore('auth', {\n\\ No newline at end of file")
+            let diffThread = GitHubThread(id: "D1", path: "store/auth.js", line: 3, comments: [GitHubComment(id: "D1c", author: .init(login: "sara"), body: "Is this cookie Secure?", parts: [.markdown("Is this cookie Secure?")])], commentCount: 1)
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                await render(GitHubFileDiff(file: GitHubPRDetail.File(path: diffPatch.path, additions: 3, deletions: 1, change: .modified),
+                                            diffs: GitHubDiffModel(sample: [diffPatch], expanded: [diffPatch.path]), source: .commit(repo: "", sha: ""), url: "",
+                                            threads: [diffThread], comments: GitHubCommentsModel(pr: commentPR, sample: nil)),
+                             appearance: appearance, to: output.appendingPathComponent("diff-\(appearance == .aqua ? "light" : "dark").png"))
+            }
             await renderResume(store: store, sample: claudeSample, directory: directory, output: output)
             await renderActions(model: model, window: window, directory: directory, shot: shot, output: output)
             exit(0)

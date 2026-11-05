@@ -83,6 +83,31 @@ enum GitHubClient {
         }
     }
 
+    /// Every changed file of a pull request with its patch, page by page.
+    nonisolated static func fetchFiles(cli: URL?, repo: String, number: Int) -> Result<[GitHubFilePatch], GitHubError> {
+        var files: [GitHubFilePatch] = []
+        for page in 1...GitHubDiffLogic.maxPages {
+            switch fetchPatches(cli: cli, arguments: GitHubDiffLogic.filesArguments(repo: repo, number: number, page: page)) {
+            case .failure(let error): return files.isEmpty ? .failure(error) : .success(files)
+            case .success(let next):
+                files += next
+                if next.count < GitHubDiffLogic.pageSize { return .success(files) }
+            }
+        }
+        return .success(files)
+    }
+
+    /// The changed files of one commit with their patches.
+    nonisolated static func fetchCommitFiles(cli: URL?, repo: String, sha: String) -> Result<[GitHubFilePatch], GitHubError> {
+        fetchPatches(cli: cli, arguments: GitHubDiffLogic.commitArguments(repo: repo, sha: sha))
+    }
+
+    private nonisolated static func fetchPatches(cli: URL?, arguments: [String]) -> Result<[GitHubFilePatch], GitHubError> {
+        guard let cli, let output = run(cli, arguments) else { return .failure(.cliMissing) }
+        if output.status != 0 { return .failure(GitHubError.classify(output.stderr)) }
+        do { return .success(try GitHubDiffLogic.parseFiles(output.stdout)) } catch { return .failure(.failed("unexpected response")) }
+    }
+
     /// One page of a pull request's comments, the first or the one after `cursors`, with the response it was parsed from.
     nonisolated static func fetchComments(cli: URL?, repo: String, number: Int, after cursors: GitHubComments.Cursors? = nil)
         -> Result<(page: GitHubComments, json: Data), GitHubError> {

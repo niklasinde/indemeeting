@@ -135,6 +135,8 @@ struct GitHubDetailContent: View {
     @State private var bodyExpanded = false
     @State private var allCommits = false
     @State private var fileQuery = ""
+    @State private var openCommits = Set<String>()
+    @StateObject private var diffs = GitHubDiffModel()
     private static let visibleCommits = 20
 
     var body: some View {
@@ -285,14 +287,25 @@ struct GitHubDetailContent: View {
         return DetailSection("Commits", trailing: "\(detail.commitCount)") {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(shown, id: \.oid) { commit in
-                    DetailRow(url: commit.url) {
+                    let isOpen = openCommits.contains(commit.oid)
+                    HStack(spacing: 8) {
+                        Image(systemName: isOpen ? "chevron.down" : "chevron.right").font(.caption).foregroundStyle(.tertiary).frame(width: 10)
                         Text(commit.shortOid).font(.system(.callout, design: .monospaced)).foregroundStyle(.secondary)
                         Text(commit.headline).lineLimit(1)
                         Spacer(minLength: 8)
                         Text([commit.author, commit.date.map { GitHubLogic.updatedText($0, now: Date()) }].compactMap { $0 }.joined(separator: " \u{00B7} "))
                             .foregroundStyle(.tertiary).lineLimit(1)
                         if commit.checks != .none { StatusDot(checks: commit.checks) }
+                        if let url = commit.url {
+                            Button { open(url) } label: { Image(systemName: "arrow.up.right.square") }.buttonStyle(.borderless).help("Open the commit on GitHub")
+                        }
                     }
+                    .font(.callout)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                    .onTapGesture { if isOpen { openCommits.remove(commit.oid) } else { openCommits.insert(commit.oid) } }
+                    .help(isOpen ? "Hide the commit's changes" : "Show the commit's changes")
+                    if isOpen { GitHubCommitDiff(repo: pr.repo, commit: commit) }
                     Divider()
                 }
                 if detail.commits.count > shown.count {
@@ -305,16 +318,22 @@ struct GitHubDetailContent: View {
 
     private func files(_ detail: GitHubPRDetail) -> some View {
         let shown = GitHubLogic.files(detail.files, matching: fileQuery)
+        let source = GitHubDiffModel.Source.pull(repo: pr.repo, number: pr.number, head: detail.headOid)
+        let threads = comments.comments?.threads ?? []
         return DetailSection("Files changed", trailing: "\(detail.fileCount)") {
             VStack(alignment: .leading, spacing: 0) {
-                SearchField(text: $fileQuery).frame(maxWidth: 260).controlSize(.small).padding(.bottom, 8)
+                HStack(spacing: 12) {
+                    SearchField(text: $fileQuery).frame(maxWidth: 260).controlSize(.small)
+                    Spacer()
+                    Button("Expand all") { diffs.expand(shown.map(\.path), from: source) }.disabled(shown.isEmpty)
+                    Button("Collapse all") { diffs.collapseAll() }.disabled(diffs.expanded.isEmpty)
+                }
+                .buttonStyle(.link)
+                .font(.callout)
+                .padding(.bottom, 8)
                 ForEach(shown, id: \.path) { file in
-                    DetailRow(url: "\(detail.url)/files") {
-                        Image(systemName: Self.symbol(file.change)).foregroundStyle(Self.color(file.change)).frame(width: 18).help(file.change.rawValue.capitalized)
-                        (Text(file.directory).foregroundStyle(.tertiary) + Text(file.name)).lineLimit(1).truncationMode(.middle)
-                        Spacer(minLength: 8)
-                        Text(GitHubLogic.changesText(additions: file.additions, deletions: file.deletions)).monospacedDigit().foregroundStyle(.secondary)
-                    }
+                    GitHubFileDiff(file: file, diffs: diffs, source: source, url: "\(detail.url)/files",
+                                   threads: threads.filter { $0.path == file.path }, comments: comments)
                     Divider()
                 }
                 if shown.isEmpty { Text("No file matches").foregroundStyle(.tertiary).padding(.top, 6) }
@@ -322,24 +341,6 @@ struct GitHubDetailContent: View {
                     Note(text: note + "; the rest is on GitHub")
                 }
             }
-        }
-    }
-
-    private static func symbol(_ change: GitHubPRDetail.Change) -> String {
-        switch change {
-        case .added: return "plus.square.fill"
-        case .removed: return "minus.square.fill"
-        case .renamed, .copied: return "arrow.right.square.fill"
-        case .modified, .changed: return "diamond.fill"
-        }
-    }
-
-    private static func color(_ change: GitHubPRDetail.Change) -> Color {
-        switch change {
-        case .added: return .green
-        case .removed: return .red
-        case .renamed, .copied: return .blue
-        case .modified, .changed: return .orange
         }
     }
 }
