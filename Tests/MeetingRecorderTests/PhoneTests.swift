@@ -164,10 +164,13 @@ let phoneTests: [(name: String, run: () throws -> Void)] = [
     ("a pairing url carries host, port, id and key and survives a round trip", {
         let key = Data((0..<16).map { UInt8($0 * 16 + 1) })
         let pairing = PhonePairing(host: "Niklass-Mac.local", port: 47821, id: "0a1b2c3d", key: key)
-        check(pairing.url.absoluteString.hasPrefix("meetingrecorder://pair?host=Niklass-Mac.local&port=47821&id=0a1b2c3d&key="), "shape \(pairing.url)")
+        check(pairing.url.absoluteString.hasPrefix("worktime://pair?host=Niklass-Mac.local&port=47821&id=0a1b2c3d&key="), "shape \(pairing.url)")
         check(PhonePairing(url: pairing.url) == pairing, "round trip")
         check(PhonePairing(url: URL(string: "meetingrecorder://pair?host=h&port=1&id=0A1B2C3D&key=\(key.base64EncodedString().addingPercentEncoding(withAllowedCharacters: .alphanumerics)!)")!)?.key == key,
               "standard base64 is accepted and the id is lower-cased")
+        let legacy = pairing.url.absoluteString.replacingOccurrences(of: "worktime://", with: "meetingrecorder://")
+        check(PhonePairing(url: URL(string: legacy)!) == pairing, "the meetingrecorder:// link from before the rename still pairs")
+        check(PhonePairing(url: URL(string: legacy.replacingOccurrences(of: "meetingrecorder://", with: "https://"))!) == nil, "another scheme does not")
     }),
 
     ("a pairing url that is wrong in any part is rejected", {

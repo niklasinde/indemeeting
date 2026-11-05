@@ -8,7 +8,6 @@ final class GitHubModel: ObservableObject {
     static let enabledKey = GitHubLogic.enabledKey
     static let intervalKey = "githubRefreshMinutes"
     static let selectionKey = "githubSelectedPR"
-    static let simpleKey = "githubSimpleList"
     static let mergeableKey = "githubMergeableList"
     static let notchMergeableKey = "githubNotchMergeable"
     static let notchStatusKey = "githubNotchStatus"
@@ -46,12 +45,10 @@ final class GitHubModel: ObservableObject {
     }
 
     var visible: [GitHubPR] {
-        GitHubLogic.filter(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey),
-                           mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
+        GitHubLogic.filter(prs[kind] ?? [], filter, mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
     }
     var statusCounts: [GitHubStatusTab: Int] {
-        GitHubLogic.statusCounts(prs[kind] ?? [], filter, simple: UserDefaults.standard.bool(forKey: Self.simpleKey),
-                                 mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
+        GitHubLogic.statusCounts(prs[kind] ?? [], filter, mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
     }
     /// Above my own pull requests on the All tab: the ones asking for my review.
     var reviewQueue: [GitHubPR] {
@@ -100,8 +97,7 @@ final class GitHubModel: ObservableObject {
         guard enabled else { return refreshing = false }
         error = fetch.error
         if !fetch.prs.isEmpty {
-            prs.merge(fetch.prs) { $1 }
-            prs = GitHubActions.overlay(prs, patches, now: Date())
+            prs = GitHubActions.overlay(prs.merging(fetch.prs) { $1 }, patches, now: Date())
             fetched = Date()
             try? store?.saveGitHubPRs(fetch.prs)
         }

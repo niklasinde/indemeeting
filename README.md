@@ -493,7 +493,7 @@ title, the pull request, its address and the state. Each row shows its pull requ
 - **Sending.** Running sessions have a send box: Return sends, Shift-Return starts a new line. What you send goes to that session's
   terminal as the text and a Return, several lines as one paste, and shows at once until Claude's transcript has it. Empty text is never
   sent. A waiting question shows verbatim with Yes and No, which send `y` or `n`. Nothing else writes to the terminal.
-- **Links.** A session's pull request chip opens that pull request in GitHub, the same way a `meetingrecorder://` link does. On a pull
+- **Links.** A session's pull request chip opens that pull request in GitHub, the same way a `worktime://` link does. On a pull
   request, a Sessions section lists its sessions; a click opens the session here.
 - **Saved sessions** are read only: **Resume session** picks one up in the chosen destination. The menu has Copy transcript, Stop,
   Restart, text size and Forget session (not while the session runs).
@@ -539,28 +539,31 @@ GraphQL points per search, roughly 55 per refresh against the 5000 an hour GitHu
 latest 30 closed or merged ones you created) and `gh auth status` checks the sign-in. Nothing is uploaded; only the
 search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@me`) go to GitHub.
 
-- **Tabs:** Created, Review requested, Assigned and Mentioned, with a state filter (Open by default, Merged, Closed,
-  All), a repository menu and a search field; rows are sorted by last update. The header counts the rows ("47 created").
-- **Sort and quick filters:** the sort menu (right of the filters) has Updated (default), Needs attention, Most discussed,
-  Unresolved first and Failing checks first. Pills under the filters narrow the list: Has unresolved comments, New
-  feedback, Changes requested, Failing checks, Waiting on me, and Hide bot-only activity. They combine.
+- **Tabs:** Created, Review requested, Assigned and Mentioned. The header counts the rows ("47 created") with a Mergeable pill
+  beside it, and under it the same status pills as the notch bar (All, My turn, Waiting, Approved, Draft, On hold, with
+  counts; empty ones are hidden), then a search field. Rows are sorted by last update.
+- **Filters menu:** right of the search, one menu holds the rest: the state (Open by default, Merged, Closed, All), the
+  repository, the sort (Updated, Needs attention, Most discussed, Unresolved first, Failing checks first) and the activity
+  filters (Has unresolved comments, New feedback, Changes requested, Failing checks, Waiting on me, Hide bot-only activity),
+  which combine. Its label counts what is set ("Filters · 2"); Reset Filters keeps the search and the status.
 - **Needs attention** adds one weight per thing on a pull request, in the order of how much it asks of you: a review waiting
   on you 50, new feedback from people 40, changes requested 30, failing checks 20, unresolved threads 10, plus the number of
   new comments and unresolved threads (each at most 9) to tell equals apart; the last update decides the rest.
-- **Rows:** `repo #number` with the status mark at the right, the title (two lines at most), and chips for the Jira ticket (when the title starts with a key; it links
-  to Jira once the site is known from your browsing), Draft, the review decision, comments, `+additions -deletions` and
-  the time since the last update at the right. Open pull requests also show Waiting on you, "3 unresolved" (the first 20 review threads
-  are looked at, so "20+" is a lower bound), "2 new comments", "2 from bots" and who spoke last (initials, or a bot mark).
+- **Rows:** the same row as the notch bar: a status dot, a quiet `owner/repo #number` line, the title (two lines at most, one in a
+  narrow list), Open in Claude Code and the checks mark at the right. Merge is on the pull request page and in the row's menu.
+  The page header carries what the rows used to: the Jira ticket, the review decision, Waiting on you, "3 unresolved" (the
+  first 20 review threads are looked at, so "20+" is a lower bound, until the comments load), "2 new comments", "2 from bots"
+  and who commented last; the size and times are on the line under it. The list does not flash on the background refresh:
+  the refresh button stays in place (disabled while fetching) and the rows keep their place unless their data changed.
   *New comments* are comments and reviews by other people after your last commit, review or reply on your own pull
   requests, or after your review on someone else's; bots (Copilot, CodeRabbit, Snyk, dependabot, github-actions) are counted
   apart and never count as new feedback. Waiting on you is a review asked of you, or the author pushing or answering after
   your review. Bot-only means a bot's pull request or last word with nothing for a person to answer. The mark on the right is a green check (checks passed), red cross (failed), amber dot
   (running), grey circle (no checks), purple merge icon (merged) or grey sign (closed).
-- **Layout:** the list (tabs, filters, sort, quick filters and rows) is on the left, 360 to 560 points wide (420 by default; a stored width outside that goes back to the default);
+- **Layout:** the list (tabs, status pills, search, Filters menu and rows) is on the left, 360 to 560 points wide (420 by default; a stored width outside that goes back to the default);
   drag the divider to resize it, the width is remembered. Below 781 points the list and the page take turns, with a back button.
   The pull request page is on the right, or "Select a pull request" while nothing is selected. In a wide window the page is centred in its column, at most 1000 points wide, with its text at most
-  760 points wide so lines stay near 100 characters; the file, check and commit lists use the whole column. From 2200 points
-  the rows add a line with the author, the update time and the changes. When the area right of the sidebar is narrower than 780 points (a window narrower than about
+  760 points wide so lines stay near 100 characters; the file, check and commit lists use the whole column. When the area right of the sidebar is narrower than 780 points (a window narrower than about
   1000) the two take turns instead: a click shows the page full width with a "Pull requests" back button.
 - **Selecting:** a click selects and shows the page at once, from the cache. Up and Down (also with Command) move through the
   filtered and sorted list and keep the row in view, Return moves to the page (Escape back to the list), double-click or
@@ -585,12 +588,14 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   the code it was made on, its comments in order (Markdown, suggestions as before and after, bots badged, long bot comments and
   `<details>` collapsed), resolved threads folded into one line and outdated ones dimmed, then the conversation of comments and review
   summaries. Filters: Unresolved, All, Mine, New (comments by others after your last activity, marked with a dot), Hide bots and a search.
-  Clicking "N unresolved" or "N new comments" on a list row opens the page on them. Read only. A second GraphQL query (about 1 point
+  Clicking "N unresolved" or "N new comments" in the page header scrolls to them. Read only. A second GraphQL query (about 1 point
   a page of 50 threads) fetches it when the page opens; Load more follows the cursors. Cached per pull request in `github_pr_comments`.
 - **Refresh:** every 5 minutes by default (1 to 60 in Settings) and with the refresh button. A failed fetch keeps the last
   data and shows why: rate limit, offline, or an organisation that needs SAML single sign-on authorised for `gh`.
 - **Menu bar:** when there is data, a line such as "GitHub: 3 need your review · 2 failing checks · 2 with new feedback" opens the page.
 - **Layout:** the list is narrow below 1200 points, and the page's actions sit in one row with Merge and Close under More when it is narrow. In a window 900 points tall or more, the Claude terminal is a bottom half across the whole window, drag it to resize (remembered; it starts at half the height) and it offers Open in Claude choices while no session is open.
+- **Links:** `worktime://pr?url=<pull request address>` and `worktime://pr/<owner>/<repo>/<number>` open a pull request on this
+  page; Copy WorkTime link on the page copies one. The older `meetingrecorder://` scheme is still registered and parsed the same way.
 - **Timeline:** the tooltip of a pull request address in the Activity timeline shows its title from the cache.
 - **Cache:** the last fetch, with the raw discussion data, is stored in `github_prs` in the meeting database, so the page opens instantly and works
   offline. Delete all activity leaves it; Settings > Activity > GitHub > Clear GitHub cache removes it.

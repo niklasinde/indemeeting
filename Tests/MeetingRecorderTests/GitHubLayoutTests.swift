@@ -68,12 +68,6 @@ let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLayout.readingWidth <= GitHubLayout.pageWidth, "prose never wider than the page column")
     }),
 
-    ("the list rows show their metadata only from 2200 points", {
-        check(!GitHubLayout.showsRowMetadata(width: 2199), "2199 has no metadata line")
-        check(GitHubLayout.showsRowMetadata(width: 2200), "2200 has it")
-        check(GitHubLayout.showsRowMetadata(width: 2560), "2560 has it")
-    }),
-
     ("the list is narrow below 1200 points and its rows are one line at the narrow width", {
         check(GitHubLayout.listWidth(GitHubLayout.defaultListWidth, in: 1000) == 280, "1000 caps the list at 280")
         check(GitHubLayout.listWidth(GitHubLayout.defaultListWidth, in: 1100) == 280, "1100 caps the list at 280")

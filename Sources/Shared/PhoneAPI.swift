@@ -1,11 +1,20 @@
 import Foundation
 
+/// The app's URL schemes: links it makes use `worktime://`; `meetingrecorder://` from before the rename is still accepted.
+enum AppURL {
+    static let scheme = "worktime"
+    static let legacyScheme = "meetingrecorder"
+
+    static func accepts(scheme: String?) -> Bool {
+        [Self.scheme, legacyScheme].contains(scheme?.lowercased())
+    }
+}
+
 /// The contract between the Mac app and the iPhone viewer. Pure Foundation so both targets compile this file.
 enum PhoneAPI {
     static let version = 1
     static let serviceType = "_meetingrecorder._tcp"
     static let defaultPort = 47821
-    static let pairingScheme = "meetingrecorder"
     static let deviceHeader = "X-Device-Id"
     static let pairingLifetime: TimeInterval = 300
 
@@ -285,7 +294,7 @@ struct PhonePairing: Equatable {
 
     var url: URL {
         var components = URLComponents()
-        components.scheme = PhoneAPI.pairingScheme
+        components.scheme = AppURL.scheme
         components.host = "pair"
         components.queryItems = [URLQueryItem(name: "host", value: host), URLQueryItem(name: "port", value: String(port)),
                                  URLQueryItem(name: "id", value: id), URLQueryItem(name: "key", value: Base64.urlEncode(key))]
@@ -300,7 +309,7 @@ struct PhonePairing: Equatable {
     }
 
     init?(url: URL) {
-        guard url.scheme == PhoneAPI.pairingScheme, url.host == "pair",
+        guard AppURL.accepts(scheme: url.scheme), url.host == "pair",
               let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems else { return nil }
         func value(_ name: String) -> String? { items.first { $0.name == name }?.value }
         guard let host = value("host"), !host.isEmpty, let port = value("port").flatMap(Int.init), (1...65535).contains(port),

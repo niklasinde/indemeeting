@@ -16,7 +16,7 @@
         <dict>
             <key>CFBundleURLName</key><string>com.niklasinde.MeetingRecorder</string>
             <key>CFBundleURLSchemes</key>
-            <array><string>meetingrecorder</string></array>
+            <array><string>worktime</string><string>meetingrecorder</string></array>
         </dict>
     </array>
     <key>LSUIElement</key><true/>

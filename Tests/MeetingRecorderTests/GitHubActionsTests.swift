@@ -432,7 +432,8 @@ let githubActionsTests: [(name: String, run: () throws -> Void)] = [
         let terminals = all.filter { $0.key.hasPrefix("EmbeddedTerminal") || $0.key.hasPrefix("Phone") || $0.key.hasPrefix("Chat") }
         for (name, text) in terminals { check(!text.contains("GitHubClient.run("), "\(name) must not run gh") }
         let plist = try String(contentsOf: sourceFolder.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist"), encoding: .utf8)
-        check(plist.contains("<string>meetingrecorder</string>") && plist.components(separatedBy: "CFBundleURLSchemes").count == 2, "the only URL scheme is meetingrecorder")
+        check(plist.contains("<array><string>worktime</string><string>meetingrecorder</string></array>") && plist.components(separatedBy: "CFBundleURLSchemes").count == 2,
+              "the URL schemes are worktime, then meetingrecorder for old links")
         check(all.values.allSatisfy { !$0.contains("onOpenURL") && !$0.contains("handleGetURLEvent") }, "no deep link handler")
     }),
 

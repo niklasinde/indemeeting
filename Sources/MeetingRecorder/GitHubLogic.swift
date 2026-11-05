@@ -348,13 +348,19 @@ enum GitHubLogic {
         var hideBotOnly = false
         var sort = GitHubSort.updated
         var status = GitHubStatusTab.all
+
+        /// How many of the filters behind the Filters menu differ from their defaults.
+        var refinements: Int {
+            [state != .open, repo != nil, sort != .updated, hideBotOnly].filter { $0 }.count + quick.count
+        }
+
+        var withoutRefinements: Filter { Filter(query: query, status: status) }
     }
 
-    /// The pull requests that pass the filter, in the order of its sort. Simple adds Waiting on me and keeps the first few;
-    /// mergeable keeps those ready to merge.
-    static func filter(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false, capped: Bool = true) -> [GitHubPR] {
+    /// The pull requests that pass the filter, in the order of its sort. Mergeable keeps those ready to merge.
+    static func filter(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
-        let quick = simple ? filter.quick.union([.waitingOnMe]) : filter.quick
+        let quick = filter.quick
         let passing = prs.filter { pr in
             guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo, filter.status.includes(pr) else { return false }
             if mergeable && !isMergeable(pr) { return false }
@@ -365,20 +371,19 @@ enum GitHubLogic {
             let haystack = "\(pr.repo) #\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
-        let ordered = sorted(passing, by: filter.sort)
-        return simple && capped ? Array(ordered.prefix(simpleLimit)) : ordered
+        return sorted(passing, by: filter.sort)
     }
 
     /// How many pull requests each status tab would show with the rest of the filter.
-    static func statusCounts(_ prs: [GitHubPR], _ filter: Filter, simple: Bool = false, mergeable: Bool = false) -> [GitHubStatusTab: Int] {
+    static func statusCounts(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false) -> [GitHubStatusTab: Int] {
         Dictionary(uniqueKeysWithValues: GitHubStatusTab.allCases.map { tab in
             var tabbed = filter
             tabbed.status = tab
-            return (tab, Self.filter(prs, tabbed, simple: simple, mergeable: mergeable, capped: false).count)
+            return (tab, Self.filter(prs, tabbed, mergeable: mergeable).count)
         })
     }
 
-    static let simpleLimit = 6
+    static let notchLimit = 6
 
     /// Open, not a draft, approved or needing no review, checks passing or absent, and no conflict or branch rule in the way.
     static func isMergeable(_ pr: GitHubPR) -> Bool {
@@ -390,7 +395,7 @@ enum GitHubLogic {
     static func waitingFirst(_ prs: [GitHubPR], status: GitHubStatusTab = .all) -> [GitHubPR] {
         let waiting = filter(prs, Filter(quick: [.waitingOnMe], status: status))
         let rest = filter(prs, Filter(status: status)).filter { !waiting.contains($0) }
-        return Array((waiting + rest).prefix(simpleLimit))
+        return Array((waiting + rest).prefix(notchLimit))
     }
 
     /// Open pull requests asking for my review, newest first, in the repository and search of the filter.

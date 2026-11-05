@@ -35,7 +35,8 @@ struct GitHubDetailView: View {
             if let error = page.error { DetailErrorBanner(error: error) }
             ScrollViewReader { proxy in
                 ScrollView {
-                    GitHubDetailContent(pr: page.pr, detail: page.detail, comments: page.comments, directory: model.directory, ask: { model.ask(about: page.pr) })
+                    GitHubDetailContent(pr: page.pr, detail: page.detail, comments: page.comments, directory: model.directory, ask: { model.ask(about: page.pr) },
+                                        showComments: { page.showComments($0) })
                         .padding(.horizontal, RecordingDetail.gutter)
                         .padding(.bottom, 28)
                 }
@@ -128,6 +129,7 @@ struct GitHubDetailContent: View {
     let ask: () -> Void
     /// Off in the previews, which render the whole page at once.
     var lazyComments = true
+    var showComments: (GitHubCommentsFilter.Scope) -> Void = { _ in }
     static let commentsAnchor = "comments"
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
@@ -199,7 +201,32 @@ struct GitHubDetailContent: View {
                          : Chip(text: text, icon: "checkmark", tint: .green))
         }
         if detail.state == .open, let review = detail.review { chips.append(Self.reviewChip(review)) }
+        chips += activityChips
         chips += detail.labels.map { Chip(text: $0, icon: "tag") }
+        return chips
+    }
+
+    /// What the list rows used to show: waiting on me, unresolved threads, new feedback and the last comment.
+    private var activityChips: [Chip] {
+        let signals = GitHubLogic.signals(pr)
+        var chips: [Chip] = []
+        if signals.waitingOnMe { chips.append(Chip(text: "Waiting on you", icon: "person.crop.circle.badge.clock", tint: .orange)) }
+        let unresolved = comments.comments?.unresolved ?? signals.unresolved
+        if unresolved > 0 {
+            let capped = comments.comments == nil && (pr.activity?.threads ?? 0) > GitHubLogic.threadPageSize
+            chips.append(Chip(text: "\(unresolved)\(capped ? "+" : "") unresolved", icon: "bubble.left.and.exclamationmark.bubble.right", tint: .orange,
+                              help: "Show the unresolved threads", tap: .init(key: "unresolved") { showComments(.unresolved) }))
+        }
+        if signals.newFeedback > 0 {
+            chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor,
+                              help: "Show the new comments", tap: .init(key: "new") { showComments(.new) }))
+        } else if signals.newBotFeedback > 0 {
+            chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu"))
+        }
+        if let last = signals.lastActor {
+            chips.append(Chip(text: "Last comment by \(last.actor.isBot ? "a bot" : last.actor.login) \(GitHubLogic.updatedText(last.date, now: Date()))",
+                              icon: last.actor.isBot ? "cpu" : "person.crop.circle"))
+        }
         return chips
     }
 

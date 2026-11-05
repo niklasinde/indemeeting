@@ -47,7 +47,7 @@ enum PhoneClient {
                 try await send(connection, Data(request.utf8) + body)
                 let response = try await read(connection, output: output.map { URL(fileURLWithPath: $0) }, started: Date())
                 if path == "/v1/pair", response.status == 200, let result = try? PhoneAPI.decoder.decode(PhonePairResult.self, from: response.body) {
-                    print("device-url: meetingrecorder://pair?host=\(result.host)&port=\(result.port)&id=\(result.deviceId)&key=\(Base64.urlEncode(Data(base64Encoded: result.key) ?? Data()))")
+                    print("device-url: \(AppURL.scheme)://pair?host=\(result.host)&port=\(result.port)&id=\(result.deviceId)&key=\(Base64.urlEncode(Data(base64Encoded: result.key) ?? Data()))")
                 }
                 exit(0)
             } catch {

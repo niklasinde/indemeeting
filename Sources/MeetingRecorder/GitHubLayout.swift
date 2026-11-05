@@ -1,6 +1,6 @@
 import Foundation
 
-/// The widths of the GitHub view: the list, the page column, the page toolbar and when the rows show their metadata. Pure, so
+/// The widths of the GitHub view: the list, the page column, the page toolbar and when the row titles are one line. Pure, so
 /// the breakpoints are tested without a window; the terminal's side and height are in EmbeddedTerminal.
 enum GitHubLayout {
     /// Below `narrowBelow` the list is narrow, so the page column gets the room; wider windows keep the full range.
@@ -13,7 +13,7 @@ enum GitHubLayout {
     static let pageMinimum = 480.0
     /// Below this the list and the page take turns instead of sitting side by side.
     static let compactBelow = narrowListWidths.lowerBound + splitterWidth + pageMinimum
-    /// Below this list width each row is one line: the title and a line of its chips.
+    /// Below this list width each row's title is one line.
     static let singleLineRowsBelow = 300.0
     /// From this window height the Claude session is a bottom half across the whole window, and the list and page the top half.
     static let stackedFromHeight = 900.0
@@ -23,8 +23,6 @@ enum GitHubLayout {
     /// characters; a narrower column is used in full.
     static let readingWidth = 760.0
     static let proseCapFrom = 1000.0
-    /// From this width the list rows add a line with the author, the update time and the changes.
-    static let metadataFrom = 2200.0
 
     /// A stored width outside the list's range (an old value, or a hand edit) goes back to the default.
     static func repairedWidth(_ stored: Double) -> Double {
@@ -39,8 +37,6 @@ enum GitHubLayout {
         let upper = min(range.upperBound, total - splitterWidth - pageMinimum)
         return min(max(stored, range.lowerBound), upper)
     }
-
-    static func showsRowMetadata(width: Double) -> Bool { width >= metadataFrom }
 
     static func singleLineRows(listWidth: Double) -> Bool { listWidth < singleLineRowsBelow }
 

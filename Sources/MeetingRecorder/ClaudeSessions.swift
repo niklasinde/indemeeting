@@ -143,7 +143,7 @@ enum SessionList {
         rows.filter { $0.url == url }
     }
 
-    /// The pull request a chip names: its address through the same link the `meetingrecorder://` links use.
+    /// The pull request a chip names: its address through the same link the `worktime://` links use.
     static func pullRequest(_ url: String) -> GitHubLink.Target? {
         GitHubLink.parse(GitHubLink.appLink(for: url))
     }

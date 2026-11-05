@@ -27,13 +27,11 @@ struct WaitingPullRequests: View {
                 HStack {
                     heading("\(created.count) \(mergeable ? "mergeable" : status == .all ? "created" : status.title.lowercased())")
                     Spacer()
-                    Button("Mergeable") { mergeable.toggle() }
-                        .buttonStyle(NotchChipStyle(selected: mergeable))
-                        .help("Only pull requests that are approved, pass their checks and have no conflicts")
+                    MergeablePill(isOn: $mergeable)
                 }
                 .font(.caption.weight(.semibold))
                 .padding(.trailing, 8)
-                GitHubStatusTabs(selection: $status, counts: GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable), compact: true)
+                GitHubStatusTabs(selection: $status, counts: GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable))
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.bottom, 2)
@@ -54,18 +52,7 @@ struct WaitingPullRequests: View {
 
     private func row(_ pr: GitHubPR, showsAuthor: Bool) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                PRStatusDot(pr: pr)
-                Button { open(pr) } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("\(pr.repo) #\(String(pr.number))\(showsAuthor ? pr.author.map { " \u{00B7} \($0)" } ?? "" : "")")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        Text(pr.title).lineLimit(1).truncationMode(.tail)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+            PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, open: { open(pr) }) {
                 if GitHubLogic.isMergeable(pr) && draft?.pr.url != pr.url {
                     Button { begin(pr) } label: {
                         Image(systemName: "arrow.triangle.merge").frame(width: 22, height: 22).contentShape(Rectangle())
@@ -75,8 +62,6 @@ struct WaitingPullRequests: View {
                     .disabled(!actions.enabled)
                     .help(actions.enabled ? "Merge this pull request. You confirm first." : GitHubActions.disabledHelp)
                 }
-                OpenInClaudeCodeButton(pr: pr)
-                StatusMark(pr: pr)
             }
             if let draft, draft.pr.url == pr.url {
                 MergeConfirmation(draft: draft, onCancel: { finish(nil) }, onMerge: { merge(draft) })
@@ -147,6 +132,55 @@ private struct MergeConfirmation: View {
     }
 }
 
+/// One pull request as the notch bar and the GitHub page list it: the status, where it lives, its title, Claude Code and its checks.
+struct PullRequestSummaryRow<Accessory: View>: View {
+    let pr: GitHubPR
+    var showsAuthor = false
+    var titleLines = 1
+    var open: (() -> Void)?
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        HStack(spacing: 8) {
+            PRStatusDot(pr: pr)
+            if let open {
+                Button(action: open) { labels }.buttonStyle(.plain)
+            } else {
+                labels
+            }
+            accessory
+            OpenInClaudeCodeButton(pr: pr)
+            StatusMark(pr: pr)
+        }
+    }
+
+    private var labels: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("\(pr.repo) #\(String(pr.number))\(showsAuthor ? pr.author.map { " \u{00B7} \($0)" } ?? "" : "")")
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(pr.title).lineLimit(titleLines).truncationMode(.tail)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+}
+
+extension PullRequestSummaryRow where Accessory == EmptyView {
+    init(pr: GitHubPR, showsAuthor: Bool = false, titleLines: Int = 1, open: (() -> Void)? = nil) {
+        self.init(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines, open: open) { EmptyView() }
+    }
+}
+
+struct MergeablePill: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Button("Mergeable") { isOn.toggle() }
+            .buttonStyle(NotchChipStyle(selected: isOn))
+            .help("Only pull requests that are approved, pass their checks and have no conflicts")
+    }
+}
+
 struct NotchChipStyle: ButtonStyle {
     let selected: Bool
 
@@ -154,7 +188,7 @@ struct NotchChipStyle: ButtonStyle {
         configuration.label
             .padding(.horizontal, 8)
             .padding(.vertical, 2)
-            .background(Capsule().fill(Color.white.opacity(selected ? 0.22 : configuration.isPressed ? 0.14 : 0.08)))
+            .background(Capsule().fill(Color.primary.opacity(selected ? 0.22 : configuration.isPressed ? 0.14 : 0.08)))
             .foregroundStyle(selected ? .primary : .secondary)
             .contentShape(Capsule())
     }

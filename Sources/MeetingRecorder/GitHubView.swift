@@ -4,7 +4,6 @@ import SwiftUI
 struct GitHubView: View {
     @ObservedObject var model: GitHubModel
     @AppStorage("githubListWidth") private var listWidth = GitHubLayout.defaultListWidth
-    @AppStorage(GitHubModel.simpleKey) private var simple = false
     @AppStorage(GitHubModel.mergeableKey) private var mergeable = false
     @State private var showsDetail = false
     @State private var dragStart: Double?
@@ -143,7 +142,7 @@ struct GitHubView: View {
             if model.marked.count > 1 {
                 MarkedBar(count: model.marked.count, model: actions, close: { actions.beginBulk(.close, model.markedPRs) }, clear: model.clearMarks)
             }
-            content(showsMetadata: GitHubLayout.showsRowMetadata(width: width), singleLine: GitHubLayout.singleLineRows(listWidth: list))
+            content(titleLines: GitHubLayout.singleLineRows(listWidth: list) ? 1 : 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -156,26 +155,30 @@ struct GitHubView: View {
                 if model.enabled { refreshControls }
             }
             if model.showsList {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(GitHubLogic.header(count: model.visible.count, kind: model.kind, capped: model.isCapped))
-                        .font(.system(size: 22, weight: .medium))
-                    if model.filter.state != .open { Text(model.filter.state.rawValue.lowercased()).foregroundStyle(.secondary) }
-                }
-                .padding(.top, 8)
                 FlowLayout(spacing: 2) {
                     ForEach(GitHubKind.allCases) { kind in
                         Button(kind.tabTitle) { model.kind = kind }
                             .buttonStyle(PillButtonStyle(selected: model.kind == kind))
                     }
                 }
-                .padding(.top, 10)
+                .padding(.top, 8)
                 .padding(.leading, -8)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(GitHubLogic.header(count: model.visible.count, kind: model.kind, capped: model.isCapped))
+                        .font(.system(size: 22, weight: .medium))
+                    if model.filter.state != .open { Text(model.filter.state.rawValue.lowercased()).foregroundStyle(.secondary) }
+                    Spacer()
+                    MergeablePill(isOn: $mergeable)
+                }
+                .padding(.top, 8)
                 GitHubStatusTabs(selection: $model.filter.status, counts: model.statusCounts)
-                    .controlSize(.small)
-                    .padding(.top, 4)
-                    .padding(.leading, -8)
-                filters.padding(.top, 8)
-                quickFilters.padding(.top, 8).padding(.leading, -8)
+                    .padding(.top, 6)
+                HStack(spacing: 8) {
+                    SearchField(text: $model.filter.query)
+                    filtersMenu
+                }
+                .controlSize(.small)
+                .padding(.top, 10)
             }
         }
         .padding(.horizontal, Self.gutter)
@@ -195,78 +198,48 @@ struct GitHubView: View {
                 Label(EmbeddedTerminal.runningText(terminals.runningCount), systemImage: "circle.fill")
                     .font(.callout).foregroundStyle(.green).labelStyle(.titleAndIcon).lineLimit(1)
             }
-            if model.refreshing {
-                ProgressView().controlSize(.small)
-            } else {
-                Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
-                    .help("Fetch your pull requests now")
-            }
+            Button { Task { await model.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                .disabled(model.refreshing)
+                .help("Fetch your pull requests now")
         }
     }
 
-    private var filters: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            FlowLayout(spacing: 8) {
-                Picker("State", selection: $model.filter.state) {
-                    ForEach(GitHubLogic.StateFilter.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .labelsHidden()
-                .fixedSize()
-                Menu {
-                    Button("All repositories") { model.filter.repo = nil }
-                    Divider()
-                    ForEach(model.repos, id: \.self) { repo in
-                        Button { model.filter.repo = repo } label: {
-                            if model.filter.repo == repo { Label(repo, systemImage: "checkmark") } else { Text(repo) }
-                        }
-                    }
-                } label: {
-                    Label(model.filter.repo.map { GitHubLogic.repoName($0).name } ?? "All repositories", systemImage: "shippingbox")
-                }
-                .menuIndicator(.hidden)
-                .fixedSize()
-                Menu {
-                    Picker("Sort by", selection: $model.filter.sort) {
-                        ForEach(GitHubSort.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                } label: {
-                    Label(model.filter.sort.rawValue, systemImage: "arrow.up.arrow.down")
-                }
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Sort the pull requests")
-                Toggle("Simple", isOn: $simple)
-                    .toggleStyle(.checkbox)
-                    .fixedSize()
-                Toggle("Mergeable", isOn: $mergeable)
-                    .toggleStyle(.checkbox)
-                    .fixedSize()
-                    .help("Only pull requests that are approved, pass their checks and have no conflicts")
+    /// The rarer filters, out of the way: the state, the repository, the sort and the activity filters.
+    private var filtersMenu: some View {
+        Menu {
+            Picker("State", selection: $model.filter.state) {
+                ForEach(GitHubLogic.StateFilter.allCases) { Text($0.rawValue).tag($0) }
             }
-            SearchField(text: $model.filter.query)
-        }
-        .controlSize(.small)
-    }
-
-    private var quickFilters: some View {
-        FlowLayout(spacing: 2) {
+            Picker("Repository", selection: $model.filter.repo) {
+                Text("All repositories").tag(String?.none)
+                ForEach(model.repos, id: \.self) { Text($0).tag(String?.some($0)) }
+            }
+            Picker("Sort by", selection: $model.filter.sort) {
+                ForEach(GitHubSort.allCases) { Text($0.rawValue).tag($0) }
+            }
+            Divider()
             ForEach(GitHubQuickFilter.allCases) { quick in
-                Button { toggle(quick) } label: { Label(quick.rawValue, systemImage: quick.icon) }
-                    .buttonStyle(PillButtonStyle(selected: model.filter.quick.contains(quick)))
+                Toggle(isOn: quickBinding(quick)) { Label(quick.rawValue, systemImage: quick.icon) }
             }
-            Button { model.filter.hideBotOnly.toggle() } label: { Label("Hide bot-only activity", systemImage: "cpu") }
-                .buttonStyle(PillButtonStyle(selected: model.filter.hideBotOnly))
+            Toggle(isOn: $model.filter.hideBotOnly) { Label("Hide bot-only activity", systemImage: "cpu") }
+            Divider()
+            Button("Reset Filters") { model.filter = model.filter.withoutRefinements }
+                .disabled(model.filter.refinements == 0)
+        } label: {
+            Label(model.filter.refinements == 0 ? "Filters" : "Filters \u{00B7} \(model.filter.refinements)", systemImage: "line.3.horizontal.decrease.circle")
         }
-        .controlSize(.small)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("State, repository, sort and activity filters")
     }
 
-    private func toggle(_ quick: GitHubQuickFilter) {
-        if model.filter.quick.contains(quick) { model.filter.quick.remove(quick) } else { model.filter.quick.insert(quick) }
+    private func quickBinding(_ quick: GitHubQuickFilter) -> Binding<Bool> {
+        Binding(get: { model.filter.quick.contains(quick) }, set: { on in
+            if on { model.filter.quick.insert(quick) } else { model.filter.quick.remove(quick) }
+        })
     }
 
-    @ViewBuilder private func content(showsMetadata: Bool, singleLine: Bool) -> some View {
+    @ViewBuilder private func content(titleLines: Int) -> some View {
         if !model.enabled {
             GitHubEmptyState(icon: "arrow.triangle.branch", title: "Your pull requests, in one place",
                        text: "Reads your pull requests through the GitHub CLI. Nothing is uploaded.") {
@@ -278,7 +251,7 @@ struct GitHubView: View {
             GitHubEmptyState(icon: model.refreshing && !model.hasData ? "arrow.clockwise" : "checkmark.circle",
                        title: model.refreshing && !model.hasData ? "Fetching pull requests\u{2026}"
                        : model.filter == GitHubLogic.Filter() ? "No pull requests" : "Nothing matches",
-                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the status, state, repository, search or quick filters.") { EmptyView() }
+                       text: model.filter == GitHubLogic.Filter() ? nil : "Change the status, the search or the filters.") { EmptyView() }
                 .focusable()
                 .focused($focus, equals: .list)
                 .focusEffectDisabled()
@@ -289,10 +262,10 @@ struct GitHubView: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if !model.reviewQueue.isEmpty {
                             section("Waiting for my review", count: model.reviewQueue.count)
-                            ForEach(model.reviewQueue) { row($0, showsAuthor: true, showsMetadata: showsMetadata, singleLine: singleLine) }
+                            ForEach(model.reviewQueue) { row($0, showsAuthor: true, titleLines: titleLines) }
                             section("My pull requests", count: model.visible.count)
                         }
-                        ForEach(model.visible) { row($0, showsAuthor: false, showsMetadata: showsMetadata, singleLine: singleLine) }
+                        ForEach(model.visible) { row($0, showsAuthor: false, titleLines: titleLines) }
                     }
                     .padding(.horizontal, Self.gutter - 8)
                     .padding(.bottom, 20)
@@ -317,10 +290,10 @@ struct GitHubView: View {
         }
     }
 
-    private func row(_ pr: GitHubPR, showsAuthor: Bool, showsMetadata: Bool, singleLine: Bool) -> some View {
+    private func row(_ pr: GitHubPR, showsAuthor: Bool, titleLines: Int) -> some View {
         VStack(spacing: 0) {
             PullRequestRow(pr: pr, model: model, selected: pr.url == model.selectedURL, marked: model.marked.contains(pr.url),
-                           showsMetadata: showsMetadata, singleLine: singleLine, compact: simple, showsAuthor: showsAuthor, show: show)
+                           titleLines: titleLines, showsAuthor: showsAuthor, show: show)
             Divider().padding(.horizontal, Self.gutter)
         }
     }
@@ -357,137 +330,46 @@ private struct PullRequestRow: View {
     @ObservedObject var model: GitHubModel
     let selected: Bool
     let marked: Bool
-    let showsMetadata: Bool
-    let singleLine: Bool
-    let compact: Bool
+    let titleLines: Int
     let showsAuthor: Bool
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
-    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
     @ObservedObject private var actions = GitHubActionsModel.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center, spacing: 8) {
-                PRStatusDot(pr: pr)
-                Text("\(GitHubLogic.repoName(pr.repo).name) #\(String(pr.number))\(showsAuthor ? pr.author.map { " \u{00B7} \($0)" } ?? "" : "")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer(minLength: 4)
-                if GitHubLogic.isMergeable(pr) {
-                    Button("Merge\u{2026}") { actions.begin(.merge, pr) }
-                        .controlSize(.mini)
-                        .disabled(!actions.enabled)
-                        .help(actions.enabled ? "Merge this pull request. You confirm first." : GitHubActions.disabledHelp)
+        PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .background(RoundedRectangle(cornerRadius: 6).fill(marked ? Color.accentColor.opacity(0.18) : selected ? Color.primary.opacity(0.08) : .clear))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { click() }
+            .simultaneousGesture(TapGesture(count: 2).onEnded { if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty { open(pr.url) } })
+            .contextMenu {
+                Button("Show Details") { show(pr) }
+                Button("Open in Browser") { open(pr.url) }
+                Button("Copy Link") { GitHubModel.copy(pr.url) }
+                Button("Copy Title") { GitHubModel.copy(pr.copyText) }
+                Button("Copy Branch") { model.store?.githubHeadBranch(pr.url).map(GitHubModel.copy) }
+                    .disabled(model.store?.githubHeadBranch(pr.url) == nil)
+                Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
+                GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
+                Divider()
+                Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
+                Button("Open in Claude Code") { claude.openInClaudeCode(pr) }
+                    .disabled(claude.checkout(pr) == nil)
+                Menu("Open in Claude") {
+                    ForEach(GitHubClaude.Preset.allCases) { preset in
+                        Button(preset.title) { claude.openInClaude(pr, nil, preset) }
+                    }
                 }
-                OpenInClaudeCodeButton(pr: pr, size: 16)
-                StatusMark(pr: pr)
-            }
-            Text(pr.title).lineLimit(singleLine ? 1 : 2).foregroundStyle(.primary).frame(maxWidth: .infinity, alignment: .leading)
-            if !compact {
-                if singleLine {
-                    Text(chips.map(\.text).joined(separator: " \u{00B7} ")).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
-                } else {
-                    if showsMetadata { metadata }
-                    details
-                }
-            }
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 6).fill(marked ? Color.accentColor.opacity(0.18) : selected ? Color.primary.opacity(0.08) : .clear))
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture { click() }
-        .simultaneousGesture(TapGesture(count: 2).onEnded { if NSEvent.modifierFlags.intersection([.command, .shift]).isEmpty { open(pr.url) } })
-        .contextMenu {
-            Button("Show Details") { show(pr) }
-            Button("Open in Browser") { open(pr.url) }
-            Button("Copy Link") { GitHubModel.copy(pr.url) }
-            Button("Copy Title") { GitHubModel.copy(pr.copyText) }
-            Button("Copy Branch") { model.store?.githubHeadBranch(pr.url).map(GitHubModel.copy) }
-                .disabled(model.store?.githubHeadBranch(pr.url) == nil)
-            Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
-            GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
-            Divider()
-            Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
-            Button("Open in Claude Code") { claude.openInClaudeCode(pr) }
-                .disabled(claude.checkout(pr) == nil)
-            Menu("Open in Claude") {
-                ForEach(GitHubClaude.Preset.allCases) { preset in
-                    Button(preset.title) { claude.openInClaude(pr, nil, preset) }
+                Menu("Ask Claude") {
+                    ForEach(GitHubClaude.Preset.headless) { preset in
+                        Button(preset.title) { claude.ask(pr, nil, preset) }
+                    }
                 }
             }
-            Menu("Ask Claude") {
-                ForEach(GitHubClaude.Preset.headless) { preset in
-                    Button(preset.title) { claude.ask(pr, nil, preset) }
-                }
-            }
-        }
-        .help(pr.url)
-    }
-
-    /// Wide windows only: who opened it and when it changed, in the room the width leaves.
-    private var metadata: some View {
-        Text([pr.author, GitHubLogic.updatedText(pr.updated, now: Date()), GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)]
-            .compactMap { $0 }.joined(separator: " \u{00B7} "))
-            .font(.caption)
-            .foregroundStyle(.tertiary)
-            .monospacedDigit()
-            .lineLimit(1)
-    }
-
-    private var details: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            FlowChips(chips)
-            if !showsMetadata {
-                Spacer(minLength: 0)
-                Text("\(GitHubLogic.changesText(additions: pr.additions, deletions: pr.deletions)) \u{00B7} \(GitHubLogic.updatedText(pr.updated, now: Date()))")
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .fixedSize()
-            }
-        }
-        .font(.caption)
-        .foregroundStyle(.tertiary)
-    }
-
-    private var chips: [Chip] {
-        var chips: [Chip] = []
-        let signals = GitHubLogic.signals(pr)
-        if let ticket = pr.ticket { chips.append(.ticket(ticket, model.directory, short: true)) }
-        if pr.isDraft { chips.append(Chip(text: "Draft", icon: "pencil")) }
-        if signals.waitingOnMe { chips.append(Chip(text: "Waiting on you", icon: "person.crop.circle.badge.clock", tint: .orange)) }
-        if pr.state == .open, let review = pr.review { chips.append(Self.chip(review)) }
-        if signals.unresolved > 0 {
-            let capped = (pr.activity?.threads ?? 0) > GitHubLogic.threadPageSize
-            chips.append(Chip(text: "\(signals.unresolved)\(capped ? "+" : "") unresolved", icon: "bubble.left.and.exclamationmark.bubble.right", tint: .orange,
-                              help: "Show the unresolved threads", tap: .init(key: "unresolved") { showComments(.unresolved) }))
-        }
-        if signals.newFeedback > 0 {
-            chips.append(Chip(text: GitHubLogic.newCommentsText(signals.newFeedback), icon: "bell.fill", tint: .accentColor,
-                              help: "Show the new comments", tap: .init(key: "new") { showComments(.new) }))
-        }
-        else if signals.newBotFeedback > 0 { chips.append(Chip(text: "\(signals.newBotFeedback) from bots", icon: "cpu")) }
-        if pr.comments > 0 { chips.append(Chip(text: "\(pr.comments)", icon: "bubble.left")) }
-        if terminals.isRunning(pr.url) { chips.append(Chip(text: "Claude running", icon: "circle.fill", tint: .green, help: "Claude is running in a terminal for this pull request")) }
-        if claude.review(for: pr.url) != nil, claude.outdated[pr.url] != true {
-            chips.append(Chip(text: "Reviewed by Claude", icon: "sparkles", help: "Claude has reviewed this pull request here"))
-        }
-        if let last = signals.lastActor {
-            chips.append(Chip(text: last.actor.isBot ? "bot" : GitHubLogic.initials(last.actor.login), icon: last.actor.isBot ? "cpu" : "person.crop.circle",
-                              help: "Last comment by \(last.actor.login) \(GitHubLogic.updatedText(last.date, now: Date()))"))
-        }
-        return chips
-    }
-
-    private static func chip(_ review: GitHubPR.Review) -> Chip {
-        switch review {
-        case .approved: return Chip(text: "Approved", icon: "checkmark", tint: .green)
-        case .changesRequested: return Chip(text: "Changes requested", icon: "exclamationmark.bubble", tint: .red)
-        case .required: return Chip(text: "Review required", icon: "eye", tint: .orange)
-        }
+            .help(pr.url)
     }
 
     private func open(_ url: String) {
@@ -502,34 +384,25 @@ private struct PullRequestRow: View {
             show(pr)
         }
     }
-
-    private func showComments(_ scope: GitHubCommentsFilter.Scope) {
-        show(pr)
-        model.showComments(of: pr, scope)
-    }
 }
 
-/// The status tabs with their counts. Compact leaves out the empty ones, for the notch bar.
+/// The status tabs with their counts, in the notch bar and on the GitHub page. Empty tabs are left out.
 struct GitHubStatusTabs: View {
     @Binding var selection: GitHubStatusTab
     let counts: [GitHubStatusTab: Int]
-    var compact = false
 
     var body: some View {
-        FlowLayout(spacing: compact ? 4 : 2) {
+        FlowLayout(spacing: 4) {
             ForEach(tabs) { tab in
-                let button = Button { selection = tab } label: { label(tab) }.help("\(tab.title) (\(String(tab.key).uppercased()))")
-                if compact {
-                    button.buttonStyle(NotchChipStyle(selected: selection == tab))
-                } else {
-                    button.buttonStyle(PillButtonStyle(selected: selection == tab))
-                }
+                Button { selection = tab } label: { label(tab) }
+                    .help("\(tab.title) (\(String(tab.key).uppercased()))")
+                    .buttonStyle(NotchChipStyle(selected: selection == tab))
             }
         }
     }
 
     private var tabs: [GitHubStatusTab] {
-        GitHubStatusTab.allCases.filter { !compact || $0 == .all || $0 == selection || (counts[$0] ?? 0) > 0 }
+        GitHubStatusTab.allCases.filter { $0 == .all || $0 == selection || (counts[$0] ?? 0) > 0 }
     }
 
     private func label(_ tab: GitHubStatusTab) -> some View {

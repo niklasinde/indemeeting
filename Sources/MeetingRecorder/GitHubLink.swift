@@ -1,9 +1,8 @@
 import Foundation
 
-/// The `meetingrecorder://` links to a pull request: `pr?url=<github pull request url>` and `pr/<owner>/<repo>/<number>`.
+/// The `worktime://` (or older `meetingrecorder://`) links to a pull request: `pr?url=<github pull request url>` and
+/// `pr/<owner>/<repo>/<number>`.
 enum GitHubLink {
-    static let scheme = "meetingrecorder"
-
     struct Target: Equatable {
         let repo: String
         let number: Int
@@ -15,13 +14,13 @@ enum GitHubLink {
     static func appLink(for pullRequestURL: String) -> String {
         let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
         let encoded = pullRequestURL.addingPercentEncoding(withAllowedCharacters: unreserved) ?? pullRequestURL
-        return "\(scheme)://pr?url=\(encoded)"
+        return "\(AppURL.scheme)://pr?url=\(encoded)"
     }
 
     /// The pull request a link names, or nil for anything else: another scheme or host, extra parts or parameters,
     /// and any owner, repository or number that GitHub would not accept.
     static func parse(_ text: String) -> Target? {
-        guard let link = URLComponents(string: text), link.scheme?.lowercased() == scheme, link.host?.lowercased() == "pr",
+        guard let link = URLComponents(string: text), AppURL.accepts(scheme: link.scheme), link.host?.lowercased() == "pr",
               link.user == nil, link.password == nil, link.port == nil, link.fragment == nil else { return nil }
         let query = link.queryItems ?? []
         if link.percentEncodedPath.isEmpty {
@@ -38,7 +37,7 @@ enum GitHubLink {
     /// `--open-link <url>`: prints the pull request a link names, or fails. Reads nothing and writes nothing.
     static func printFromCommandLine(_ text: String) -> Never {
         guard let target = parse(text) else {
-            FileHandle.standardError.write(Data("Not a meetingrecorder pull request link\n".utf8))
+            FileHandle.standardError.write(Data("Not a WorkTime pull request link\n".utf8))
             exit(2)
         }
         print("\(target.repo) #\(target.number) \(target.url)")

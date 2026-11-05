@@ -83,8 +83,10 @@ uses a second listener on a random port that exists only while the pairing is op
 The QR code holds
 
 ```
-meetingrecorder://pair?host=<name>.local&port=<pairing port>&id=<8 hex>&key=<base64url, 16 bytes>
+worktime://pair?host=<name>.local&port=<pairing port>&id=<8 hex>&key=<base64url, 16 bytes>
 ```
+
+`meetingrecorder://pair?...` from before the rename is parsed the same way.
 
 `id` is the PSK identity and `key` the pairing key (URL-safe base64 without padding; standard base64 is accepted too).
 `PhonePairing(url:)` parses it and rejects anything malformed. Without a camera the user types the **code**: the id and

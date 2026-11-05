@@ -172,7 +172,10 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(numbers { $0.quick = [.waitingOnMe] } == [4], "waiting")
         check(numbers { $0.quick = [.changesRequested] } == [1], "changes")
         check(numbers { $0.hideBotOnly = true } == [1, 2, 4], "hide bot-only")
-        check(GitHubLogic.filter(rows, GitHubLogic.Filter(), simple: true).map(\.number) == [4], "simple keeps only waiting on me")
+        check(GitHubLogic.Filter().refinements == 0 && GitHubLogic.Filter(query: "x", status: .myTurn).refinements == 0, "search and status are not refinements")
+        let refined = GitHubLogic.Filter(state: .all, repo: "o/r", query: "x", quick: [.failing, .unresolved], hideBotOnly: true, sort: .mostDiscussed, status: .draft)
+        check(refined.refinements == 6, "each menu filter counts \(refined.refinements)")
+        check(refined.withoutRefinements == GitHubLogic.Filter(query: "x", status: .draft), "reset keeps the search and the status")
     }),
 
     ("a pull request is mergeable when approved or needing no review, passing, without conflicts and not a draft", {
@@ -240,7 +243,6 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(numbers(.onHold) == [1] && numbers(.draft) == [2] && numbers(.approved) == [3] && numbers(.waiting) == [4] && numbers(.myTurn).isEmpty, "tabs")
         let counts = GitHubLogic.statusCounts(rows, GitHubLogic.Filter())
         check(counts[.all] == 3 && counts[.onHold] == 1 && counts[.myTurn] == 0, "counts of the open ones \(counts)")
-        check(GitHubLogic.statusCounts(rows, GitHubLogic.Filter(), simple: true)[.all] == 0, "simple counts what it would show")
         check(GitHubStatusTab.tab(for: "m") == .myTurn && GitHubStatusTab.tab(for: "P") == .approved && GitHubStatusTab.tab(for: "x") == nil, "hotkeys")
         check(GitHubLogic.waitingFirst(rows, status: .onHold).map(\.number) == [1], "the notch list keeps the tab")
     }),

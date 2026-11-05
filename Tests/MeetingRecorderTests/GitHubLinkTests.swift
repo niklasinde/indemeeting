@@ -3,20 +3,31 @@ import Foundation
 private func parsed(_ text: String) -> GitHubLink.Target? { GitHubLink.parse(text) }
 
 private let finqAPI = GitHubLink.Target(repo: "quiddly-com/finq.api", number: 2483)
-private let encodedFinqAPI = "meetingrecorder://pr?url=https%3A%2F%2Fgithub.com%2Fquiddly-com%2Ffinq.api%2Fpull%2F2483"
+private let encodedFinqAPI = "worktime://pr?url=https%3A%2F%2Fgithub.com%2Fquiddly-com%2Ffinq.api%2Fpull%2F2483"
+private let schemes = ["worktime", "meetingrecorder"]
 
 private let linkSourceFiles = ["Sources/MeetingRecorder/GitHubLink.swift", "Sources/MeetingRecorder/GitHubLinkHandler.swift"]
 
 let githubLinkTests: [(name: String, run: () throws -> Void)] = [
     ("a link with the pull request address in the query opens that pull request", {
-        check(parsed(encodedFinqAPI) == finqAPI, "percent-encoded query")
-        check(parsed("meetingrecorder://pr?url=https://github.com/quiddly-com/finq.api/pull/2483") == finqAPI, "unencoded query")
+        for scheme in schemes {
+            check(parsed("\(scheme)://pr?url=https%3A%2F%2Fgithub.com%2Fquiddly-com%2Ffinq.api%2Fpull%2F2483") == finqAPI, "\(scheme): percent-encoded query")
+            check(parsed("\(scheme)://pr?url=https://github.com/quiddly-com/finq.api/pull/2483") == finqAPI, "\(scheme): unencoded query")
+        }
     }),
 
     ("a link with owner, repo and number in the path opens that pull request", {
-        check(parsed("meetingrecorder://pr/quiddly-com/finq.api/2483") == finqAPI, "path form")
-        check(parsed("meetingrecorder://pr/quiddly%2Dcom/finq%2Eapi/2483") == finqAPI, "percent-encoded path segments")
-        check(parsed("MEETINGRECORDER://PR/quiddly-com/finq.api/2483") == finqAPI, "scheme and host are not case sensitive")
+        for scheme in schemes {
+            check(parsed("\(scheme)://pr/quiddly-com/finq.api/2483") == finqAPI, "\(scheme): path form")
+            check(parsed("\(scheme)://pr/quiddly%2Dcom/finq%2Eapi/2483") == finqAPI, "\(scheme): percent-encoded path segments")
+            check(parsed("\(scheme.uppercased())://PR/quiddly-com/finq.api/2483") == finqAPI, "\(scheme): scheme and host are not case sensitive")
+        }
+    }),
+
+    ("other schemes are not app links", {
+        for text in ["https://pr/o/r/1", "worktimex://pr/o/r/1", "meeting://pr/o/r/1", "claude://pr/o/r/1", "pr/o/r/1"] {
+            check(parsed(text) == nil, "rejects \(text)")
+        }
     }),
 
     ("dots, dashes and underscores in the repository name are accepted", {
@@ -93,7 +104,7 @@ let githubLinkTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("the copied app link opens the same pull request it was copied from", {
-        check(GitHubLink.appLink(for: finqAPI.url) == encodedFinqAPI, "copy string")
+        check(GitHubLink.appLink(for: finqAPI.url) == encodedFinqAPI, "copy string uses worktime://")
         check(GitHubLink.appLink(for: "https://github.com/quiddly-com/finq.api/pull/2483") == encodedFinqAPI, "copy string from the page address")
         check(parsed(GitHubLink.appLink(for: finqAPI.url)) == finqAPI, "round trip")
     }),
