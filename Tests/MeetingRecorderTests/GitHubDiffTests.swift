@@ -6,6 +6,23 @@ import Foundation
 private let patch = "@@ -10,4 +10,5 @@ func a() {\n context\n-old\n+new\n+added\n tail\n\\ No newline at end of file\n@@ -40,2 +41,2 @@\n x\n-y\n+z"
 
 let githubDiffTests: [(name: String, run: () throws -> Void)] = [
+    ("the first files open by default, all of them when there are fewer", {
+        let paths = (1...8).map { "f\($0).swift" }
+        check(GitHubDiffLogic.initiallyExpanded(paths) == Set(paths.prefix(GitHubDiffLogic.initiallyOpen)), "eight files")
+        check(GitHubDiffLogic.initiallyExpanded(["a", "b"]) == ["a", "b"], "two files")
+        check(GitHubDiffLogic.initiallyExpanded([]).isEmpty, "no files")
+    }),
+
+    ("the diff cache keeps the most recently stored keys", {
+        var cache = RecentCache<Int>(limit: 2)
+        cache.store(1, for: "a")
+        cache.store(2, for: "b")
+        cache.store(3, for: "a")
+        cache.store(4, for: "c")
+        check(cache["b"] == nil && cache["a"] == 3 && cache["c"] == 4, "\(cache.keys)")
+        check(cache.keys == ["a", "c"], "\(cache.keys)")
+    }),
+
     ("a unified diff is numbered from its hunk headers, old and new apart", {
         let rows = GitHubDiffLogic.rows(patch)
         check(rows.map(\.kind) == [.hunk, .context, .removed, .added, .added, .context, .note, .hunk, .context, .removed, .added], "\(rows.map(\.kind))")

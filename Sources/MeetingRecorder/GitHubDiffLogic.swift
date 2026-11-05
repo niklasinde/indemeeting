@@ -28,12 +28,44 @@ struct GitHubDiffRender {
     let spans: [[SyntaxSpan]]?
 }
 
+/// A diff's files and which of them were open, kept to restore it when it is shown again.
+struct GitHubCachedDiff {
+    var files: [GitHubFilePatch]
+    var expanded: Set<String>
+}
+
+/// The values of the most recently stored keys, the oldest dropped past `limit`.
+struct RecentCache<Value> {
+    let limit: Int
+    private(set) var keys: [String] = []
+    private var values: [String: Value] = [:]
+
+    init(limit: Int) { self.limit = limit }
+
+    subscript(key: String) -> Value? { values[key] }
+
+    mutating func store(_ value: Value, for key: String) {
+        values[key] = value
+        keys.removeAll { $0 == key }
+        keys.append(key)
+        while keys.count > limit { values[keys.removeFirst()] = nil }
+    }
+}
+
 enum GitHubDiffLogic {
     static let pageSize = 100
     /// GitHub lists at most 3000 files of a pull request.
     static let maxPages = 30
     /// Rows shown of a file before "Show all".
     static let visibleRows = 400
+    /// Files open when a pull request or commit is first shown.
+    static let initiallyOpen = 5
+    /// Pull requests and commits whose files stay in memory.
+    static let cachedDiffs = 20
+
+    static func initiallyExpanded(_ paths: [String]) -> Set<String> {
+        Set(paths.prefix(initiallyOpen))
+    }
 
     static func filesArguments(repo: String, number: Int, page: Int) -> [String] {
         ["api", "repos/\(repo)/pulls/\(number)/files?per_page=\(pageSize)&page=\(page)"]

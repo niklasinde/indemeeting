@@ -342,6 +342,7 @@ struct GitHubDetailContent: View {
                 }
             }
         }
+        .task(id: source) { diffs.load(source) }
     }
 }
 
