@@ -1,22 +1,58 @@
 import Foundation
+import os
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
 
 enum Summarizer {
+    /// Tries the engine chosen in Settings, then the others, skipping any that is not available. With none left, the
+    /// first failure is thrown, or why Apple Intelligence is unavailable when nothing ran.
     static func summarise(_ segments: [TranscriptSegment], names: SpeakerNames = [:], language: MeetingLanguage,
-                          progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary {
-        #if canImport(FoundationModels)
+                          progress: @escaping @MainActor (ProcessingStage) -> Void) async throws
+        -> (summary: MeetingSummary, engine: SummaryEngine) {
         let lines = segments.map { $0.line(language, names: names) }
-        do {
-            return try await OnDeviceSummarizer(language: language).summarise(lines, progress: progress)
-        } catch where ClaudeSummarizer.shouldFallBack(error) {
+        var failure: Error?
+        for engine in SummaryEngine.order(chosen: .stored()) {
+            do {
+                if let summary = try await summarise(lines, with: engine, language: language, progress: progress) {
+                    return (summary, engine)
+                }
+            } catch {
+                log("Summarising with \(engine.displayName) failed: \(ProcessingLogic.errorDetails(error))")
+                failure = failure ?? error
+            }
+        }
+        throw failure ?? unavailableReason(for: language) ?? ClaudeSummarizer.Failure.unavailable
+    }
+
+    /// The engine's summary, or nil when it is not available.
+    private static func summarise(_ lines: [String], with engine: SummaryEngine, language: MeetingLanguage,
+                                  progress: @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary? {
+        switch engine {
+        case .ollama:
+            guard await OllamaSummarizer.isAvailable() else { return nil }
+            return try await OllamaSummarizer.summarise(lines, language: language, progress: progress)
+        case .claude:
+            guard ClaudeSummarizer.isAvailable else { return nil }
             await progress(.summarisingWithClaude)
             return try await ClaudeSummarizer.summarise(lines, language: language)
+        case .apple:
+            #if canImport(FoundationModels)
+            guard unavailableReason(for: language) == nil else { return nil }
+            do {
+                return try await OnDeviceSummarizer(language: language).summarise(lines, progress: progress)
+            } catch where ClaudeSummarizer.shouldFallBack(error) {
+                throw ClaudeSummarizer.Failure.unavailable
+            }
+            #else
+            return nil
+            #endif
         }
-        #else
-        throw SummaryUnavailable.requiresMacOS26
-        #endif
+    }
+
+    private static func log(_ message: String) {
+        Logger(subsystem: "MeetingRecorder", category: "processing").notice("\(message, privacy: .public)")
+        FileHandle.standardError.write(Data((message + "\n").utf8))
     }
 
     static func unavailableReason(for language: MeetingLanguage) -> SummaryUnavailable? {
@@ -77,25 +113,9 @@ private struct OnDeviceSummarizer {
     private var maxCharacters: Int { ProcessingLogic.chunkCharacters(contextSize: model.contextSize) }
 
     func summarise(_ lines: [String], progress: @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary {
-        let parts = ProcessingLogic.chunks(lines, maxCharacters: maxCharacters)
-        var summaries: [MeetingSummary] = []
-        for (index, part) in parts.enumerated() {
-            await progress(.summarising(part: index + 1, of: parts.count))
-            let intro = parts.count > 1 ? "Part \(index + 1) of \(parts.count) of a meeting transcript" : "Meeting transcript"
-            summaries.append(try await respond("\(intro):\n\n\(part)"))
-        }
-        while summaries.count > 1 {
-            await progress(.combining)
-            let notes = summaries.map { ProcessingLogic.summaryMarkdown($0, audioName: nil, language: language) }
-            var groups = ProcessingLogic.chunks(notes, maxCharacters: maxCharacters)
-            if groups.count >= summaries.count { groups = [notes.joined(separator: "\n\n")] }
-            var combined: [MeetingSummary] = []
-            for group in groups {
-                combined.append(try await respond("Summaries of consecutive parts of one meeting. Combine them into one summary of the whole meeting:\n\n\(group)"))
-            }
-            summaries = combined
-        }
-        guard let summary = summaries.first else { throw TranscriptionError.noSpeech("the transcript") }
+        let summary = try await ProcessingLogic.summariseInParts(lines, maxCharacters: maxCharacters, language: language,
+                                                                 progress: progress, respond: respond)
+        guard let summary else { throw TranscriptionError.noSpeech("the transcript") }
         return summary
     }
 

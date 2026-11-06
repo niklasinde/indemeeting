@@ -50,6 +50,7 @@ enum TranscriptVersionLogic {
         shown.status = snapshot.summary.status
         shown.statusMessage = snapshot.summary.unavailable
         shown.summarised = shown.status == .summarised
+        shown.summaryEngine = snapshot.summary.engine
         return MeetingContent(meeting: shown, segments: snapshot.segments, summary: snapshot.summary, names: snapshot.names)
     }
 
@@ -59,7 +60,7 @@ enum TranscriptVersionLogic {
         return try JSONEncoder().encode(Body(
             segments: snapshot.segments.map { Body.Segment(start: $0.start, text: $0.text, speaker: $0.speaker?.rawValue) },
             speakers: snapshot.speakers.map { Body.Voice(speaker: $0.speaker.rawValue, name: $0.name, embedding: $0.embedding) },
-            title: summary.title, unavailable: summary.unavailable,
+            title: summary.title, unavailable: summary.unavailable, summaryEngine: summary.engine,
             actionItems: summary.actionItems.map { Body.Item(task: $0.task, owner: $0.owner, done: $0.done) },
             topics: summary.sections.map { Body.Topic(title: $0.heading, points: $0.lines.map(\.text)) }))
     }
@@ -73,7 +74,7 @@ enum TranscriptVersionLogic {
                 ChecklistItem(key: "version-\(index)", task: item.task, owner: item.owner, done: item.done)
             },
             sections: body.topics.map { SummarySection(heading: $0.title, lines: $0.points.map(MarkdownBlock.bullet)) },
-            unavailable: body.unavailable)
+            unavailable: body.unavailable, engine: body.summaryEngine)
         return TranscriptSnapshot(
             segments: body.segments.map { TranscriptSegment(start: $0.start, text: $0.text, speaker: $0.speaker.flatMap(Speaker.init(rawValue:))) },
             speakers: body.speakers.compactMap { voice in
@@ -92,6 +93,7 @@ enum TranscriptVersionLogic {
         let speakers: [Voice]
         let title: String?
         let unavailable: String?
+        var summaryEngine: String?
         let actionItems: [Item]
         let topics: [Topic]
     }

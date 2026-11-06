@@ -114,12 +114,13 @@ extension MeetingSummary {
 }
 
 extension ParsedSummary {
-    init(_ summary: MeetingSummary) {
+    init(_ summary: MeetingSummary, engine: String? = nil) {
         self.init(title: summary.title,
                   actionItems: summary.actionItems.enumerated().map { index, item in
                       ChecklistItem(key: String(index), task: item.task, owner: item.owner, done: item.done ?? false)
                   },
-                  sections: summary.topics.map { SummarySection(heading: $0.title, lines: $0.points.map(MarkdownBlock.bullet)) })
+                  sections: summary.topics.map { SummarySection(heading: $0.title, lines: $0.points.map(MarkdownBlock.bullet)) },
+                  engine: engine)
     }
 }
 
@@ -380,6 +381,32 @@ enum ProcessingLogic {
         }
         if !current.isEmpty { chunks.append(current) }
         return chunks
+    }
+
+    /// Summarises `lines` part by part when they don't fit in one request, then merges the partial summaries until one
+    /// is left; nil when there is nothing to summarise.
+    static func summariseInParts(_ lines: [String], maxCharacters: Int, language: MeetingLanguage,
+                                 progress: @MainActor (ProcessingStage) -> Void,
+                                 respond: (String) async throws -> MeetingSummary) async throws -> MeetingSummary? {
+        let parts = chunks(lines, maxCharacters: maxCharacters)
+        var summaries: [MeetingSummary] = []
+        for (index, part) in parts.enumerated() {
+            await progress(.summarising(part: index + 1, of: parts.count))
+            let intro = parts.count > 1 ? "Part \(index + 1) of \(parts.count) of a meeting transcript" : "Meeting transcript"
+            summaries.append(try await respond("\(intro):\n\n\(part)"))
+        }
+        while summaries.count > 1 {
+            await progress(.combining)
+            let notes = summaries.map { summaryMarkdown($0, audioName: nil, language: language) }
+            var groups = chunks(notes, maxCharacters: maxCharacters)
+            if groups.count >= summaries.count { groups = [notes.joined(separator: "\n\n")] }
+            var combined: [MeetingSummary] = []
+            for group in groups {
+                combined.append(try await respond("Summaries of consecutive parts of one meeting. Combine them into one summary of the whole meeting:\n\n\(group)"))
+            }
+            summaries = combined
+        }
+        return summaries.first
     }
 
     private static func split(_ line: String, maxCharacters: Int) -> [String] {

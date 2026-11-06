@@ -114,7 +114,11 @@ struct RecordingDetail: View {
             .foregroundStyle(.secondary)
             .padding(.top, 4)
             let meeting = library.meeting(of: entry)
-            let info = meeting.flatMap { LibraryLogic.transcriptionInfo(at: $0.transcribedAt, engine: $0.transcriptEngine) }
+            let info = meeting.flatMap { meeting in
+                let parts = [LibraryLogic.transcriptionInfo(at: meeting.transcribedAt, engine: meeting.transcriptEngine),
+                             LibraryLogic.summaryInfo(engine: meeting.summaryEngine)].compactMap { $0 }
+                return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
+            }
             if info != nil || !library.versions.isEmpty {
                 HStack(spacing: 8) {
                     if let info { Text(info).foregroundStyle(.tertiary) }

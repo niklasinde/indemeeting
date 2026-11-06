@@ -90,3 +90,49 @@ enum ModelState: Int, Comparable {
 
     static func < (a: ModelState, b: ModelState) -> Bool { a.rawValue < b.rawValue }
 }
+
+/// What summarises meetings first; the others follow when it is missing or fails.
+enum SummaryEngine: String, CaseIterable {
+    case ollama
+    case claude
+    case apple
+
+    static let storageKey = "summaryEngine"
+    static let appleModel = "apple-intelligence"
+
+    var displayName: String {
+        switch self {
+        case .ollama: return "Ministral (local)"
+        case .claude: return "Claude"
+        case .apple: return "Apple"
+        }
+    }
+
+    /// The model stored with a summary it makes.
+    var model: String {
+        switch self {
+        case .ollama: return OllamaSummarizer.model
+        case .claude: return ClaudeSummarizer.model
+        case .apple: return Self.appleModel
+        }
+    }
+
+    static func stored(_ defaults: UserDefaults = .standard) -> SummaryEngine {
+        defaults.string(forKey: storageKey).flatMap(Self.init) ?? .ollama
+    }
+
+    /// The chosen engine, then the others in their usual order.
+    static func order(chosen: SummaryEngine) -> [SummaryEngine] {
+        [chosen] + allCases.filter { $0 != chosen }
+    }
+
+    /// The name of the model stored with a summary.
+    static func displayName(stored model: String) -> String {
+        switch model {
+        case OllamaSummarizer.model: return "Ministral 3 8B"
+        case appleModel: return "Apple Intelligence"
+        case _ where model.hasPrefix("claude"): return "Claude"
+        default: return model
+        }
+    }
+}

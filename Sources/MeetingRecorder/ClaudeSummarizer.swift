@@ -106,8 +106,12 @@ enum ClaudeSummarizer {
         return try MeetingSummary.decode(json: String(text[start...end]))
     }
 
+    private static var liveRoute: Route? { route(key: ClaudeAPIKeyStore.live.key(), cli: ClaudePlugin.findCLI()) }
+
+    static var isAvailable: Bool { liveRoute != nil }
+
     static func summarise(_ lines: [String], language: MeetingLanguage) async throws -> MeetingSummary {
-        guard let route = route(key: ClaudeAPIKeyStore.live.key(), cli: ClaudePlugin.findCLI()) else { throw Failure.unavailable }
+        guard let route = liveRoute else { throw Failure.unavailable }
         let system = instructions(language: language), prompt = prompt(lines)
         switch route {
         case .api(let key):

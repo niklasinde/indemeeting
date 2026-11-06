@@ -143,7 +143,7 @@ struct PhoneEndpoints {
         return .json(PhoneMeetingDetail(
             id: meeting.id, title: meeting.title, date: meeting.created, duration: duration,
             languages: meeting.language.map { [$0.code] } ?? [], languageDetected: meeting.languageDetected,
-            engines: PhoneEngines(transcript: meeting.transcriptEngine, summary: meeting.summarised ? "apple-intelligence" : nil),
+            engines: PhoneEngines(transcript: meeting.transcriptEngine, summary: meeting.summarised ? meeting.summaryEngine ?? SummaryEngine.appleModel : nil),
             summaryTitle: summary.title, summaryUnavailable: summary.unavailable,
             topics: summary.sections.map { PhoneSummaryTopic(title: $0.heading, points: $0.lines.map(\.text)) },
             actionItems: summary.actionItems.map { PhoneActionItem(id: Int64($0.key) ?? 0, owner: $0.owner, text: $0.task, done: $0.done) },

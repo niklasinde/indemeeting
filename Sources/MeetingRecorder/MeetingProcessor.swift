@@ -110,8 +110,8 @@ enum MeetingPipeline {
                                   progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         let name = audio.lastPathComponent
         do {
-            let summary = try await Summarizer.summarise(segments, names: names, language: language, progress: progress)
-            try store.saveSummary(name, ParsedSummary(summary))
+            let (summary, engine) = try await Summarizer.summarise(segments, names: names, language: language, progress: progress)
+            try store.saveSummary(name, ParsedSummary(summary, engine: engine.model))
             return ProcessingResult(title: summary.title, unavailable: nil)
         } catch let reason as SummaryUnavailable {
             try store.saveSummary(name, ParsedSummary(unavailable: reason.message))

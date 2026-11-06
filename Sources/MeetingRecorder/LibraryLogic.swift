@@ -88,6 +88,8 @@ struct ParsedSummary: Equatable {
     var sections: [SummarySection] = []
     /// Why there is no summary, when the file is the "No summary" note.
     var unavailable: String?
+    /// The model that wrote the summary.
+    var engine: String?
 
     var isEmpty: Bool { actionItems.isEmpty && sections.isEmpty }
 
@@ -152,6 +154,10 @@ enum LibraryLogic {
                                   timeZone: TimeZone = .current) -> String? {
         guard let date else { return nil }
         return "Transcribed " + transcriptionLabel(at: date, engine: engine, locale: locale, timeZone: timeZone)
+    }
+
+    static func summaryInfo(engine: String?) -> String? {
+        engine.map { "Summarised by " + SummaryEngine.displayName(stored: $0) }
     }
 
     /// "5 Nov 14:02 · Whisper Large v3 Turbo", with "Unknown date" for a transcript older than the recorded time.

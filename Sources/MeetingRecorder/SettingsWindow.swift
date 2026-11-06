@@ -261,6 +261,7 @@ struct SettingsView: View {
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
     @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
     @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
+    @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ollama
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -344,6 +345,16 @@ struct SettingsView: View {
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .labelsHidden()
+                }
+            }
+            section("Summary", footer: "Ministral runs on this Mac through Ollama. When the chosen engine is missing or "
+                    + "fails, the others take over.") {
+                row("Summarise with") {
+                    Picker("Summarise with", selection: $summaryEngine) {
+                        ForEach(SummaryEngine.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 }
             }
             ForEach(WhisperModel.families, id: \.self) { family in

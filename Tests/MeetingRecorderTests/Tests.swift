@@ -78,7 +78,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + countdownTests + storeTests + recordingsMigrationTests + transcriptVersionTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + countdownTests + storeTests + recordingsMigrationTests + transcriptVersionTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests + ollamaSummarizerTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {

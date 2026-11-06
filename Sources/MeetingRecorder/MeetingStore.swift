@@ -49,6 +49,7 @@ struct Meeting: Equatable {
     var languageDetected = false
     var transcribedAt: Date?
     var source: MeetingSource?
+    var summaryEngine: String?
 
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle, sourceTitle: source?.title) }
     var sourceLabel: String? { MeetingSourceLogic.label(app: source?.app, title: source?.title, shownTitle: title) }
@@ -361,11 +362,12 @@ final class MeetingStore: @unchecked Sendable {
         ALTER TABLE meetings ADD COLUMN source_title TEXT;
         ALTER TABLE meetings ADD COLUMN source_bundle TEXT;
         """,
+        "ALTER TABLE meetings ADD COLUMN summary_engine TEXT",
     ]
 
     private static let meetingColumns = """
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
-        transcribed, summarised, language_detected, transcribed_at, source_app, source_title, source_bundle
+        transcribed, summarised, language_detected, transcribed_at, source_app, source_title, source_bundle, summary_engine
         """
 
     let openError: DatabaseUnavailable?
@@ -507,7 +509,7 @@ final class MeetingStore: @unchecked Sendable {
                 SELECT \(columns.joined(separator: ", ")), snippet(meetings_fts, -1, '**', '**', '\u{2026}', 16)
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
                 WHERE meetings_fts MATCH ? ORDER BY rank LIMIT ?
-                """, [match, limit]) { (Self.meeting($0), $0.string(18)) }
+                """, [match, limit]) { (Self.meeting($0), $0.string(Int32(columns.count))) }
         }
     }
 
@@ -742,12 +744,14 @@ final class MeetingStore: @unchecked Sendable {
                 status: ProcessingStatus(rawValue: row.string(8)) ?? .none, statusMessage: row.optionalString(9),
                 transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12),
                 languageDetected: row.bool(13), transcribedAt: row.optionalDouble(14).map(Date.init(timeIntervalSince1970:)),
-                source: row.optionalString(15).map { MeetingSource(app: $0, title: row.optionalString(16), bundle: row.optionalString(17)) })
+                source: row.optionalString(15).map { MeetingSource(app: $0, title: row.optionalString(16), bundle: row.optionalString(17)) },
+                summaryEngine: row.optionalString(18))
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {
         var summary = ParsedSummary(title: meeting.aiTitle)
         summary.unavailable = meeting.status == .unavailable ? meeting.statusMessage : nil
+        summary.engine = meeting.summaryEngine
         summary.actionItems = try db.query("SELECT id, owner, task, checked FROM action_items WHERE meeting_id = ? ORDER BY position",
                                            [meeting.id]) {
             ChecklistItem(key: String($0.int64(0)), task: $0.string(2), owner: $0.optionalString(1), done: $0.bool(3))
@@ -838,8 +842,9 @@ final class MeetingStore: @unchecked Sendable {
         try db.run("DELETE FROM action_items WHERE meeting_id = ?", [id])
         try db.run("DELETE FROM summary_topics WHERE meeting_id = ?", [id])
         let status = summary.status
-        try db.run("UPDATE meetings SET ai_title = ?, status = ?, status_message = ?, summarised = ? WHERE id = ?",
-                   [summary.unavailable == nil ? summary.title : nil, status.rawValue, summary.unavailable, status == .summarised, id])
+        try db.run("UPDATE meetings SET ai_title = ?, status = ?, status_message = ?, summarised = ?, summary_engine = ? WHERE id = ?",
+                   [summary.unavailable == nil ? summary.title : nil, status.rawValue, summary.unavailable, status == .summarised,
+                    status == .summarised ? summary.engine : nil, id])
         guard summary.unavailable == nil else { return }
         for (position, item) in summary.actionItems.enumerated() {
             try db.run("INSERT INTO action_items (meeting_id, position, owner, task, checked) VALUES (?, ?, ?, ?, ?)",
