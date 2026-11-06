@@ -171,8 +171,10 @@ final class MicrophoneActivityMonitor {
         return AudioObjects.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
     }
 
+    var users: [MicUser] { Self.inputUsers }
+
     /// The processes taking audio input, this app included.
-    var users: [MicUser] {
+    static var inputUsers: [MicUser] {
         AudioObjects.objects(kAudioHardwarePropertyProcessObjectList, of: AudioObjects.system).compactMap { process in
             var pid: pid_t = 0
             var running: UInt32 = 0

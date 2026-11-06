@@ -42,6 +42,23 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         }
     }),
 
+    ("a meeting's source is stored once and replaced only when asked", {
+        try withStore { store, _ in
+            let file = "Meeting-2026-11-06-1000.m4a"
+            let huddle = MeetingSource(app: "Slack", title: "Huddle with Andy", bundle: "com.tinyspeck.slackmacgap")
+            check(try store.setSource(file, huddle) == huddle, "stored")
+            check(try store.setSource(file, MeetingSource(app: "Zoom")) == huddle, "a continued meeting keeps its source")
+            let named = MeetingSource(app: "Slack", title: "Huddle with Andy Smith", bundle: "com.tinyspeck.slackmacgap")
+            try store.setSource(file, named, replacing: true)
+            let meeting = try store.meetings().first
+            check(meeting?.source == named && meeting?.title == "Huddle with Andy Smith", "refined, and titles the meeting")
+            check(meeting?.sourceLabel == "Slack", "the name is not repeated")
+            check(MCPServer.meetingLine(meeting!).hasSuffix("(source: Huddle with Andy Smith \u{00B7} Slack)"), "mcp line")
+            try store.setTitleOverride(file, "Planning")
+            check(try store.meetings().first?.sourceLabel == "Huddle with Andy Smith \u{00B7} Slack", "full label under another title")
+        }
+    }),
+
     ("a database that cannot be opened makes the store unavailable instead of keeping data in memory", {
         let folder = try tempFolder()
         defer {

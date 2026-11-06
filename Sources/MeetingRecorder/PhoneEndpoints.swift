@@ -119,7 +119,8 @@ struct PhoneEndpoints {
             return PhoneMeetingSummary(id: meeting.id, title: meeting.title, date: meeting.created, duration: meeting.duration,
                                        language: meeting.language?.code, hasSummary: meeting.summarised,
                                        speakers: names.map { $0.name ?? $0.speaker.name(in: language) },
-                                       chatCount: try store.chatCount(meeting: meeting.id))
+                                       chatCount: try store.chatCount(meeting: meeting.id),
+                                       sourceApp: meeting.source?.app, sourceTitle: meeting.source?.title)
         }
     }
 
@@ -148,7 +149,8 @@ struct PhoneEndpoints {
             actionItems: summary.actionItems.map { PhoneActionItem(id: Int64($0.key) ?? 0, owner: $0.owner, text: $0.task, done: $0.done) },
             notes: meeting.notes, transcript: segments,
             audio: PhoneAudioInfo(available: bytes != nil, duration: duration, bytes: bytes,
-                                  contentType: bytes == nil ? nil : PhoneHTTP.contentType(forAudio: meeting.audioFile))))
+                                  contentType: bytes == nil ? nil : PhoneHTTP.contentType(forAudio: meeting.audioFile)),
+            sourceApp: meeting.source?.app, sourceTitle: meeting.source?.title))
     }
 
     /// The recording's file, only when its stored name is a plain file name inside the recordings folder.

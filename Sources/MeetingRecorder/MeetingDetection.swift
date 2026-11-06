@@ -211,4 +211,162 @@ enum MeetingApps {
     static func notificationBody(appName: String?) -> String {
         appName.map { "\($0) \u{00B7} microphone in use" } ?? "Microphone in use"
     }
+
+    /// The known meeting apps to look at, most likely first: those taking microphone input (a helper process counts
+    /// for its app), then the frontmost, then the other running ones.
+    static func candidates(micOwners: [String], frontmost: String?, running: [String]) -> [String] {
+        let known = (dedicated + browsers).map(\.id)
+        func app(_ bundle: String) -> String? { known.first { bundle == $0 || bundle.hasPrefix($0 + ".") } }
+        let ordered = micOwners.compactMap(app) + [frontmost].compactMap { $0.flatMap(app) } + known.filter(running.contains)
+        return ordered.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
+    }
+
+    static func appName(_ bundle: String) -> String? { (dedicated + browsers).first { $0.id == bundle }?.name }
+
+    static func isBrowser(_ bundle: String) -> Bool { browsers.contains { $0.id == bundle } }
+}
+
+/// Where a meeting was held: the app or web service, and the call's name when one could be read.
+struct MeetingSource: Equatable {
+    var app: String
+    var title: String?
+    var bundle: String?
+}
+
+struct BrowserTab: Equatable {
+    var url: String?
+    var title: String
+}
+
+enum MeetingSourceLogic {
+    static let services = ["Google Meet", "Zoom", "Microsoft Teams", "Slack"]
+
+    /// `Huddle with Andy · Slack`; the call name is left out when it is already the shown title.
+    static func label(app: String?, title: String?, shownTitle: String? = nil) -> String? {
+        guard let app else { return nil }
+        return [title == shownTitle ? nil : title, app].compactMap { $0 }.joined(separator: " \u{00B7} ")
+    }
+
+    /// The source of one candidate app. A trusted one (taking the microphone, or frontmost) always gives one; another
+    /// only with signs of a call: a meeting tab, a huddle window or a meeting window.
+    static func source(app: String, trusted: Bool, windowTitles: [String], tabs: [BrowserTab]) -> MeetingSource? {
+        guard let name = MeetingApps.appName(app) else { return nil }
+        if MeetingApps.isBrowser(app) {
+            let pages = tabs.isEmpty ? windowTitles.map { BrowserTab(url: nil, title: $0) } : tabs
+            let meetings = pages.compactMap { page in service(url: page.url, title: page.title).map { (page: page, service: $0) } }
+            if let best = meetings.min(by: { services.firstIndex(of: $0.service)! < services.firstIndex(of: $1.service)! }) {
+                return MeetingSource(app: best.service, title: cleanTitle(best.page.title, service: best.service), bundle: app)
+            }
+            return trusted ? MeetingSource(app: name, bundle: app) : nil
+        }
+        switch name {
+        case "Slack":
+            if let huddle = windowTitles.first(where: { $0.localizedCaseInsensitiveContains("huddle") }) {
+                return MeetingSource(app: name, title: cleanTitle(huddle, service: name), bundle: app)
+            }
+            guard trusted else { return nil }
+            return MeetingSource(app: name, title: windowTitles.lazy.compactMap { cleanTitle($0, service: name) }.first, bundle: app)
+        case "Zoom", "Microsoft Teams":
+            let title = windowTitles.lazy.compactMap { cleanTitle($0, service: name) }.first
+            let inMeeting = title != nil || windowTitles.contains {
+                $0.localizedCaseInsensitiveContains("meeting") || $0.localizedCaseInsensitiveContains("webinar")
+            }
+            return trusted || inMeeting ? MeetingSource(app: name, title: title, bundle: app) : nil
+        default:
+            return trusted ? MeetingSource(app: name, bundle: app) : nil
+        }
+    }
+
+    /// The new source when it says more about the same call than the stored one: a name where there was none, a
+    /// meeting service where there was only the browser, or a longer name that contains the old one.
+    static func refined(_ stored: MeetingSource, with new: MeetingSource?) -> MeetingSource? {
+        guard let new, new != stored, new.bundle == stored.bundle else { return nil }
+        guard let old = stored.title else { return new.title != nil || new.app != stored.app ? new : nil }
+        guard let title = new.title, new.app == stored.app else { return nil }
+        return title.count > old.count && title.localizedCaseInsensitiveContains(old) ? new : nil
+    }
+
+    /// The meeting service a browser page belongs to, from its address, else from its title.
+    static func service(url: String?, title: String) -> String? {
+        if let url = url.flatMap(URL.init(string:)), let host = url.host?.lowercased() {
+            let path = url.path.lowercased()
+            if host == "meet.google.com", path.range(of: "^/(lookup/)?[a-z0-9-]{3,}", options: .regularExpression) != nil { return "Google Meet" }
+            if host == "zoom.us" || host.hasSuffix(".zoom.us"), ["/wc/", "/j/", "/s/"].contains(where: path.hasPrefix) { return "Zoom" }
+            if ["teams.microsoft.com", "teams.live.com", "teams.cloud.microsoft"].contains(host) { return "Microsoft Teams" }
+            if host == "app.slack.com", title.localizedCaseInsensitiveContains("huddle") { return "Slack" }
+            return nil
+        }
+        let page = strip(title)
+        if page.range(of: meetAffix, options: .regularExpression) != nil { return "Google Meet" }
+        if page.hasSuffix("| Microsoft Teams") { return "Microsoft Teams" }
+        if page.range(of: zoomSuffix, options: .regularExpression) != nil { return "Zoom" }
+        return nil
+    }
+
+    private static let meetAffix = "^(Google )?Meet\\s[-\u{2013}:]\\s|\\s[-\u{2013}]\\sGoogle Meet$"
+    private static let zoomSuffix = "\\s[-|]\\sZoom( Meeting)?$"
+
+    /// The call's name in a window or tab title, without browser and app suffixes, unread counts and generic names.
+    static func cleanTitle(_ raw: String, service: String) -> String? {
+        let text = strip(raw)
+        switch service {
+        case "Google Meet":
+            let name = text.replacingOccurrences(of: meetAffix, with: "", options: .regularExpression)
+            guard name.range(of: "^[a-z]{3}-[a-z]{4}-[a-z]{3}$", options: .regularExpression) == nil else { return nil }
+            return nonGeneric(name, ["Meet", "Google Meet"])
+        case "Microsoft Teams":
+            let first = text.components(separatedBy: " | ").first { $0 != "Microsoft Teams" } ?? ""
+            return nonGeneric(first, ["Chat", "Calendar", "Activity", "Teams", "Calls", "Files", "Home", "Search", "Meeting",
+                                      "Meeting compact view"])
+        case "Zoom":
+            let name = text.replacingOccurrences(of: zoomSuffix, with: "", options: .regularExpression)
+            return name.localizedCaseInsensitiveContains("zoom") ? nil : nonGeneric(name, ["Meeting", "Webinar"])
+        case "Slack":
+            return slackTitle(text)
+        default:
+            return nonGeneric(text, [service])
+        }
+    }
+
+    /// A huddle window (`Huddle: general - Slack`, `Huddle with Andy`) as is, else the conversation of a Slack window
+    /// (`Andy Smith (DM) - Quiddly - Slack`, `general (Channel) - Quiddly - Slack`, older `Slack | general | Quiddly`)
+    /// as the huddle in it.
+    private static func slackTitle(_ text: String) -> String? {
+        let parts = text.hasPrefix("Slack | ") ? Array(text.components(separatedBy: " | ").dropFirst())
+            : text.components(separatedBy: " - ").flatMap { $0.components(separatedBy: " \u{2013} ") }
+        guard var name = parts.first?.trimmingCharacters(in: .whitespaces) else { return nil }
+        if name.lowercased().hasPrefix("huddle with ") { return name }
+        name = name.replacingOccurrences(of: "^Huddle\\s*[:\u{2013}-]?\\s*|\\s+huddle$", with: "", options: [.regularExpression, .caseInsensitive])
+        var direct: Bool?
+        for (marker, isDirect) in [("(DM)", true), ("(Group DM)", true), ("(Channel)", false), ("(Private Channel)", false)]
+        where name.hasSuffix(marker) {
+            name = name.dropLast(marker.count).trimmingCharacters(in: .whitespaces)
+            direct = isDirect
+        }
+        if name.hasPrefix("#") || (direct == nil && name == name.lowercased() && !name.contains(" ")) { direct = false }
+        let generic = ["Slack", "huddle", "Huddles", "Activity", "Home", "DMs", "Threads", "Later", "Search", "Unreads", "Drafts & sent"]
+        guard let name = nonGeneric(name, generic) else { return nil }
+        if direct == false { return "Huddle in " + (name.hasPrefix("#") ? name : "#" + name) }
+        return "Huddle with \(name)"
+    }
+
+    /// Without the browser's suffix, Chrome's recording notes, unread counts and leading emoji.
+    private static func strip(_ raw: String) -> String {
+        var text = ActivityLogic.pageTitle(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+        while true {
+            let next = text
+                .replacingOccurrences(of: "\\s[-\u{2013}]\\s(Audio playing|Audio muted|Camera recording|Microphone recording|"
+                                          + "Camera and microphone recording|Sharing (this tab|your screen|a window)|Network error)$",
+                                      with: "", options: .regularExpression)
+                .replacingOccurrences(of: "^(\\(\\d+\\+?\\)|\\[\\d+\\]|\\*|\u{2022}|\u{25CF})\\s*", with: "", options: .regularExpression)
+            let trimmed = String(next.drop { $0.isWhitespace || $0.unicodeScalars.first?.properties.isEmojiPresentation == true })
+            if trimmed == text { return text }
+            text = ActivityLogic.pageTitle(trimmed)
+        }
+    }
+
+    private static func nonGeneric(_ text: String, _ generic: [String]) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || generic.contains { $0.caseInsensitiveCompare(trimmed) == .orderedSame } ? nil : trimmed
+    }
 }

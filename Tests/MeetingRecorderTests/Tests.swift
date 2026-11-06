@@ -380,6 +380,97 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(MeetingApps.notificationBody(appName: "Zoom") == "Zoom \u{00B7} microphone in use", "with app")
     }),
 
+    ("meeting source candidates put the app taking the microphone first", {
+        let running = ["com.apple.finder", "com.tinyspeck.slackmacgap", "us.zoom.xos", "com.google.Chrome"]
+        check(MeetingApps.candidates(micOwners: ["com.google.Chrome.helper"], frontmost: "com.tinyspeck.slackmacgap", running: running)
+              == ["com.google.Chrome", "com.tinyspeck.slackmacgap", "us.zoom.xos"], "helper counts for its browser")
+        check(MeetingApps.candidates(micOwners: ["com.apple.WebKit.GPU"], frontmost: "com.apple.finder", running: running)
+              == ["us.zoom.xos", "com.tinyspeck.slackmacgap", "com.google.Chrome"], "unknown owner and frontmost are skipped")
+    }),
+
+    ("meeting titles are cleaned per service", {
+        let meet = { (title: String) in MeetingSourceLogic.cleanTitle(title, service: "Google Meet") }
+        check(meet("Meet - Nova checkin") == "Nova checkin", "meet prefix")
+        check(meet("Meet \u{2013} Nova checkin - Camera and microphone recording - Google Chrome - Niklas (Quiddly)") == "Nova checkin",
+              "chrome window title")
+        check(meet("Meet - abc-defg-hij") == nil, "a meeting code is no name")
+        check(meet("Meet - abc-defg-hij - Microphone recording - Google Chrome") == nil, "code in a window title")
+        check(meet("\u{1F534} Meet - Sprint planning") == "Sprint planning", "leading emoji")
+        check(meet("Google Meet") == nil, "landing page")
+        let teams = { (title: String) in MeetingSourceLogic.cleanTitle(title, service: "Microsoft Teams") }
+        check(teams("Nova checkin | Microsoft Teams") == "Nova checkin", "teams suffix")
+        check(teams("(3) Weekly sync | Quiddly | Microsoft Teams") == "Weekly sync", "unread count and organisation")
+        check(teams("Chat | Andy Smith | Microsoft Teams") == nil, "navigation is no meeting")
+        check(teams("Meeting compact view | Microsoft Teams") == nil, "compact view")
+        let zoom = { (title: String) in MeetingSourceLogic.cleanTitle(title, service: "Zoom") }
+        check(zoom("Zoom Meeting") == nil, "generic zoom window")
+        check(zoom("Zoom Workplace") == nil, "zoom main window")
+        check(zoom("Design review - Zoom") == "Design review", "web client title")
+        let slack = { (title: String) in MeetingSourceLogic.cleanTitle(title, service: "Slack") }
+        check(slack("Andy Smith (DM) - Quiddly - Slack") == "Huddle with Andy Smith", "dm")
+        check(slack("* general (Channel) - Quiddly - Slack") == "Huddle in #general", "unread channel")
+        check(slack("Slack | dev-team | Quiddly") == "Huddle in #dev-team", "older title")
+        check(slack("Huddle: general - Quiddly - Slack") == "Huddle in #general", "huddle window")
+        check(slack("Huddle with Andy - Slack") == "Huddle with Andy", "named huddle window")
+        check(slack("Activity - Quiddly - Slack") == nil, "activity view")
+        check(slack("Slack") == nil, "bare app")
+    }),
+
+    ("meeting sources come from tabs, huddle windows and meeting windows", {
+        let chrome = "com.google.Chrome"
+        let tabs = [BrowserTab(url: "https://mail.google.com/mail/u/0/#inbox", title: "Inbox (12) - niklas@quiddly.com - Gmail"),
+                    BrowserTab(url: "https://meet.google.com/abc-defg-hij?authuser=0", title: "Meet - Nova checkin")]
+        check(MeetingSourceLogic.source(app: chrome, trusted: false, windowTitles: [], tabs: tabs)
+              == MeetingSource(app: "Google Meet", title: "Nova checkin", bundle: chrome), "meet tab in the background")
+        check(MeetingSourceLogic.source(app: chrome, trusted: false, windowTitles: ["Meet - abc-defg-hij - Google Chrome"], tabs: [])
+              == MeetingSource(app: "Google Meet", title: nil, bundle: chrome), "window title without automation")
+        check(MeetingSourceLogic.source(app: chrome, trusted: false, windowTitles: [], tabs: [tabs[0]]) == nil, "no meeting tab")
+        check(MeetingSourceLogic.source(app: chrome, trusted: true, windowTitles: [], tabs: [tabs[0]])
+              == MeetingSource(app: "Google Chrome", title: nil, bundle: chrome), "browser taking the microphone")
+        check(MeetingSourceLogic.source(app: chrome, trusted: false, windowTitles: [],
+                                        tabs: [BrowserTab(url: "https://app.zoom.us/wc/8123456789/join", title: "Zoom")])?.app == "Zoom", "zoom web")
+        check(MeetingSourceLogic.source(app: chrome, trusted: false, windowTitles: [],
+                                        tabs: [BrowserTab(url: "https://zoom.us/pricing", title: "Plans & Pricing | Zoom")]) == nil, "zoom site is no call")
+        let slack = "com.tinyspeck.slackmacgap"
+        check(MeetingSourceLogic.source(app: slack, trusted: false, windowTitles: ["general (Channel) - Quiddly - Slack"], tabs: []) == nil,
+              "slack in the background without a huddle")
+        check(MeetingSourceLogic.source(app: slack, trusted: false, windowTitles: ["general (Channel) - Quiddly - Slack", "Huddle: Andy Smith (DM)"],
+                                        tabs: [])?.title == "Huddle with Andy Smith", "huddle window wins")
+        check(MeetingSourceLogic.source(app: slack, trusted: true, windowTitles: ["Andy Smith (DM) - Quiddly - Slack"], tabs: [])
+              == MeetingSource(app: "Slack", title: "Huddle with Andy Smith", bundle: slack), "slack taking the microphone")
+        let teams = "com.microsoft.teams2"
+        check(MeetingSourceLogic.source(app: teams, trusted: false, windowTitles: ["Calendar | Calendar | Microsoft Teams"], tabs: []) == nil,
+              "teams without a meeting")
+        check(MeetingSourceLogic.source(app: teams, trusted: false, windowTitles: ["Chat | Microsoft Teams", "Nova checkin | Microsoft Teams"],
+                                        tabs: [])?.title == "Nova checkin", "teams meeting window")
+        check(MeetingSourceLogic.source(app: "us.zoom.xos", trusted: false, windowTitles: ["Zoom Workplace", "Zoom Meeting"], tabs: [])
+              == MeetingSource(app: "Zoom", title: nil, bundle: "us.zoom.xos"), "zoom meeting window")
+        check(MeetingSourceLogic.source(app: "com.apple.FaceTime", trusted: false, windowTitles: ["FaceTime"], tabs: []) == nil, "facetime needs trust")
+    }),
+
+    ("a meeting source is refined once it says more", {
+        let meet = MeetingSource(app: "Google Meet", title: nil, bundle: "com.google.Chrome")
+        let named = MeetingSource(app: "Google Meet", title: "Nova checkin", bundle: "com.google.Chrome")
+        check(MeetingSourceLogic.refined(meet, with: named) == named, "a name arrives")
+        check(MeetingSourceLogic.refined(MeetingSource(app: "Google Chrome", bundle: "com.google.Chrome"), with: meet) == meet, "the service arrives")
+        check(MeetingSourceLogic.refined(named, with: meet) == nil, "losing the name is no refinement")
+        check(MeetingSourceLogic.refined(named, with: MeetingSource(app: "Google Meet", title: "Standup", bundle: "com.google.Chrome")) == nil,
+              "another name is no refinement")
+        check(MeetingSourceLogic.refined(named, with: MeetingSource(app: "Google Meet", title: "Nova checkin (weekly)", bundle: "com.google.Chrome"))?.title
+              == "Nova checkin (weekly)", "a longer name")
+        check(MeetingSourceLogic.refined(meet, with: MeetingSource(app: "Slack", title: "Huddle with Andy", bundle: "com.tinyspeck.slackmacgap")) == nil,
+              "another app")
+    }),
+
+    ("a meeting source is labelled and titles the meeting until it has one", {
+        check(MeetingSourceLogic.label(app: "Slack", title: "Huddle with Andy") == "Huddle with Andy \u{00B7} Slack", "label")
+        check(MeetingSourceLogic.label(app: "Slack", title: "Huddle with Andy", shownTitle: "Huddle with Andy") == "Slack", "title shown already")
+        check(MeetingSourceLogic.label(app: nil, title: "x") == nil, "no source")
+        check(LibraryLogic.title(override: nil, aiTitle: nil, sourceTitle: "Nova checkin") == "Nova checkin", "source title as fallback")
+        check(LibraryLogic.title(override: nil, aiTitle: "Planering", sourceTitle: "Nova checkin") == "Planering", "summary title first")
+        check(LibraryLogic.titleOverride("Nova checkin", aiTitle: nil, sourceTitle: "Nova checkin") == nil, "unchanged fallback is no override")
+    }),
+
     ("a source that never delivers does not block the other", {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }

@@ -219,15 +219,15 @@ enum LibraryLogic {
     }
 
     /// The renamed title, else the summary's title, else "Meeting".
-    static func title(override: String?, aiTitle: String?) -> String {
-        [override, aiTitle].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+    static func title(override: String?, aiTitle: String?, sourceTitle: String? = nil) -> String {
+        [override, aiTitle, sourceTitle].lazy.compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first { !$0.isEmpty } ?? fallbackTitle
     }
 
     /// What to store for an edited title: nothing when it is empty or what would be shown anyway.
-    static func titleOverride(_ text: String, aiTitle: String?) -> String? {
+    static func titleOverride(_ text: String, aiTitle: String?, sourceTitle: String? = nil) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty || trimmed == title(override: nil, aiTitle: aiTitle) ? nil : trimmed
+        return trimmed.isEmpty || trimmed == title(override: nil, aiTitle: aiTitle, sourceTitle: sourceTitle) ? nil : trimmed
     }
 
     static func dateGroup(_ date: Date, now: Date, calendar: Calendar = .current) -> DateGroup {

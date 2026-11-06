@@ -177,6 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var meetingWatcher = MeetingWatcher(recorder: recorder, notifier: notifier) { [weak self] in
         await self?.stopRecording()
     }
+    private lazy var sourceTracker = MeetingSourceTracker(recorder: recorder, store: store)
     lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store, tracker: tracker)
 
     var databaseError: DatabaseUnavailable? { store.openError }
@@ -185,6 +186,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillFinishLaunching(_ notification: Notification) {
         RecordingsMigration.runAtLaunch(store: store, busy: recorder.isBusy)
         meetingWatcher.start()
+        sourceTracker.start()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

@@ -48,8 +48,10 @@ struct Meeting: Equatable {
     /// Whether the language was detected rather than chosen.
     var languageDetected = false
     var transcribedAt: Date?
+    var source: MeetingSource?
 
-    var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle) }
+    var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle, sourceTitle: source?.title) }
+    var sourceLabel: String? { MeetingSourceLogic.label(app: source?.app, title: source?.title, shownTitle: title) }
 }
 
 /// Why the database could not be opened. The store then refuses every read and write instead of keeping data that
@@ -354,11 +356,16 @@ final class MeetingStore: @unchecked Sendable {
         );
         CREATE INDEX transcript_versions_meeting ON transcript_versions(meeting_id);
         """,
+        """
+        ALTER TABLE meetings ADD COLUMN source_app TEXT;
+        ALTER TABLE meetings ADD COLUMN source_title TEXT;
+        ALTER TABLE meetings ADD COLUMN source_bundle TEXT;
+        """,
     ]
 
     private static let meetingColumns = """
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
-        transcribed, summarised, language_detected, transcribed_at
+        transcribed, summarised, language_detected, transcribed_at, source_app, source_title, source_bundle
         """
 
     let openError: DatabaseUnavailable?
@@ -500,7 +507,7 @@ final class MeetingStore: @unchecked Sendable {
                 SELECT \(columns.joined(separator: ", ")), snippet(meetings_fts, -1, '**', '**', '\u{2026}', 16)
                 FROM meetings_fts JOIN meetings m ON m.id = meetings_fts.rowid
                 WHERE meetings_fts MATCH ? ORDER BY rank LIMIT ?
-                """, [match, limit]) { (Self.meeting($0), $0.string(15)) }
+                """, [match, limit]) { (Self.meeting($0), $0.string(18)) }
         }
     }
 
@@ -655,6 +662,18 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
+    /// Records where the meeting is held and returns the source it now has; without `replacing`, a source stored
+    /// before (a continued meeting) is kept.
+    @discardableResult
+    func setSource(_ audioFile: String, _ source: MeetingSource, replacing: Bool = false) throws -> MeetingSource? {
+        try write {
+            let id = try ensure(audioFile)
+            try db.run("UPDATE meetings SET source_app = ?, source_title = ?, source_bundle = ? WHERE id = ? AND (? OR source_app IS NULL)",
+                       [source.app, source.title, source.bundle, id, replacing])
+            return try meeting(audioFile)?.source
+        }
+    }
+
     func setChecked(actionItem id: Int64, _ checked: Bool) throws {
         try write { try db.run("UPDATE action_items SET checked = ? WHERE id = ?", [checked, id]) }
     }
@@ -722,7 +741,8 @@ final class MeetingStore: @unchecked Sendable {
                 titleOverride: row.optionalString(5), aiTitle: row.optionalString(6), notes: row.string(7),
                 status: ProcessingStatus(rawValue: row.string(8)) ?? .none, statusMessage: row.optionalString(9),
                 transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12),
-                languageDetected: row.bool(13), transcribedAt: row.optionalDouble(14).map(Date.init(timeIntervalSince1970:)))
+                languageDetected: row.bool(13), transcribedAt: row.optionalDouble(14).map(Date.init(timeIntervalSince1970:)),
+                source: row.optionalString(15).map { MeetingSource(app: $0, title: row.optionalString(16), bundle: row.optionalString(17)) })
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {

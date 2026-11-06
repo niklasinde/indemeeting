@@ -43,6 +43,15 @@ enum Permissions {
     /// Accessibility, for reading window titles. `request` shows the system prompt (once per app signature).
     static var accessibilityGranted: Bool { AXIsProcessTrusted() }
 
+    /// Whether Apple Events to the app are already allowed; never asks.
+    static func automationGranted(_ bundle: String) -> Bool {
+        var target = AEAddressDesc()
+        let id = Array(bundle.utf8)
+        guard AECreateDesc(typeApplicationBundleID, id, id.count, &target) == noErr else { return false }
+        defer { AEDisposeDesc(&target) }
+        return AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, false) == noErr
+    }
+
     static func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)

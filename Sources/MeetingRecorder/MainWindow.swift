@@ -244,12 +244,17 @@ final class RecordingLibrary: ObservableObject {
 
     func title(of entry: RecordingEntry) -> String { meeting(of: entry)?.title ?? LibraryLogic.fallbackTitle }
 
+    func sourceLabel(of entry: RecordingEntry) -> String? { meeting(of: entry)?.sourceLabel }
+
+    func sourceIcon(of entry: RecordingEntry) -> NSImage? { meeting(of: entry)?.source?.bundle.flatMap(AppIcons.icon) }
+
     func language(of entry: RecordingEntry) -> MeetingLanguage { meeting(of: entry)?.language ?? .current }
 
     func languageDetected(of entry: RecordingEntry) -> Bool { meeting(of: entry)?.languageDetected ?? false }
 
     func setTitle(_ title: String, of entry: RecordingEntry) {
-        let override = LibraryLogic.titleOverride(title, aiTitle: meeting(of: entry)?.aiTitle)
+        let meeting = meeting(of: entry)
+        let override = LibraryLogic.titleOverride(title, aiTitle: meeting?.aiTitle, sourceTitle: meeting?.source?.title)
         perform { try store.setTitleOverride(entry.fileName, override) }
     }
 

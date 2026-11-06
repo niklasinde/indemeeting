@@ -101,6 +101,9 @@ struct RecordingDetail: View {
             }
             HStack(spacing: 8) {
                 Text(subtitle)
+                if let source = library.sourceLabel(of: entry) {
+                    SourceLabel(text: source, icon: library.sourceIcon(of: entry))
+                }
                 if recorder.meeting == entry.audio { RecordingStatus(recorder: recorder) }
                 if processor.processing == entry.audio {
                     ProgressView().controlSize(.mini)

@@ -320,6 +320,19 @@ final class ActivityTracker: ObservableObject {
         }
         return nil
     }
+
+    /// The titles of all the app's windows through Accessibility, also when it is not frontmost.
+    nonisolated static func windowTitles(of pid: pid_t) -> [String] {
+        var windows: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &windows) == .success,
+              let windows = windows as? [AXUIElement] else { return [] }
+        return windows.compactMap { window in
+            var title: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success,
+                  let title = title as? String, !title.isEmpty else { return nil }
+            return title
+        }
+    }
 }
 
 /// The URL of the front tab of the frontmost browser, through Apple Events (Automation permission). Firefox has no
@@ -359,10 +372,41 @@ enum Browsers {
 
     @MainActor
     static func frontURL(of bundle: String) -> String? {
-        guard let source = scripts[bundle] else { return nil }
-        let script = compiled[bundle] ?? NSAppleScript(source: source)
-        guard let script else { return nil }
-        compiled[bundle] = script
+        scripts[bundle].flatMap { run($0, key: bundle) }
+    }
+
+    /// Every tab of the browser's non-private windows, with its address and title.
+    @MainActor
+    static func tabs(of bundle: String) -> [BrowserTab] {
+        let isPrivate = bundle == "com.apple.Safari" ? "false" : bundle == "company.thebrowser.Browser" ? "incognito of w"
+            : "mode of w is \"incognito\""
+        let title = bundle == "com.apple.Safari" ? "name" : "title"
+        let source = """
+            tell application id "\(bundle)"
+                set out to ""
+                repeat with w in (every window)
+                    try
+                        if not (\(isPrivate)) then
+                            repeat with t in (every tab of w)
+                                set out to out & (URL of t) & (character id 9) & (\(title) of t) & (character id 10)
+                            end repeat
+                        end if
+                    end try
+                end repeat
+                return out
+            end tell
+            """
+        guard supports(bundle), let text = run(source, key: bundle + ".tabs") else { return [] }
+        return text.split(separator: "\n").compactMap { line in
+            let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            return fields.count == 2 ? BrowserTab(url: String(fields[0]), title: String(fields[1])) : nil
+        }
+    }
+
+    @MainActor
+    private static func run(_ source: String, key: String) -> String? {
+        guard let script = compiled[key] ?? NSAppleScript(source: source) else { return nil }
+        compiled[key] = script
         var error: NSDictionary?
         let result = script.executeAndReturnError(&error)
         return error == nil ? result.stringValue : nil

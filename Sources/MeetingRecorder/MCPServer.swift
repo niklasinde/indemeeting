@@ -152,6 +152,7 @@ extension MCPServer {
     static func meetingLine(_ meeting: Meeting) -> String {
         "- id \(meeting.id) \u{00B7} " + [ActivityLogic.dateText(meeting.created) + " " + meeting.created.formatted(date: .omitted, time: .shortened),
                                           meeting.title, meeting.duration.map(ActivityLogic.hoursText)].compactMap { $0 }.joined(separator: " \u{00B7} ")
+            + (meeting.source.flatMap { MeetingSourceLogic.label(app: $0.app, title: $0.title) }.map { " (source: \($0))" } ?? "")
     }
 
     static func number(_ value: Any?) -> Double? {

@@ -105,6 +105,11 @@ struct MeetingsView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if let source = library.sourceLabel(of: entry) {
+                    SourceLabel(text: source, icon: library.sourceIcon(of: entry))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 10)
@@ -121,6 +126,23 @@ struct MeetingsView: View {
         case .today, .yesterday: return date.formatted(date: .omitted, time: .shortened)
         case .thisWeek: return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
         case .earlier: return date.formatted(.dateTime.day().month(.abbreviated).hour().minute())
+        }
+    }
+}
+
+/// Where the meeting was held, `Huddle with Andy · Slack`, after the app's icon.
+struct SourceLabel: View {
+    let text: String
+    let icon: NSImage?
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if let icon {
+                Image(nsImage: icon)
+                    .resizable()
+                    .frame(width: 12, height: 12)
+            }
+            Text(text).lineLimit(1)
         }
     }
 }

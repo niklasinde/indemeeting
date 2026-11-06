@@ -68,6 +68,9 @@ struct PhoneMeetingSummary: Codable, Equatable {
     var chatCount: Int
     /// With a search: the text around the match, matches wrapped in `**`.
     var snippet: String?
+    /// Where the meeting was held (`Slack`, `Google Meet`) and the call's name there.
+    var sourceApp: String? = nil
+    var sourceTitle: String? = nil
 }
 
 struct PhoneMeetingList: Codable, Equatable {
@@ -125,6 +128,8 @@ struct PhoneMeetingDetail: Codable, Equatable {
     var notes: String
     var transcript: [PhoneSegment]
     var audio: PhoneAudioInfo
+    var sourceApp: String? = nil
+    var sourceTitle: String? = nil
 }
 
 // MARK: Activity

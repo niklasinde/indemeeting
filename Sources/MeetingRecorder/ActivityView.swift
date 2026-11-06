@@ -24,7 +24,6 @@ final class ActivityModel: ObservableObject {
     let store: MeetingStore
     let tracker: ActivityTracker
     private var observer: NSObjectProtocol?
-    private var icons: [String: NSImage] = [:]
 
     init(store: MeetingStore, tracker: ActivityTracker) {
         self.store = store
@@ -148,12 +147,7 @@ final class ActivityModel: ObservableObject {
     }
 
     func icon(for block: ActivityBlock) -> NSImage? {
-        guard let bundle = block.key.appBundle else { return nil }
-        if let icon = icons[bundle] { return icon }
-        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
-        icons[bundle] = icon
-        return icon
+        block.key.appBundle.flatMap(AppIcons.icon)
     }
 
     var contextMarkdown: String {
