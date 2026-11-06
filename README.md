@@ -1,7 +1,8 @@
 # WorkTime
 
 Menu-bar app that records you (the microphone) and the meeting (system audio, i.e. the other participants, through a
-Core Audio process tap) into one mono AAC file at `~/Movies/MeetingRecordings/Meeting-YYYY-MM-DD-HHmm.m4a`
+Core Audio process tap) into one mono AAC file at
+`~/Library/Application Support/MeetingRecorder/Recordings/Meeting-YYYY-MM-DD-HHmm.m4a`
 (`-2`, `-3`, … when a minute already has one). All sources are converted to 48 kHz mono float, summed, and encoded.
 Works independently of Notion or any other meeting tool.
 
@@ -107,7 +108,7 @@ Quitting while paused saves the recording like Stop.
 
 "Open WorkTime" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
 main window (with a Dock icon while it is open). The sidebar holds the sections: **Meetings** (first), Activity, GitHub,
-Chat and Claude API. Meetings shows the recordings in `~/Movies/MeetingRecordings` in a list beside the selected meeting,
+Chat and Claude API. Meetings shows the recordings in `~/Library/Application Support/MeetingRecorder/Recordings` in a list beside the selected meeting,
 grouped by Today, Yesterday, This week and Earlier; below 780 points the list and the meeting take turns, with a back
 button. Chat and Claude API open their own windows. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
 hides the sidebar so the content takes the full width; the choice is remembered between launches. Each row shows the meeting title (a rename, else the title of the
@@ -154,9 +155,12 @@ keeps them; a checked item stays checked as long as the new summary has the same
 
 ## Data
 
-The audio stays in `~/Movies/MeetingRecordings` as `.m4a` files. Everything else is in one SQLite database,
-`~/Library/Application Support/MeetingRecorder/meetings.sqlite` (WAL mode, foreign keys on, opened through the system
-`SQLite3` library):
+The audio stays in `~/Library/Application Support/MeetingRecorder/Recordings` as `.m4a` files, next to one SQLite
+database that holds everything else, `~/Library/Application Support/MeetingRecorder/meetings.sqlite` (WAL mode, foreign
+keys on, opened through the system `SQLite3` library). Recordings used to be in `~/Movies/MeetingRecordings`; the first
+launch that finds that folder moves its files over one by one (a rename, never a copy) and removes it once it is empty.
+A file whose name is already taken in the new folder stays where it was, and while a recording or a `--process` job
+runs the move waits for the next launch. The database only stores the audio file names, not their folder:
 
 - `meetings`: one row per audio file name, with the date, length, language (and whether it was detected), renamed title, summary title, notes,
   processing status (`none`, `summarised`, `unavailable`, `failed`) with its message (for example why there is no
@@ -184,7 +188,7 @@ hidden (and kept). Earlier versions kept the data next to each recording in `<na
 existing ones) those files are read once and imported; they are never changed or used again, so after checking the
 app you can delete them.
 
-`--data-dir <folder>` (or `MEETING_RECORDER_DATA_DIR=<folder>`) makes the app use `<folder>/MeetingRecordings` and
+`--data-dir <folder>` (or `MEETING_RECORDER_DATA_DIR=<folder>`) makes the app use `<folder>/Recordings` and
 `<folder>/meetings.sqlite` instead, for trying a copy of the library without touching the real one.
 
 To check the window's layout without a screen, a debug build can render it offscreen with a Swedish sample meeting

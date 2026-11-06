@@ -183,6 +183,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: GlobalHotKey?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        RecordingsMigration.runAtLaunch(store: store, busy: recorder.isBusy)
         meetingWatcher.start()
     }
 

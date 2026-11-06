@@ -10,12 +10,7 @@ enum AppPaths {
             .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
     }()
 
-    static var recordings: URL {
-        dataDirectory?.appendingPathComponent("MeetingRecordings", isDirectory: true)
-            ?? FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("MeetingRecordings", isDirectory: true)
-    }
-
+    static var recordings: URL { support.appendingPathComponent("Recordings", isDirectory: true) }
     static var database: URL { support.appendingPathComponent("meetings.sqlite") }
     static var models: URL { support.appendingPathComponent("Models", isDirectory: true) }
     /// Where the Claude Code plugin's hooks append their events.
@@ -614,6 +609,18 @@ final class MeetingStore: @unchecked Sendable {
                     try db.run("UPDATE meetings SET duration = ? WHERE audio_file = ?", [seconds, audioFile])
                 }
             }
+        }
+    }
+
+    /// Renames every stored audio file that `rename` maps, in one transaction. Returns how many it renamed.
+    func rewriteAudioFiles(_ rename: (String) -> String?) throws -> Int {
+        try write {
+            let changes = try db.query("SELECT id, audio_file FROM meetings") { (id: $0.int64(0), name: $0.string(1)) }
+                .compactMap { row in rename(row.name).map { (id: row.id, name: $0) } }
+            for change in changes {
+                try db.run("UPDATE OR IGNORE meetings SET audio_file = ? WHERE id = ?", [change.name, change.id])
+            }
+            return changes.count
         }
     }
 
