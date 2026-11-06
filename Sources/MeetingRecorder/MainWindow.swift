@@ -205,7 +205,8 @@ final class RecordingLibrary: ObservableObject {
 
     private func rebuild() {
         let known = meetings.compactMapValues(\.duration).merging(durations.mapValues(\.seconds)) { $1 }
-        let listed = LibraryLogic.recordings(in: folder, files: files, durations: known)
+        let listed = LibraryLogic.recordings(in: folder, files: files + LibraryLogic.withoutAudio(Array(meetings.values), files: files),
+                                             durations: known)
         recordings = LibraryLogic.withRecording(recording, in: listed, now: Date())
     }
 
@@ -281,13 +282,26 @@ final class RecordingLibrary: ObservableObject {
     func trash(_ entry: RecordingEntry) {
         Task {
             do {
-                _ = try await NSWorkspace.shared.recycle([entry.audio] + (RecordingLogic.stems(of: entry.audio) ?? []))
+                let audio = AudioRetention.existingFiles(of: entry.fileName, in: folder)
+                if !audio.isEmpty { _ = try await NSWorkspace.shared.recycle(audio) }
                 try store.delete(entry.fileName)
             } catch {
                 NSAlert(error: error).runModal()
             }
             refresh()
         }
+    }
+
+    /// Why the meeting's audio cannot be played or processed again, when it cannot.
+    func audioUnavailable(_ entry: RecordingEntry) -> String? {
+        if let deleted = meeting(of: entry)?.audioDeletedAt { return AudioRetention.deletedText(deleted) }
+        let exists = entry.inProgress || FileManager.default.fileExists(atPath: entry.audio.path)
+        return exists ? nil : "The recording\u{2019}s audio file is missing"
+    }
+
+    func deleteAudio(_ entry: RecordingEntry) {
+        perform { try AudioRetention.deleteAudio(of: entry.fileName, in: folder, store: store, now: Date()) }
+        refresh()
     }
 
     func exportMarkdown(_ entry: RecordingEntry) {
@@ -415,7 +429,9 @@ struct MainView: View {
             ToolbarItemGroup(placement: .automatic) {
                 Spacer()
                 if recorder.isRecording { pauseButton }
-                if let entry = library.selected, !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
+                if let entry = library.selected, !entry.inProgress, !recorder.isBusy, library.audioUnavailable(entry) == nil {
+                    ContinueButton(recorder: recorder, entry: entry)
+                }
                 recordButton
                 moreMenu
             }
@@ -525,23 +541,25 @@ struct MainView: View {
     private var moreMenu: some View {
         Menu {
             if let entry = library.selected, !entry.inProgress {
+                let noAudio = library.audioUnavailable(entry) != nil
                 Button("Continue Recording") { Task { await recorder.start(continuing: entry.audio) } }
-                    .disabled(recorder.isBusy)
+                    .disabled(recorder.isBusy || noAudio)
                 Divider()
                 Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.audio]) }
+                    .disabled(noAudio)
                 Button("Transcribe & summarise") { processor.process(entry.audio) }
-                    .disabled(processor.processing == entry.audio)
+                    .disabled(processor.processing == entry.audio || noAudio)
                 Picker("Language", selection: Binding(get: { library.language(of: entry) },
                                                       set: { processor.process(entry.audio, in: $0) })) {
                     ForEach(MeetingLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
                 .pickerStyle(.menu)
-                .disabled(processor.processing == entry.audio)
+                .disabled(processor.processing == entry.audio || noAudio)
                 .help("Transcribe and summarise the meeting again in another language")
                 Button("Recognise speakers") { processor.recogniseSpeakers(entry.audio) }
-                    .disabled(processor.processing == entry.audio || !Diarizer.isReady)
-                    .help(Diarizer.isReady ? "Tell the speakers apart again without transcribing"
-                          : "Download \(SpeakerModel.name) in Settings first")
+                    .disabled(processor.processing == entry.audio || !Diarizer.isReady || noAudio)
+                    .help(library.audioUnavailable(entry) ?? (Diarizer.isReady ? "Tell the speakers apart again without transcribing"
+                          : "Download \(SpeakerModel.name) in Settings first"))
                 Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
                 if let id = library.meeting(of: entry)?.id {
                     Button("Ask About This Meeting\u{2026}") { ChatWindow.shared.show(scope: .meeting(id, label: library.title(of: entry))) }

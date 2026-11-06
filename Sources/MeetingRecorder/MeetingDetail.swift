@@ -66,6 +66,7 @@ struct RecordingDetail: View {
     @StateObject private var editor = MeetingEditor()
 
     private var language: MeetingLanguage { library.language(of: entry) }
+    private var audioUnavailable: String? { library.audioUnavailable(entry) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -74,15 +75,16 @@ struct RecordingDetail: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            PlayerBar(playback: playback, fallbackDuration: entry.duration ?? 0)
+            PlayerBar(playback: playback, fallbackDuration: entry.duration ?? 0, unavailable: audioUnavailable)
         }
         .onAppear {
-            playback.load(entry.audio)
+            playback.load(audioUnavailable == nil ? entry.audio : nil)
             editor.open(entry, library: library)
         }
         .onDisappear { editor.save() }
         .onChange(of: library.title(of: entry)) { editor.titleDidChange($1) }
         .onChange(of: entry.duration) { playback.load(entry.audio, force: true) }
+        .onChange(of: audioUnavailable) { playback.load($1 == nil ? entry.audio : nil, force: true) }
     }
 
     private var header: some View {
@@ -96,8 +98,10 @@ struct RecordingDetail: View {
                 if !entry.inProgress, let meeting = library.meeting(of: entry) {
                     AskButton(meeting: meeting, title: library.title(of: entry), notes: library.tab == .notes)
                 }
-                if !entry.inProgress { RetranscribeButton(entry: entry, recorder: recorder, processor: processor) }
-                if !entry.inProgress, !recorder.isBusy { ContinueButton(recorder: recorder, entry: entry) }
+                if !entry.inProgress {
+                    RetranscribeButton(entry: entry, recorder: recorder, processor: processor, unavailable: audioUnavailable)
+                }
+                if !entry.inProgress, !recorder.isBusy, audioUnavailable == nil { ContinueButton(recorder: recorder, entry: entry) }
             }
             HStack(spacing: 8) {
                 Text(subtitle)
@@ -119,9 +123,12 @@ struct RecordingDetail: View {
                              LibraryLogic.summaryInfo(engine: meeting.summaryEngine)].compactMap { $0 }
                 return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
             }
-            if info != nil || !library.versions.isEmpty {
+            if info != nil || !library.versions.isEmpty || meeting?.transcribed == true || meeting?.audioExpiresAt != nil {
                 HStack(spacing: 8) {
                     if let info { Text(info).foregroundStyle(.tertiary) }
+                    if let meeting, !entry.inProgress {
+                        AudioStatus(entry: entry, meeting: meeting, recorder: recorder, processor: processor, library: library)
+                    }
                     if !library.versions.isEmpty { EarlierVersionsMenu(library: library) }
                 }
                 .font(.caption)
@@ -178,7 +185,10 @@ struct RecordingDetail: View {
                     }
                 }
         case .transcript:
-            scrolling { TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback) }
+            scrolling {
+                TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback,
+                               audioUnavailable: audioUnavailable)
+            }
         }
     }
 
@@ -213,16 +223,48 @@ private struct RetranscribeButton: View {
     let entry: RecordingEntry
     @ObservedObject var recorder: Recorder
     @ObservedObject var processor: MeetingProcessor
-
-    private var audioMissing: Bool { !FileManager.default.fileExists(atPath: entry.audio.path) }
+    let unavailable: String?
 
     var body: some View {
         Button { processor.process(entry.audio) } label: {
             Label("Re-transcribe", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
         }
-        .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio || audioMissing)
-        .help(audioMissing ? "The recording\u{2019}s audio file is missing"
-              : "Transcribe, recognise speakers and summarise again with the current transcription settings")
+        .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio || unavailable != nil)
+        .help(unavailable.map { "Cannot re-transcribe. \($0)." }
+              ?? "Transcribe, recognise speakers and summarise again with the current transcription settings")
+    }
+}
+
+/// Whether the meeting's audio is still on this Mac, with "Delete audio now" while it is.
+private struct AudioStatus: View {
+    let entry: RecordingEntry
+    let meeting: Meeting
+    @ObservedObject var recorder: Recorder
+    @ObservedObject var processor: MeetingProcessor
+    @ObservedObject var library: RecordingLibrary
+    @State private var confirming = false
+
+    var body: some View {
+        switch AudioRetention.state(of: meeting, now: Date()) {
+        case .deleted(let date):
+            Text(AudioRetention.deletedText(date)).foregroundStyle(.tertiary)
+        case .waiting(let reason):
+            Text(reason).foregroundStyle(.tertiary)
+                .help("The audio is deleted once the transcript and summary are saved; until then it is kept so processing can be retried")
+        case .kept, .due:
+            if meeting.transcribed, library.audioUnavailable(entry) == nil {
+                Button("Delete audio now") { confirming = true }
+                    .buttonStyle(.link)
+                    .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio)
+                    .help("Remove this recording\u{2019}s audio from this Mac; the transcript, summary and notes stay")
+                    .confirmationDialog("Delete this meeting\u{2019}s audio?", isPresented: $confirming) {
+                        Button("Delete Audio", role: .destructive) { library.deleteAudio(entry) }
+                    } message: {
+                        Text("The audio is removed for good, not moved to the Trash. The transcript, summary and notes stay, "
+                             + "but the meeting can no longer be played or transcribed again.")
+                    }
+            }
+        }
     }
 }
 
@@ -366,6 +408,7 @@ struct TranscriptView: View {
     @ObservedObject var processor: MeetingProcessor
     @ObservedObject var library: RecordingLibrary
     let playback: AudioPlayback
+    let audioUnavailable: String?
 
     var body: some View {
         let content = library.content(of: entry)
@@ -385,8 +428,9 @@ struct TranscriptView: View {
                             }
                             Button(LibraryLogic.durationText(row.paragraph.start)) { playback.play(from: row.paragraph.start) }
                                 .buttonStyle(.plain)
-                                .foregroundStyle(Color.accentColor)
-                                .help("Play from here")
+                                .foregroundStyle(audioUnavailable == nil ? Color.accentColor : .secondary)
+                                .disabled(audioUnavailable != nil)
+                                .help(audioUnavailable ?? "Play from here")
                         }
                         .font(.caption.monospacedDigit())
                         Text(row.paragraph.text)
@@ -488,22 +532,20 @@ struct EmptyState: View {
 struct PlayerBar: View {
     @ObservedObject var playback: AudioPlayback
     let fallbackDuration: TimeInterval
+    var unavailable: String?
 
     private var total: TimeInterval { playback.duration > 0 ? playback.duration : fallbackDuration }
 
     var body: some View {
         HStack(spacing: 12) {
-            Button { playback.toggle() } label: {
-                Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 12))
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
+            if let unavailable {
+                Image(systemName: "speaker.slash")
+                Text(unavailable)
+                Spacer()
+                Text(LibraryLogic.durationText(fallbackDuration))
+            } else {
+                controls
             }
-            .buttonStyle(.plain)
-            .disabled(playback.duration == 0)
-            Text(LibraryLogic.durationText(playback.position))
-            ProgressTrack(value: total > 0 ? playback.position / total : 0) { playback.seek(to: $0 * total) }
-            Text(LibraryLogic.durationText(total))
         }
         .font(.caption.monospacedDigit())
         .foregroundStyle(.secondary)
@@ -511,6 +553,20 @@ struct PlayerBar: View {
         .frame(height: 40)
         .background(.background)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    @ViewBuilder private var controls: some View {
+        Button { playback.toggle() } label: {
+            Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: 12))
+                .frame(width: 14, height: 14)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(playback.duration == 0)
+        Text(LibraryLogic.durationText(playback.position))
+        ProgressTrack(value: total > 0 ? playback.position / total : 0) { playback.seek(to: $0 * total) }
+        Text(LibraryLogic.durationText(total))
     }
 }
 

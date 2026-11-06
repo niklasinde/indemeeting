@@ -50,6 +50,8 @@ struct Meeting: Equatable {
     var transcribedAt: Date?
     var source: MeetingSource?
     var summaryEngine: String?
+    var audioExpiresAt: Date?
+    var audioDeletedAt: Date?
 
     var title: String { LibraryLogic.title(override: titleOverride, aiTitle: aiTitle, sourceTitle: source?.title) }
     var sourceLabel: String? { MeetingSourceLogic.label(app: source?.app, title: source?.title, shownTitle: title) }
@@ -363,11 +365,13 @@ final class MeetingStore: @unchecked Sendable {
         ALTER TABLE meetings ADD COLUMN source_bundle TEXT;
         """,
         "ALTER TABLE meetings ADD COLUMN summary_engine TEXT",
+        "ALTER TABLE meetings ADD COLUMN audio_expires_at REAL; ALTER TABLE meetings ADD COLUMN audio_deleted_at REAL;",
     ]
 
     private static let meetingColumns = """
         id, audio_file, created, duration, language, title_override, ai_title, notes, status, status_message, transcript_engine,
-        transcribed, summarised, language_detected, transcribed_at, source_app, source_title, source_bundle, summary_engine
+        transcribed, summarised, language_detected, transcribed_at, source_app, source_title, source_bundle, summary_engine,
+        audio_expires_at, audio_deleted_at
         """
 
     let openError: DatabaseUnavailable?
@@ -676,6 +680,21 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
+    /// Gives a recording that is starting its row; a meeting being continued keeps the row it has.
+    func beginRecording(_ audioFile: String, created: Date, audioExpiresAt: Date?) throws {
+        try write {
+            try db.run("INSERT OR IGNORE INTO meetings (audio_file, created, audio_expires_at) VALUES (?, ?, ?)",
+                       [audioFile, created.timeIntervalSince1970, audioExpiresAt?.timeIntervalSince1970])
+        }
+    }
+
+    func setAudioDeleted(_ audioFile: String, at date: Date) throws {
+        try write {
+            try db.run("UPDATE meetings SET audio_deleted_at = ? WHERE id = ?",
+                       [date.timeIntervalSince1970, try ensure(audioFile)])
+        }
+    }
+
     func setChecked(actionItem id: Int64, _ checked: Bool) throws {
         try write { try db.run("UPDATE action_items SET checked = ? WHERE id = ?", [checked, id]) }
     }
@@ -745,7 +764,9 @@ final class MeetingStore: @unchecked Sendable {
                 transcriptEngine: row.optionalString(10), transcribed: row.bool(11), summarised: row.bool(12),
                 languageDetected: row.bool(13), transcribedAt: row.optionalDouble(14).map(Date.init(timeIntervalSince1970:)),
                 source: row.optionalString(15).map { MeetingSource(app: $0, title: row.optionalString(16), bundle: row.optionalString(17)) },
-                summaryEngine: row.optionalString(18))
+                summaryEngine: row.optionalString(18),
+                audioExpiresAt: row.optionalDouble(19).map(Date.init(timeIntervalSince1970:)),
+                audioDeletedAt: row.optionalDouble(20).map(Date.init(timeIntervalSince1970:)))
     }
 
     private func summary(of meeting: Meeting) throws -> ParsedSummary {

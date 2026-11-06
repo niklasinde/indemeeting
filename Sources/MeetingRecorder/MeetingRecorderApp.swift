@@ -178,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await self?.stopRecording()
     }
     private lazy var sourceTracker = MeetingSourceTracker(recorder: recorder, store: store)
+    lazy var audioCleaner = AudioCleaner(recorder: recorder, processor: processor, store: store)
     lazy var mainWindow: MainWindow = MainWindow(recorder: recorder, processor: processor, store: store, tracker: tracker)
 
     var databaseError: DatabaseUnavailable? { store.openError }
@@ -214,6 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.shared.tracker = tracker
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.summariseWhenModelReady()
+        audioCleaner.start()
         tracker.start()
         classifier.start()
         AppUpgrade.shared.start(recorder: recorder)

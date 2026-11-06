@@ -124,6 +124,13 @@ enum LibraryLogic {
         return [RecordingEntry(audio: recording, date: date, duration: nil, inProgress: true)] + entries
     }
 
+    /// Meetings whose audio was deleted, listed as if their file were still there.
+    static func withoutAudio(_ meetings: [Meeting], files: [FolderItem]) -> [FolderItem] {
+        let names = Set(files.map(\.name))
+        return meetings.filter { $0.audioDeletedAt != nil && !names.contains($0.audioFile) }
+            .map { FolderItem(name: $0.audioFile, created: $0.created) }
+    }
+
     /// Newest first: by the minute in the file name (creation date otherwise), then `-3` before `-2` before the first.
     static func recordings(in folder: URL, files: [FolderItem], durations: [String: TimeInterval],
                            timeZone: TimeZone = .current) -> [RecordingEntry] {

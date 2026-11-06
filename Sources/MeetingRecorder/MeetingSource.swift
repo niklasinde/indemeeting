@@ -1,8 +1,8 @@
 import AppKit
 import Combine
 
-/// Records which app a recording's call is in, and its name, when a recording starts. Within the first minute the
-/// source is looked at again and updated once if the window says more by then.
+/// Gives a new recording its row with its audio expiry, and records which app its call is in, and its name. Within
+/// the first minute the source is looked at again and updated once if the window says more by then.
 @MainActor
 final class MeetingSourceTracker {
     static let checks: [TimeInterval] = [0, 15, 30, 45, 60]
@@ -24,6 +24,9 @@ final class MeetingSourceTracker {
     private func follow(_ meeting: URL?) {
         task?.cancel()
         guard let file = meeting?.lastPathComponent else { return }
+        let created = RecordingLogic.date(fromFileName: file) ?? Date()
+        try? store.beginRecording(file, created: created,
+                                  audioExpiresAt: AudioRetention.expiry(created: created, developerMode: AudioRetention.developerMode()))
         task = Task { [weak self] in
             let started = Date()
             var stored: MeetingSource?

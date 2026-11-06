@@ -262,6 +262,7 @@ struct SettingsView: View {
     @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
     @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
     @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ollama
+    @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -408,6 +409,15 @@ struct SettingsView: View {
             }
             ChatSettingsSection()
             ClaudeAPISettingsSection()
+            section("Developer", footer: "A new recording\u{2019}s audio is deleted from this Mac for good once its transcript "
+                    + "and summary are saved. Recordings made in developer mode keep their audio, also after it is turned off.") {
+                row("Developer mode", detail: "Keep the audio of new recordings") {
+                    Toggle("Developer mode", isOn: $developerMode)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+            }
         }
     }
 

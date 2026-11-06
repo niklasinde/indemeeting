@@ -175,6 +175,7 @@ final class MeetingProcessor: ObservableObject {
     private let notifier: Notifier?
     private let store: MeetingStore
     private var queue: Task<Void, Never>?
+    private var queued: [URL: Int] = [:]
     private var modelWatch: Task<Void, Never>?
 
     init(notifier: Notifier?, store: MeetingStore) {
@@ -226,7 +227,11 @@ final class MeetingProcessor: ObservableObject {
 
     private typealias Job = (@escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult
 
+    /// The meetings being processed or waiting for it.
+    var busyFiles: Set<String> { Set(queued.keys.map(\.lastPathComponent)) }
+
     private func enqueue(_ audio: URL, _ job: @escaping Job) {
+        queued[audio, default: 0] += 1
         let previous = queue
         queue = Task {
             await previous?.value
@@ -255,7 +260,11 @@ final class MeetingProcessor: ObservableObject {
         let name = audio.lastPathComponent
         errorMessage = nil
         processing = audio
-        defer { processing = nil }
+        defer {
+            let left = (queued[audio] ?? 1) - 1
+            queued[audio] = left > 0 ? left : nil
+            processing = nil
+        }
         do {
             let result = try await job { [weak self] in self?.status = $0.text(for: name) }
             latestMeeting = audio
