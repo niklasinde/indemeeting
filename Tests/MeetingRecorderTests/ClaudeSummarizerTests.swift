@@ -44,7 +44,9 @@ let claudeSummarizerTests: [(name: String, run: () throws -> Void)] = [
         let lines = (0..<500).map { "[00:\($0)] Talare 1: rad \($0)" }
         let prompt = ClaudeSummarizer.prompt(lines)
         check(prompt.hasSuffix("rad 499") && prompt.contains("rad 0\n"), "nothing truncated")
-        check(ClaudeSummarizer.instructions(language: .swedish).contains("Swedish"), "the meeting's language")
+        let instructions = ClaudeSummarizer.instructions(language: .swedish)
+        check(instructions.contains("Swedish"), "the meeting's language")
+        check(instructions.contains("concrete thing decided") && instructions.contains("person advised"), "title and owner guidance")
         let arguments = ClaudeSummarizer.cliArguments(system: "S", prompt: "P")
         check(arguments.starts(with: ["-p", "P"]) && arguments.contains("dontAsk") && arguments.contains(ClaudeSummarizer.model), "\(arguments)")
         check(arguments.contains { $0.contains("\"actionItems\"") }, "schema in the system prompt")

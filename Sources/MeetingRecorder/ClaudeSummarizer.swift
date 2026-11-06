@@ -58,11 +58,14 @@ enum ClaudeSummarizer {
         Transcript lines may name their speaker: "\(you)" is the user who recorded the meeting, \
         "\(others)" and numbered speakers such as "\(speaker)" are other participants, any other name is a participant \
         with that name. \
-        title: a short title of at most eight words naming the kind of meeting and its main subjects, \
-        e.g. "Daily standup \u{2013} bug fixes, validation and release". \
+        title: a short natural phrase in \(language.englishName) of at most eight words naming the concrete thing decided or discussed, \
+        e.g. "Procounter-integrationen går via Strawbay" or "Release moves to Friday after two bugs"; \
+        not a "Topic \u{2013} A and B" list and no generic words such as "Integration", "Diskussion", "Meeting" or "Möte". \
         actionItems: concrete follow-ups, each task starting with a verb and keeping any deadline; \
         owner: the first name of the person who will do it, only when the input names them or they speak the line, \
-        or "\(you)" when the user takes it on. \
+        or "\(you)" when the user takes it on. The owner is the speaker who commits ("jag ska…", \
+        "då säger jag det till X" belong to whoever says it); advice to someone else ("du kan ju fråga X") \
+        belongs to the person advised; passing tips ("man kan kolla med Claude") are not action items. \
         topics: the two to five main subjects in the order discussed; each with a short title and two to five \
         brief points holding the facts, numbers and decisions.
         """

@@ -1121,9 +1121,47 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         let merged = ProcessingLogic.mergeSpeakers(you: you, others: others)
         check(merged.map(\.start) == [10, 12, 20, 40, 41], "echo at 10.6 dropped, \(merged.map(\.start))")
         check(merged.filter { $0.speaker == .others }.count == 2, "system segments kept")
-        check(ProcessingLogic.similarity("Är du där?", "ar DU dar") == 1, "case, accents and punctuation ignored")
-        check(ProcessingLogic.similarity("Yes.", "Yes, I think so, I agree.") < ProcessingLogic.echoSimilarity, "different")
-        check(ProcessingLogic.similarity("", "Yes") == 0, "nothing to compare")
+        check(ProcessingLogic.isEcho("ar DU dar, eller", of: [segment(0, "Är du där eller?")]), "case, accents and punctuation ignored")
+        check(ProcessingLogic.sentencePieces("Okej, 3.5 kr. Bra! Va?") == ["Okej, 3.5 kr.", "Bra!", "Va?"], "sentences")
+    }),
+
+    ("a call without headphones keeps only what the user said", {
+        let others = [
+            segment(10, "Vi har tittat på hur vi ska koppla ihop Procounter med ert affärssystem och det enklaste är nog att gå via Strawbay."),
+            segment(20, "De har redan en färdig koppling så vi slipper bygga allt själva."),
+            segment(27, "Det är bra att vi tar det nu, men vi måste kolla priset med dem först."),
+            segment(40, "Fakturorna skickas varje fredag och då behöver de vara attesterade innan lunch."),
+            segment(52, "Ja."),
+            segment(60, "Jag kan skicka över dokumentationen till dig i eftermiddag."),
+            segment(75, "Hur gör ni med kreditfakturorna idag, hanteras de manuellt?"),
+            segment(84, "Okej."),
+        ]
+        let echoes = [
+            segment(13, "Vi har tittat på hur vi ska koppla ihop Procounter med ert affärssystem"),
+            segment(19, "och det enklaste är nog att gå via Strawbay."),
+            segment(33, "Det är bra att vi tar det nu men vi måste kolla priset med dem."),
+            segment(45, "fakturorna skickas varje fredag och då ska dom vara attesterade före lunch"),
+            segment(54, "Ja."),
+            segment(66, "Jag kan skicka över dokumentationen till dig i eftermiddag."),
+            segment(81, "Hur gör ni med kreditfakturorna i dag, hanteras de manuellt?"),
+        ]
+        let replies = [
+            segment(29, "Ja, men det är bra."),
+            segment(62, "Ja, gör det, så tittar jag på det i helgen."),
+            segment(78, "Vi hanterar dem manuellt idag men vi vill gärna automatisera det."),
+            segment(86, "Okej, då säger jag det till Anna."),
+            segment(90, "Mm."),
+        ]
+        let mixed = segment(23.5, "Okej, låter rimligt. De har redan en färdig koppling så vi slipper")
+        let merged = ProcessingLogic.mergeSpeakers(you: echoes + replies + [mixed], others: others)
+        let mine = merged.filter { $0.speaker == .you }
+        check(mine.map(\.text) == ["Okej, låter rimligt.", "Ja, men det är bra.", "Ja, gör det, så tittar jag på det i helgen.",
+                                    "Vi hanterar dem manuellt idag men vi vill gärna automatisera det.",
+                                    "Okej, då säger jag det till Anna.", "Mm."], "kept \(mine.map(\.text))")
+        check(mine.first?.start == 23.5, "a mixed segment keeps its start")
+        check(merged.filter { $0.speaker == .others }.count == others.count, "system segments kept")
+        let late = ProcessingLogic.mergeSpeakers(you: [segment(80, "Det är bra att vi tar det nu men vi måste kolla priset.")], others: others)
+        check(late.contains { $0.speaker == .you }, "the same words long after the system said them are the user's")
     }),
 
     ("transcript paragraphs are labelled whenever the speaker changes", {

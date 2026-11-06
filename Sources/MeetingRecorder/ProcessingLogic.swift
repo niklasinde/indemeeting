@@ -291,34 +291,67 @@ enum ProcessingLogic {
         return segments
     }
 
-    static let echoWindow: TimeInterval = 3
-    static let echoSimilarity = 0.7
+    static let echoSlack: TimeInterval = 6
+    static let echoContainment = 0.6
+    static let echoMinimumWords = 4
+    static let secondsPerWord = 0.4
 
-    /// One transcript from the two stems, by start time. A microphone segment that repeats a system segment spoken at
-    /// the same time is the other participants bleeding into the microphone, so only the system one is kept.
+    /// One transcript from the two stems, by start time. The other participants bleed into the microphone when the user
+    /// has no headphones, so microphone sentences the system audio already holds are dropped.
     static func mergeSpeakers(you: [TranscriptSegment], others: [TranscriptSegment]) -> [TranscriptSegment] {
         let others = others.map { $0.with(speaker: .others) }
-        let you = you.filter { mine in !others.contains { isEcho(mine, of: $0) } }.map { $0.with(speaker: .you) }
+        let you = you.compactMap { withoutEcho($0, others: others) }.map { $0.with(speaker: .you) }
         return (others + you).enumerated()
             .sorted { $0.element.start != $1.element.start ? $0.element.start < $1.element.start : $0.offset < $1.offset }
             .map(\.element)
     }
 
-    static func isEcho(_ segment: TranscriptSegment, of source: TranscriptSegment) -> Bool {
-        abs(segment.start - source.start) <= echoWindow && similarity(segment.text, source.text) >= echoSimilarity
+    /// The segment without its sentences that repeat system speech around the same time, nil when none are left.
+    /// Whisper splits and words the echo differently in each stem, so a sentence is compared with all system text
+    /// near it rather than with one segment.
+    static func withoutEcho(_ segment: TranscriptSegment, others: [TranscriptSegment]) -> TranscriptSegment? {
+        let nearby = others.filter { overlaps($0, segment) }
+        guard !nearby.isEmpty else { return segment }
+        let sentences = sentencePieces(segment.text)
+        let kept = sentences.filter { !isEcho($0, of: nearby) }
+        if kept.count == sentences.count { return segment }
+        return kept.isEmpty ? nil : TranscriptSegment(start: segment.start, text: kept.joined(separator: " "), speaker: segment.speaker)
     }
 
-    /// Dice coefficient of the words, ignoring case, accents and punctuation.
-    static func similarity(_ a: String, _ b: String) -> Double {
-        let left = words(a), right = words(b)
-        guard !left.isEmpty, !right.isEmpty else { return 0 }
-        var remaining = Dictionary(right.map { ($0, 1) }, uniquingKeysWith: +)
-        let shared = left.filter { word in
-            guard let count = remaining[word], count > 0 else { return false }
-            remaining[word] = count - 1
-            return true
-        }.count
-        return 2 * Double(shared) / Double(left.count + right.count)
+    /// Most words, and at least `echoMinimumWords`, sit in a word pair the system text also has. Pairs rather than
+    /// single words keep replies that share only common words; a shorter sentence must repeat a system one exactly.
+    static func isEcho(_ sentence: String, of nearby: [TranscriptSegment]) -> Bool {
+        let mine = words(sentence)
+        guard mine.count >= echoMinimumWords else { return !mine.isEmpty && nearby.contains { words($0.text) == mine } }
+        let theirs = Set(pairs(nearby.flatMap { words($0.text) }))
+        let shared = pairs(mine).map(theirs.contains)
+        let matched = mine.indices.filter { (($0 > 0) && shared[$0 - 1]) || ($0 < shared.count && shared[$0]) }.count
+        return matched >= echoMinimumWords && Double(matched) / Double(mine.count) >= echoContainment
+    }
+
+    private static func pairs(_ words: [String]) -> [String] {
+        zip(words, words.dropFirst()).map { "\($0) \($1)" }
+    }
+
+    private static func overlaps(_ a: TranscriptSegment, _ b: TranscriptSegment) -> Bool {
+        func end(_ segment: TranscriptSegment) -> TimeInterval {
+            segment.start + max(1, Double(words(segment.text).count) * secondsPerWord)
+        }
+        return a.start <= end(b) + echoSlack && b.start <= end(a) + echoSlack
+    }
+
+    static func sentencePieces(_ text: String) -> [String] {
+        let characters = Array(text)
+        var pieces: [String] = [], current = ""
+        for (index, character) in characters.enumerated() {
+            current.append(character)
+            if ".?!".contains(character), index + 1 == characters.count || characters[index + 1].isWhitespace {
+                pieces.append(current)
+                current = ""
+            }
+        }
+        pieces.append(current)
+        return pieces.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
     private static func words(_ text: String) -> [String] {
