@@ -90,6 +90,9 @@ struct ParsedSummary: Equatable {
     var unavailable: String?
 
     var isEmpty: Bool { actionItems.isEmpty && sections.isEmpty }
+
+    /// The meeting's processing status once this summary is saved.
+    var status: ProcessingStatus { unavailable != nil ? .unavailable : isEmpty ? .none : .summarised }
 }
 
 enum DateGroup: String, CaseIterable {
@@ -148,9 +151,15 @@ enum LibraryLogic {
     static func transcriptionInfo(at date: Date?, engine: String?, locale: Locale = .current,
                                   timeZone: TimeZone = .current) -> String? {
         guard let date else { return nil }
+        return "Transcribed " + transcriptionLabel(at: date, engine: engine, locale: locale, timeZone: timeZone)
+    }
+
+    /// "5 Nov 14:02 · Whisper Large v3 Turbo", with "Unknown date" for a transcript older than the recorded time.
+    static func transcriptionLabel(at date: Date?, engine: String?, locale: Locale = .current,
+                                   timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle(locale: locale, timeZone: timeZone).day().month(.abbreviated).hour().minute()
         style.calendar = Calendar(identifier: .gregorian)
-        let parts = ["Transcribed " + date.formatted(style), engine.map { TranscriptionEngine.displayName(stored: $0) }]
+        let parts = [date.map { $0.formatted(style) } ?? "Unknown date", engine.map { TranscriptionEngine.displayName(stored: $0) }]
         return parts.compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 

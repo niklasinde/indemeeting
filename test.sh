@@ -15,6 +15,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/ASRBenchmarkLogic.swift \
     Sources/MeetingRecorder/SpeakerLogic.swift \
     Sources/MeetingRecorder/LibraryLogic.swift \
+    Sources/MeetingRecorder/TranscriptVersionLogic.swift \
     Sources/MeetingRecorder/SQLiteDatabase.swift \
     Sources/MeetingRecorder/MeetingStore.swift \
     Sources/MeetingRecorder/RecordingsMigration.swift \
@@ -68,6 +69,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/Tests.swift \
     Tests/MeetingRecorderTests/StoreTests.swift \
     Tests/MeetingRecorderTests/RecordingsMigrationTests.swift \
+    Tests/MeetingRecorderTests/TranscriptVersionTests.swift \
     Tests/MeetingRecorderTests/ActivityTests.swift \
     Tests/MeetingRecorderTests/PluginTests.swift \
     Tests/MeetingRecorderTests/ChatTests.swift \

@@ -110,12 +110,18 @@ struct RecordingDetail: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .padding(.top, 4)
-            if let meeting = library.meeting(of: entry),
-               let info = LibraryLogic.transcriptionInfo(at: meeting.transcribedAt, engine: meeting.transcriptEngine) {
-                Text(info)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .padding(.top, 2)
+            let meeting = library.meeting(of: entry)
+            let info = meeting.flatMap { LibraryLogic.transcriptionInfo(at: $0.transcribedAt, engine: $0.transcriptEngine) }
+            if info != nil || !library.versions.isEmpty {
+                HStack(spacing: 8) {
+                    if let info { Text(info).foregroundStyle(.tertiary) }
+                    if !library.versions.isEmpty { EarlierVersionsMenu(library: library) }
+                }
+                .font(.caption)
+                .padding(.top, 2)
+            }
+            if let version = library.viewedVersion {
+                EarlierVersionBar(entry: entry, version: version, library: library, processor: processor)
             }
             HStack(spacing: 2) {
                 ForEach(DetailTab.allCases, id: \.self) { tab in
@@ -210,6 +216,54 @@ private struct RetranscribeButton: View {
         .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio || audioMissing)
         .help(audioMissing ? "The recording\u{2019}s audio file is missing"
               : "Transcribe, recognise speakers and summarise again with the current transcription settings")
+    }
+}
+
+/// Lists the transcripts a re-transcription replaced; picking one shows it read-only.
+private struct EarlierVersionsMenu: View {
+    @ObservedObject var library: RecordingLibrary
+
+    var body: some View {
+        Menu("Earlier versions") {
+            ForEach(library.versions) { version in
+                Button(TranscriptVersionLogic.label(version)) { library.showVersion(version) }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Transcripts and summaries replaced by re-transcribing")
+    }
+}
+
+private struct EarlierVersionBar: View {
+    let entry: RecordingEntry
+    let version: TranscriptVersionInfo
+    @ObservedObject var library: RecordingLibrary
+    @ObservedObject var processor: MeetingProcessor
+    @State private var confirmingDelete = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+            Text("Viewing earlier version \u{00B7} " + TranscriptVersionLogic.label(version)).lineLimit(1)
+            Spacer()
+            Button("Delete", role: .destructive) { confirmingDelete = true }
+            Button("Restore") { library.restore(version, of: entry) }
+                .disabled(processor.processing == entry.audio)
+                .help("Make this the current transcript and summary; the current ones are kept as an earlier version")
+            Button("Back") { library.showVersion(nil) }
+        }
+        .font(.callout)
+        .controlSize(.small)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.12)))
+        .padding(.top, 10)
+        .confirmationDialog("Delete this earlier version?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) { library.delete(version) }
+        } message: {
+            Text("Its transcript and summary are removed. The current ones are not changed.")
+        }
     }
 }
 

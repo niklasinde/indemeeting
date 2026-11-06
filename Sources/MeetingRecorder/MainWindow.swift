@@ -105,6 +105,11 @@ final class RecordingLibrary: ObservableObject {
     @Published private var meetings: [String: Meeting] = [:]
     @Published private var matches: Set<String>?
     @Published private var content: MeetingContent?
+    /// The selected meeting's earlier transcripts, newest first.
+    @Published private(set) var versions: [TranscriptVersionInfo] = []
+    /// The earlier transcript shown read-only instead of the current one.
+    @Published private(set) var viewedVersion: TranscriptVersionInfo?
+    @Published private var versionContent: MeetingContent?
 
     let folder: URL
     private let store: MeetingStore
@@ -140,7 +145,7 @@ final class RecordingLibrary: ObservableObject {
     var databaseError: DatabaseUnavailable? { store.openError }
 
     /// Titles, notes and checks are only editable while there is a database to save them in.
-    var canEdit: Bool { store.isAvailable }
+    var canEdit: Bool { store.isAvailable && viewedVersion == nil }
 
     var visibleRecordings: [RecordingEntry] {
         guard let matches else { return recordings }
@@ -210,12 +215,31 @@ final class RecordingLibrary: ObservableObject {
 
     private func loadContent() {
         content = selection.flatMap { try? store.content(of: $0.lastPathComponent) }
+        versions = selection.flatMap { try? store.versions(of: $0.lastPathComponent) } ?? []
+        showVersion(viewedVersion.flatMap { viewed in versions.first { $0.id == viewed.id } })
     }
 
     func meeting(of entry: RecordingEntry) -> Meeting? { meetings[entry.fileName] }
 
+    /// The meeting's content as shown: an earlier version while one is viewed, otherwise the current one.
     func content(of entry: RecordingEntry) -> MeetingContent? {
-        content?.meeting.audioFile == entry.fileName ? content : nil
+        let shown = versionContent ?? content
+        return shown?.meeting.audioFile == entry.fileName ? shown : nil
+    }
+
+    func showVersion(_ version: TranscriptVersionInfo?) {
+        viewedVersion = version
+        versionContent = version.flatMap { try? store.version($0.id) }
+    }
+
+    func restore(_ version: TranscriptVersionInfo, of entry: RecordingEntry) {
+        showVersion(nil)
+        perform { try store.restoreVersion(version.id, of: entry.fileName) }
+    }
+
+    func delete(_ version: TranscriptVersionInfo) {
+        showVersion(nil)
+        perform { try store.deleteVersion(version.id) }
     }
 
     func title(of entry: RecordingEntry) -> String { meeting(of: entry)?.title ?? LibraryLogic.fallbackTitle }

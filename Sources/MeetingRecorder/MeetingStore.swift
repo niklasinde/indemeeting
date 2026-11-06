@@ -341,6 +341,19 @@ final class MeetingStore: @unchecked Sendable {
         """,
         "DROP TABLE todos;",
         "ALTER TABLE meetings ADD COLUMN transcribed_at REAL",
+        """
+        CREATE TABLE transcript_versions (
+            id INTEGER PRIMARY KEY,
+            meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            saved REAL NOT NULL,
+            transcribed_at REAL,
+            engine TEXT,
+            language TEXT,
+            language_detected INTEGER NOT NULL DEFAULT 0,
+            content BLOB NOT NULL
+        );
+        CREATE INDEX transcript_versions_meeting ON transcript_versions(meeting_id);
+        """,
     ]
 
     private static let meetingColumns = """
@@ -433,15 +446,33 @@ final class MeetingStore: @unchecked Sendable {
     func content(of audioFile: String) throws -> MeetingContent? {
         try read {
             guard let meeting = try meeting(audioFile) else { return nil }
-            let segments = try db.query("SELECT start, text, speaker FROM transcript_segments WHERE meeting_id = ? ORDER BY position",
-                                        [meeting.id]) {
-                TranscriptSegment(start: $0.double(0), text: $0.string(1), speaker: $0.optionalString(2).flatMap(Speaker.init(rawValue:)))
-            }
+            let segments = try segments(of: meeting.id)
             let names = try db.query("SELECT label, name FROM speakers WHERE meeting_id = ? AND name IS NOT NULL", [meeting.id]) {
                 (Speaker(rawValue: $0.string(0)), $0.string(1))
             }
             return MeetingContent(meeting: meeting, segments: segments, summary: try summary(of: meeting),
                                   names: SpeakerNames(names.compactMap { speaker, name in speaker.map { ($0, name) } }) { $1 })
+        }
+    }
+
+    /// The meeting's earlier transcripts, newest first.
+    func versions(of audioFile: String) throws -> [TranscriptVersionInfo] {
+        try read {
+            try db.query("""
+                SELECT v.id, v.transcribed_at, v.engine FROM transcript_versions v JOIN meetings m ON m.id = v.meeting_id
+                WHERE m.audio_file = ? ORDER BY coalesce(v.transcribed_at, v.saved) DESC, v.id DESC
+                """, [audioFile]) {
+                TranscriptVersionInfo(id: $0.int64(0), transcribedAt: $0.optionalDouble(1).map(Date.init(timeIntervalSince1970:)),
+                                      engine: $0.optionalString(2))
+            }
+        }
+    }
+
+    /// An earlier transcript and its summary, shown as the meeting's content.
+    func version(_ id: Int64) throws -> MeetingContent? {
+        try read {
+            guard let stored = try storedVersion(id), let meeting = try meeting(stored.audioFile) else { return nil }
+            return TranscriptVersionLogic.content(of: meeting, as: stored.snapshot)
         }
     }
 
@@ -502,23 +533,49 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
-    /// Replaces the transcript and the meeting's speakers; a nil `transcribedAt` keeps the time stored before.
+    /// Replaces the transcript and the meeting's speakers; a nil `transcribedAt` keeps the time stored before. With
+    /// `keepingPrevious` the transcript and summary being replaced are kept as a version.
     func saveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage, detected: Bool = false,
-                        engine: String, transcribedAt: Date? = nil, speakers: [SpeakerProfile] = []) throws {
+                        engine: String, transcribedAt: Date? = nil, speakers: [SpeakerProfile] = [],
+                        keepingPrevious: Bool = false) throws {
         try write {
             let id = try ensure(audioFile)
+            if keepingPrevious, let meeting = try meeting(audioFile) {
+                let previous = try snapshot(of: meeting)
+                if TranscriptVersionLogic.isWorthKeeping(previous) { try insertVersion(previous, meetingID: id) }
+            }
             try db.run("""
                 UPDATE meetings SET language = ?, language_detected = ?, transcript_engine = ?,
                                     transcribed_at = coalesce(?, transcribed_at) WHERE id = ?
                 """, [language.rawValue, detected, engine, transcribedAt?.timeIntervalSince1970, id])
             try replaceSegments(id, segments)
-            try db.run("DELETE FROM speakers WHERE meeting_id = ?", [id])
-            for profile in speakers {
-                try db.run("INSERT INTO speakers (meeting_id, label, name, embedding) VALUES (?, ?, ?, ?)",
-                           [id, profile.speaker.rawValue, profile.name, profile.embedding.map(SpeakerLogic.encode)])
-            }
+            try replaceSpeakers(id, speakers)
             try reindex(id)
         }
+    }
+
+    /// Makes an earlier version the meeting's transcript and summary again; the current ones become a version.
+    func restoreVersion(_ versionID: Int64, of audioFile: String) throws {
+        try write {
+            guard let meeting = try meeting(audioFile), let stored = try storedVersion(versionID), stored.audioFile == audioFile else {
+                return
+            }
+            let plan = TranscriptVersionLogic.restorePlan(current: try snapshot(of: meeting), restoring: stored.snapshot)
+            try db.run("DELETE FROM transcript_versions WHERE id = ?", [versionID])
+            if let archive = plan.archive { try insertVersion(archive, meetingID: meeting.id) }
+            try db.run("UPDATE meetings SET language = ?, language_detected = ?, transcript_engine = ?, transcribed_at = ? WHERE id = ?",
+                       [plan.current.language?.rawValue, plan.current.languageDetected, plan.current.engine,
+                        plan.current.transcribedAt?.timeIntervalSince1970, meeting.id])
+            try replaceSegments(meeting.id, plan.current.segments)
+            try replaceSpeakers(meeting.id, plan.current.speakers)
+            try db.run("DELETE FROM action_items WHERE meeting_id = ?", [meeting.id])
+            try replaceSummary(meeting.id, plan.current.summary)
+            try reindex(meeting.id)
+        }
+    }
+
+    func deleteVersion(_ versionID: Int64) throws {
+        try write { try db.run("DELETE FROM transcript_versions WHERE id = ?", [versionID]) }
     }
 
     /// Names a speaker of one meeting, or gives it back its label when `name` is empty. A named speaker's voice is
@@ -688,6 +745,55 @@ final class MeetingStore: @unchecked Sendable {
         return summary
     }
 
+    private func segments(of meetingID: Int64) throws -> [TranscriptSegment] {
+        try db.query("SELECT start, text, speaker FROM transcript_segments WHERE meeting_id = ? ORDER BY position", [meetingID]) {
+            TranscriptSegment(start: $0.double(0), text: $0.string(1), speaker: $0.optionalString(2).flatMap(Speaker.init(rawValue:)))
+        }
+    }
+
+    private func snapshot(of meeting: Meeting) throws -> TranscriptSnapshot {
+        let speakers = try db.query("SELECT label, name, embedding FROM speakers WHERE meeting_id = ? ORDER BY label", [meeting.id]) { row in
+            Speaker(rawValue: row.string(0)).map {
+                SpeakerProfile(speaker: $0, name: row.optionalString(1), embedding: row.optionalData(2).map(SpeakerLogic.decode))
+            }
+        }
+        return TranscriptSnapshot(segments: try segments(of: meeting.id), speakers: speakers.compactMap { $0 },
+                                  language: meeting.language, languageDetected: meeting.languageDetected,
+                                  engine: meeting.transcriptEngine, transcribedAt: meeting.transcribedAt,
+                                  summary: try summary(of: meeting))
+    }
+
+    private func insertVersion(_ snapshot: TranscriptSnapshot, meetingID: Int64) throws {
+        try db.run("""
+            INSERT INTO transcript_versions (meeting_id, saved, transcribed_at, engine, language, language_detected, content)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [meetingID, Date().timeIntervalSince1970, snapshot.transcribedAt?.timeIntervalSince1970, snapshot.engine,
+                  snapshot.language?.rawValue, snapshot.languageDetected, try TranscriptVersionLogic.encode(snapshot)])
+    }
+
+    /// A stored version with the audio file of the meeting it belongs to.
+    private func storedVersion(_ id: Int64) throws -> (audioFile: String, snapshot: TranscriptSnapshot)? {
+        let rows = try db.query("""
+            SELECT m.audio_file, v.transcribed_at, v.engine, v.language, v.language_detected, v.content
+            FROM transcript_versions v JOIN meetings m ON m.id = v.meeting_id WHERE v.id = ?
+            """, [id]) { row in
+            (audioFile: row.string(0), snapshot: try? TranscriptVersionLogic.decode(
+                row.optionalData(5) ?? Data(), language: row.optionalString(3).flatMap(MeetingLanguage.init),
+                languageDetected: row.bool(4), engine: row.optionalString(2),
+                transcribedAt: row.optionalDouble(1).map(Date.init(timeIntervalSince1970:))))
+        }
+        guard let row = rows.first, let snapshot = row.snapshot else { return nil }
+        return (row.audioFile, snapshot)
+    }
+
+    private func replaceSpeakers(_ id: Int64, _ speakers: [SpeakerProfile]) throws {
+        try db.run("DELETE FROM speakers WHERE meeting_id = ?", [id])
+        for profile in speakers {
+            try db.run("INSERT INTO speakers (meeting_id, label, name, embedding) VALUES (?, ?, ?, ?)",
+                       [id, profile.speaker.rawValue, profile.name, profile.embedding.map(SpeakerLogic.encode)])
+        }
+    }
+
     private func rememberVoice(_ name: String, _ voice: [Float]) throws {
         let known = try db.query("SELECT embedding FROM known_voices WHERE name = ?", [name]) { $0.optionalData(0) }.first ?? nil
         let blended = known.map { SpeakerLogic.blend(SpeakerLogic.decode($0), voice) } ?? voice
@@ -711,7 +817,7 @@ final class MeetingStore: @unchecked Sendable {
                                        [id]) { [$0.string(0), $0.string(1)] })
         try db.run("DELETE FROM action_items WHERE meeting_id = ?", [id])
         try db.run("DELETE FROM summary_topics WHERE meeting_id = ?", [id])
-        let status: ProcessingStatus = summary.unavailable != nil ? .unavailable : summary.isEmpty ? .none : .summarised
+        let status = summary.status
         try db.run("UPDATE meetings SET ai_title = ?, status = ?, status_message = ?, summarised = ? WHERE id = ?",
                    [summary.unavailable == nil ? summary.title : nil, status.rawValue, summary.unavailable, status == .summarised, id])
         guard summary.unavailable == nil else { return }

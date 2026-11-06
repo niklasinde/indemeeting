@@ -24,7 +24,7 @@ enum MeetingPipeline {
             let recognised = await recogniseSpeakers(transcript.segments, in: audio, store: store, progress: progress)
             try store.saveTranscript(audio.lastPathComponent, segments: recognised.segments, language: language.language,
                                      detected: language.detected, engine: transcript.engine, transcribedAt: Date(),
-                                     speakers: recognised.speakers)
+                                     speakers: recognised.speakers, keepingPrevious: true)
             return try await summarise(audio, segments: recognised.segments, names: recognised.names, language: language.language,
                                        store: store, progress: progress)
         }
