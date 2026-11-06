@@ -1196,12 +1196,12 @@ private let countdownTests: [(name: String, run: () throws -> Void)] = {
 
         ("a cancelled stop waits for the next end of the meeting", {
             var stop = AutoStop()
-            _ = stop.update(enabled: true, othersUsingMic: true, paused: false, lastSound: at(0), now: at(1))
-            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(5)) == .ask, "ended")
+            _ = stop.update(enabled: true, micUsers: ["us.zoom.xos"], paused: false, lastSound: at(0), now: at(1))
+            check(stop.update(enabled: true, micUsers: [], paused: false, lastSound: at(0), now: at(5)) == .ask, "ended")
             stop.waitForNextEnd()
-            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(500)) == .idle, "keeps recording")
-            _ = stop.update(enabled: true, othersUsingMic: true, paused: false, lastSound: at(0), now: at(600))
-            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(700)) == .ask, "next end")
+            check(stop.update(enabled: true, micUsers: [], paused: false, lastSound: at(0), now: at(500)) == .idle, "keeps recording")
+            _ = stop.update(enabled: true, micUsers: ["us.zoom.xos"], paused: false, lastSound: at(0), now: at(600))
+            check(stop.update(enabled: true, micUsers: [], paused: false, lastSound: at(0), now: at(700)) == .ask, "next end")
         }),
     ]
 }()
@@ -1209,60 +1209,98 @@ private let countdownTests: [(name: String, run: () throws -> Void)] = {
 private let autoStopTests: [(name: String, run: () throws -> Void)] = {
     let t0 = Date(timeIntervalSince1970: 1_000_000)
     func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
-    func step(_ stop: inout AutoStop, _ seconds: TimeInterval, others: Bool, sound: TimeInterval = 0,
+    func step(_ stop: inout AutoStop, _ seconds: TimeInterval, users: Set<String>, sound: TimeInterval = 0,
               paused: Bool = false, enabled: Bool = true) -> AutoStop.Decision {
-        stop.update(enabled: enabled, othersUsingMic: others, paused: paused, lastSound: at(sound), now: at(seconds))
+        stop.update(enabled: enabled, micUsers: users, paused: paused, lastSound: at(sound), now: at(seconds))
     }
     return [
         ("auto-stop asks when the other app releases the mic and stops after two minutes of silence", {
             var stop = AutoStop()
-            check(step(&stop, 1, others: true) == .idle, "meeting running")
-            check(step(&stop, 600, others: false, sound: 590) == .ask, "meeting ended")
-            check(step(&stop, 601, others: false, sound: 590) == .idle, "asked once")
-            check(step(&stop, 719, others: false, sound: 590) == .idle, "not two minutes since the end yet")
-            check(step(&stop, 720, others: false, sound: 590) == .stop, "two minutes of silence since the end")
-            check(step(&stop, 721, others: false, sound: 590) == .idle, "stops once")
+            check(step(&stop, 1, users: ["us.zoom.xos"]) == .idle, "meeting running")
+            check(step(&stop, 600, users: [], sound: 590) == .ask, "meeting ended")
+            check(step(&stop, 601, users: [], sound: 590) == .idle, "asked once")
+            check(step(&stop, 719, users: [], sound: 590) == .idle, "not two minutes since the end yet")
+            check(step(&stop, 720, users: [], sound: 590) == .stop, "two minutes of silence since the end")
+            check(step(&stop, 721, users: [], sound: 590) == .idle, "stops once")
         }),
 
         ("sound restarts the silence countdown", {
             var stop = AutoStop()
-            _ = step(&stop, 1, others: true)
-            check(step(&stop, 10, others: false, sound: 10) == .ask, "ended")
-            check(step(&stop, 100, others: false, sound: 90) == .idle, "someone still talking")
-            check(step(&stop, 209, others: false, sound: 90) == .idle, "119 s of silence")
-            check(step(&stop, 210, others: false, sound: 90) == .stop, "120 s of silence")
+            _ = step(&stop, 1, users: ["us.zoom.xos"])
+            check(step(&stop, 10, users: [], sound: 10) == .ask, "ended")
+            check(step(&stop, 100, users: [], sound: 90) == .idle, "someone still talking")
+            check(step(&stop, 209, users: [], sound: 90) == .idle, "119 s of silence")
+            check(step(&stop, 210, users: [], sound: 90) == .stop, "120 s of silence")
         }),
 
         ("auto-stop needs another app to have held the mic", {
             var stop = AutoStop()
-            for second in [1.0, 200, 400] { check(step(&stop, second, others: false) == .idle, "own recording at \(second)") }
+            for second in [1.0, 200, 400] { check(step(&stop, second, users: []) == .idle, "own recording at \(second)") }
         }),
 
         ("the meeting picking the mic back up withdraws the question", {
             var stop = AutoStop()
-            _ = step(&stop, 1, others: true)
-            check(step(&stop, 5, others: false) == .ask, "ended")
-            check(step(&stop, 6, others: true) == .withdraw, "back")
-            check(step(&stop, 7, others: true) == .idle, "withdrawn once")
-            check(step(&stop, 300, others: true) == .idle, "no stop while the meeting runs")
-            check(step(&stop, 301, others: false, sound: 301) == .ask, "asks again")
+            _ = step(&stop, 1, users: ["us.zoom.xos"])
+            check(step(&stop, 5, users: []) == .ask, "ended")
+            check(step(&stop, 6, users: ["us.zoom.xos"]) == .withdraw, "back")
+            check(step(&stop, 7, users: ["us.zoom.xos"]) == .idle, "withdrawn once")
+            check(step(&stop, 300, users: ["us.zoom.xos"]) == .idle, "no stop while the meeting runs")
+            check(step(&stop, 301, users: [], sound: 301) == .ask, "asks again")
         }),
 
         ("keep recording and the menu switch turn auto-stop off", {
             var kept = AutoStop()
-            _ = step(&kept, 1, others: true)
-            check(step(&kept, 5, others: false) == .ask, "ended")
+            _ = step(&kept, 1, users: ["us.zoom.xos"])
+            check(step(&kept, 5, users: []) == .ask, "ended")
             kept.keepRecording()
-            check(step(&kept, 1000, others: false) == .idle, "kept")
-            _ = step(&kept, 1001, others: true)
-            check(step(&kept, 1002, others: false) == .idle, "kept for the rest of the recording")
+            check(step(&kept, 1000, users: []) == .idle, "kept")
+            _ = step(&kept, 1001, users: ["us.zoom.xos"])
+            check(step(&kept, 1002, users: []) == .idle, "kept for the rest of the recording")
 
             var off = AutoStop()
-            _ = step(&off, 1, others: true, enabled: false)
-            check(step(&off, 5, others: false, enabled: false) == .idle, "switched off")
-            check(step(&off, 6, others: false) == .ask, "switched on while the meeting is over")
-            check(step(&off, 7, others: false, enabled: false) == .withdraw, "switched off again")
-            check(step(&off, 500, others: false, enabled: false) == .idle, "never stops while off")
+            _ = step(&off, 1, users: ["us.zoom.xos"], enabled: false)
+            check(step(&off, 5, users: [], enabled: false) == .idle, "switched off")
+            check(step(&off, 6, users: []) == .ask, "switched on while the meeting is over")
+            check(step(&off, 7, users: [], enabled: false) == .withdraw, "switched off again")
+            check(step(&off, 500, users: [], enabled: false) == .idle, "never stops while off")
+        }),
+
+        ("corespeechd keeping the input open does not hide the end of the meeting", {
+            let ownPID: Int32 = 500
+            func others(_ users: [MicUser]) -> Set<String> {
+                MicUsers.others(users, ownPID: ownPID, ownBundleID: "com.niklasinde.MeetingRecorder")
+            }
+            let worktime = MicUser(pid: ownPID, parent: 1, bundleID: "com.niklasinde.MeetingRecorder")
+            let speech = MicUser(pid: 831, parent: 1, bundleID: "com.apple.CoreSpeech")
+            let slack = MicUser(pid: 8833, parent: 8722, bundleID: "com.tinyspeck.slackmacgap.helper")
+            var stop = AutoStop()
+            check(step(&stop, 1, users: others([slack, speech, worktime])) == .idle, "huddle running")
+            check(stop.meetingApps == ["com.tinyspeck.slackmacgap.helper"], "Slack is the meeting")
+            check(step(&stop, 60, users: others([speech, worktime])) == .ask, "Slack left, corespeechd stayed")
+        }),
+
+        ("only other apps count as using the microphone", {
+            let users = [MicUser(pid: 500, parent: 1, bundleID: "com.niklasinde.MeetingRecorder"),
+                         MicUser(pid: 501, parent: 500, bundleID: "com.apple.something"),
+                         MicUser(pid: 600, parent: 1, bundleID: "com.niklasinde.MeetingRecorder"),
+                         MicUser(pid: 831, parent: 1, bundleID: "com.apple.CoreSpeech"),
+                         MicUser(pid: 700, parent: 1, bundleID: "us.zoom.xos"),
+                         MicUser(pid: 800, parent: 1, bundleID: "")]
+            check(MicUsers.others(users, ownPID: 500, ownBundleID: "com.niklasinde.MeetingRecorder")
+                == ["us.zoom.xos", "pid 800"], "own process, children, other copies and system services are left out")
+        }),
+
+        ("the end is judged by the apps that held the mic when the meeting started", {
+            var stop = AutoStop()
+            _ = step(&stop, 1, users: ["com.google.Chrome.helper", "com.example.daemon"])
+            check(stop.meetingApps == ["com.google.Chrome.helper"], "the browser, not the unknown process")
+            check(step(&stop, 30, users: ["com.example.daemon"]) == .ask, "Meet left")
+            check(step(&stop, 31, users: ["com.google.Chrome.helper"]) == .withdraw, "back in the call")
+
+            var unknown = AutoStop()
+            _ = step(&unknown, 1, users: ["com.example.voip"])
+            check(step(&unknown, 2, users: ["com.example.voip", "com.example.daemon"]) == .idle, "still in the call")
+            check(step(&unknown, 3, users: ["com.example.daemon"]) == .ask, "a process that joined later does not count")
         }),
 
         ("the mixer notes when either source last had sound", {
@@ -1280,11 +1318,11 @@ private let autoStopTests: [(name: String, run: () throws -> Void)] = {
 
         ("a paused recording is not stopped", {
             var stop = AutoStop()
-            _ = step(&stop, 1, others: true)
-            check(step(&stop, 5, others: false) == .ask, "ended")
-            check(step(&stop, 500, others: false, paused: true) == .idle, "paused")
-            check(step(&stop, 501, others: false, sound: 500) == .idle, "resuming counts as sound")
-            check(step(&stop, 620, others: false, sound: 500) == .stop, "then silence")
+            _ = step(&stop, 1, users: ["us.zoom.xos"])
+            check(step(&stop, 5, users: []) == .ask, "ended")
+            check(step(&stop, 500, users: [], paused: true) == .idle, "paused")
+            check(step(&stop, 501, users: [], sound: 500) == .idle, "resuming counts as sound")
+            check(step(&stop, 620, users: [], sound: 500) == .stop, "then silence")
         }),
     ]
 }()

@@ -29,7 +29,7 @@ struct MeetingDetector {
     }
 }
 
-/// Ends a recording when the meeting does: once another app that held the microphone during the recording releases
+/// Ends a recording when the meeting does: once the apps that held the microphone when the meeting started release
 /// it, ask; unanswered, stop after `silenceLimit` of silence on both sources since then.
 struct AutoStop {
     enum Decision: Equatable {
@@ -41,7 +41,7 @@ struct AutoStop {
 
     static let silenceLimit: TimeInterval = 120
 
-    private var meetingSeen = false
+    private(set) var meetingApps: Set<String> = []
     private var endedAt: Date?
     private var kept = false
 
@@ -52,26 +52,54 @@ struct AutoStop {
 
     /// A cancelled stop: wait for the next time the meeting ends.
     mutating func waitForNextEnd() {
-        meetingSeen = false
+        meetingApps = []
         endedAt = nil
     }
 
-    mutating func update(enabled: Bool, othersUsingMic: Bool, paused: Bool, lastSound: Date, now: Date) -> Decision {
-        if othersUsingMic { meetingSeen = true }
-        if !enabled || kept || othersUsingMic {
+    /// `micUsers`: the other apps taking audio input, as `MicUsers.others` lists them.
+    mutating func update(enabled: Bool, micUsers: Set<String>, paused: Bool, lastSound: Date, now: Date) -> Decision {
+        if meetingApps.isEmpty { meetingApps = MeetingApps.known(in: micUsers) ?? micUsers }
+        let meetingOn = !meetingApps.isDisjoint(with: micUsers)
+        if !enabled || kept || meetingOn {
             guard endedAt != nil else { return .idle }
             endedAt = nil
             return .withdraw
         }
-        guard meetingSeen else { return .idle }
+        guard !meetingApps.isEmpty else { return .idle }
         guard let ended = endedAt else {
             endedAt = now
             return .ask
         }
         guard !paused, now.timeIntervalSince(max(lastSound, ended)) >= Self.silenceLimit else { return .idle }
-        meetingSeen = false
+        meetingApps = []
         endedAt = nil
         return .stop
+    }
+}
+
+/// A process Core Audio reports as taking audio input.
+struct MicUser: Equatable {
+    let pid: Int32
+    let parent: Int32
+    let bundleID: String
+}
+
+enum MicUsers {
+    /// System services that open the input whenever anything records, so they never mean a meeting is running.
+    /// corespeechd does this for as long as WorkTime itself records.
+    static let systemServices: Set<String> = [
+        "com.apple.CoreSpeech", "com.apple.assistantd", "com.apple.accessibility.heard", "com.apple.universalaccessd",
+        "com.apple.audiomxd", "com.apple.replayd", "com.apple.controlcenter", "com.apple.mediaremoted",
+        "com.apple.PowerChime", "systemsoundserverd",
+    ]
+
+    /// The apps other than this one, its child processes and system services taking audio input.
+    static func others(_ users: [MicUser], ownPID: Int32, ownBundleID: String?) -> Set<String> {
+        Set(users.compactMap { user in
+            guard user.pid != ownPID, user.parent != ownPID, user.bundleID != ownBundleID,
+                  !systemServices.contains(user.bundleID) else { return nil }
+            return user.bundleID.isEmpty ? "pid \(user.pid)" : user.bundleID
+        })
     }
 }
 
@@ -171,6 +199,13 @@ enum MeetingApps {
     static func name(frontmost: String?, running: [String]) -> String? {
         if let app = (dedicated + browsers).first(where: { $0.id == frontmost }) { return app.name }
         return dedicated.first { running.contains($0.id) }?.name
+    }
+
+    /// The users that belong to a known meeting app or browser, helpers included; nil when there are none.
+    static func known(in users: Set<String>) -> Set<String>? {
+        let ids = (dedicated + browsers).map(\.id)
+        let known = users.filter { user in ids.contains { user == $0 || user.hasPrefix($0 + ".") } }
+        return known.isEmpty ? nil : known
     }
 
     static func notificationBody(appName: String?) -> String {

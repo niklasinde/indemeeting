@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import CoreAudio
+import os
 
 @MainActor
 final class MeetingWatcher {
@@ -46,6 +47,7 @@ final class MeetingWatcher {
     private func beginCountdown(_ kind: RecordingCountdown.Kind) {
         let seconds = RecordingCountdown.length(UserDefaults.standard.integer(forKey: Self.countdownKey))
         guard countdown.begin(kind, seconds: seconds, now: Date()) else { return }
+        if kind == .stop { Self.log.notice("Stop countdown started (\(seconds) s)") }
         countdownTicker = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickCountdown() }
         }
@@ -101,12 +103,19 @@ final class MeetingWatcher {
 
     private func checkMeetingEnd() {
         guard let lastSound = recorder.lastSound else { return }
-        let decision = autoStop.update(enabled: UserDefaults.standard.bool(forKey: Self.autoStopKey),
-                                       othersUsingMic: monitor?.isInUseByOthers ?? false,
+        let users = MicUsers.others(monitor?.users ?? [], ownPID: getpid(), ownBundleID: Bundle.main.bundleIdentifier)
+        let hadMeeting = !autoStop.meetingApps.isEmpty
+        let decision = autoStop.update(enabled: UserDefaults.standard.bool(forKey: Self.autoStopKey), micUsers: users,
                                        paused: recorder.isPaused, lastSound: lastSound, now: Date())
+        if !hadMeeting, !autoStop.meetingApps.isEmpty {
+            let apps = autoStop.meetingApps.sorted()
+            Self.log.notice("Meeting apps on the microphone: \(apps, privacy: .public)")
+        }
         switch decision {
         case .idle: break
-        case .ask: if automatic { beginCountdown(.stop) } else { notifier.postMeetingEnded() }
+        case .ask:
+            Self.log.notice("Meeting ended; still on the microphone: \(users.sorted(), privacy: .public)")
+            if automatic { beginCountdown(.stop) } else { notifier.postMeetingEnded() }
         case .withdraw:
             notifier.withdrawMeetingEnded()
             if countdown.drop(.stop) { endCountdown() }
@@ -132,6 +141,8 @@ final class MeetingWatcher {
             if automatic { beginCountdown(.start) } else { notifier.postMeetingStarted(appName: Self.meetingAppName) }
         }
     }
+
+    private static let log = Logger(subsystem: "MeetingRecorder", category: "meeting")
 
     private static var meetingAppName: String? {
         let workspace = NSWorkspace.shared
@@ -160,15 +171,31 @@ final class MicrophoneActivityMonitor {
         return AudioObjects.read(kAudioDevicePropertyDeviceIsRunningSomewhere, of: device, into: &running) && running != 0
     }
 
-    /// Whether a process other than this app is taking audio input.
-    var isInUseByOthers: Bool {
-        let own = getpid()
-        return AudioObjects.objects(kAudioHardwarePropertyProcessObjectList, of: AudioObjects.system).contains { process in
+    /// The processes taking audio input, this app included.
+    var users: [MicUser] {
+        AudioObjects.objects(kAudioHardwarePropertyProcessObjectList, of: AudioObjects.system).compactMap { process in
             var pid: pid_t = 0
             var running: UInt32 = 0
-            return AudioObjects.read(kAudioProcessPropertyPID, of: process, into: &pid) && pid != own
-                && AudioObjects.read(kAudioProcessPropertyIsRunningInput, of: process, into: &running) && running != 0
+            guard AudioObjects.read(kAudioProcessPropertyIsRunningInput, of: process, into: &running), running != 0,
+                  AudioObjects.read(kAudioProcessPropertyPID, of: process, into: &pid) else { return nil }
+            return MicUser(pid: pid, parent: Self.parent(of: pid), bundleID: Self.bundleID(of: process))
         }
+    }
+
+    private static func parent(of pid: pid_t) -> pid_t {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.size
+        var mib = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        return sysctl(&mib, 4, &info, &size, nil, 0) == 0 ? info.kp_eproc.e_ppid : 0
+    }
+
+    private static func bundleID(of process: AudioObjectID) -> String {
+        var address = AudioObjects.address(kAudioProcessPropertyBundleID)
+        var size = UInt32(MemoryLayout<CFString?>.size)
+        var value: Unmanaged<CFString>?
+        guard AudioObjectGetPropertyData(process, &address, 0, nil, &size, &value) == noErr,
+              let value else { return "" }
+        return value.takeRetainedValue() as String
     }
 
     private func notify() {
