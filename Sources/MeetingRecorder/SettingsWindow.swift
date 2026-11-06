@@ -260,6 +260,7 @@ struct SettingsView: View {
     @ObservedObject private var listened = ListenedLanguages.shared
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
     @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
+    @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -333,6 +334,13 @@ struct SettingsView: View {
                 Divider().padding(.leading, 14)
                 row("Higher accuracy", detail: "Beam search with Whisper, slower") {
                     Toggle("Higher accuracy", isOn: $beamSearch)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+                Divider().padding(.leading, 14)
+                row("Quiet transcription", detail: "Whisper on fewer cores at low priority, slower but cooler") {
+                    Toggle("Quiet transcription", isOn: $quiet)
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .labelsHidden()

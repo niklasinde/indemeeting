@@ -1,4 +1,5 @@
 import AVFoundation
+import IOKit.ps
 
 /// How Whisper transcribes: the languages each stretch may be in (Whisper codes; empty for any), the one to use when
 /// detection has nothing to go on, a prompt with the words to expect, and beam search instead of greedy decoding.
@@ -27,7 +28,8 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     let id: String
     private let options: WhisperOptions
     private let context: OpaquePointer
-    private let queue = DispatchQueue(label: "whisper", qos: .userInitiated)
+    private let threads: Int32
+    private let queue: DispatchQueue
 
     convenience init(model: WhisperModel, options: WhisperOptions) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
@@ -39,6 +41,16 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         self.context = context
         self.id = id
         self.options = options
+        let pace = WhisperLogic.pace(quiet: TranscriptionEngine.quiet(), onAC: Self.onACPower,
+                                     lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
+                                     cores: ProcessInfo.processInfo.activeProcessorCount)
+        threads = pace.threads
+        queue = DispatchQueue(label: "whisper", qos: pace.qos)
+    }
+
+    private static var onACPower: Bool {
+        let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        return IOPSGetProvidingPowerSourceType(info).takeUnretainedValue() as String == kIOPMACPowerKey
     }
 
     private static func context(file: URL) -> OpaquePointer? {
@@ -85,15 +97,12 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
 
     /// How likely each language is in the first 30 seconds of `samples`.
     private func probabilities(of samples: [Float]) -> [String: Double] {
-        let threads = Self.threads
         guard samples.withUnsafeBufferPointer({ whisper_pcm_to_mel(context, $0.baseAddress, Int32($0.count), threads) }) == 0
         else { return [:] }
         var probabilities = [Float](repeating: 0, count: Int(whisper_lang_max_id()) + 1)
         guard whisper_lang_auto_detect(context, 0, threads, &probabilities) >= 0 else { return [:] }
         return Dictionary(uniqueKeysWithValues: probabilities.indices.map { (String(cString: whisper_lang_str(Int32($0))), Double(probabilities[$0])) })
     }
-
-    private static var threads: Int32 { Int32(min(8, max(1, ProcessInfo.processInfo.activeProcessorCount - 2))) }
 
     private final class ProgressBox {
         let report: TranscriptionProgress
@@ -105,7 +114,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         let box = ProgressBox(progress)
         var params = whisper_full_default_params(options.beamSearch ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY)
         if options.beamSearch { params.beam_search.beam_size = 5 }
-        params.n_threads = Self.threads
+        params.n_threads = threads
         params.translate = false
         params.no_context = true
         params.print_progress = false

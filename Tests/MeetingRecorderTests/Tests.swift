@@ -607,6 +607,19 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(TranscriptionEngine.beamSearch(defaults: defaults), "beam search is on by default")
         defaults.set(false, forKey: TranscriptionEngine.beamSearchKey)
         check(!TranscriptionEngine.beamSearch(defaults: defaults), "beam search off")
+        check(TranscriptionEngine.quiet(defaults: defaults), "quiet transcription is on by default")
+        defaults.set(false, forKey: TranscriptionEngine.quietKey)
+        check(!TranscriptionEngine.quiet(defaults: defaults), "quiet off")
+    }),
+
+    ("quiet Whisper runs on fewer threads at a lower priority", {
+        check(WhisperLogic.pace(quiet: false, onAC: false, lowPower: true, cores: 12) == (8, .userInitiated), "full speed")
+        check(WhisperLogic.pace(quiet: false, onAC: true, lowPower: false, cores: 6) == (4, .userInitiated), "cores minus two")
+        check(WhisperLogic.pace(quiet: false, onAC: true, lowPower: false, cores: 2) == (1, .userInitiated), "at least one")
+        check(WhisperLogic.pace(quiet: true, onAC: false, lowPower: false, cores: 12) == (4, .background), "on battery")
+        check(WhisperLogic.pace(quiet: true, onAC: true, lowPower: true, cores: 12) == (4, .background), "Low Power Mode")
+        check(WhisperLogic.pace(quiet: true, onAC: true, lowPower: false, cores: 12) == (4, .utility), "on AC")
+        check(WhisperLogic.pace(quiet: true, onAC: true, lowPower: false, cores: 4) == (2, .utility), "never more than full speed")
     }),
 
     ("Whisper picks the likeliest of the languages listened for", {

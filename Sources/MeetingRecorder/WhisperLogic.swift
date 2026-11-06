@@ -113,6 +113,7 @@ enum TranscriptionEngine: Hashable {
     static let appleValue = "apple"
     static let storageKey = "transcriptionEngine"
     static let beamSearchKey = "whisperBeamSearch"
+    static let quietKey = "whisperQuiet"
 
     init(storedValue: String?) {
         self = storedValue.flatMap(WhisperModel.with(id:)).map(Self.whisper) ?? .apple
@@ -156,6 +157,8 @@ enum TranscriptionEngine: Hashable {
     }
 
     static func beamSearch(defaults: UserDefaults = .standard) -> Bool { defaults.object(forKey: beamSearchKey) as? Bool ?? true }
+
+    static func quiet(defaults: UserDefaults = .standard) -> Bool { defaults.object(forKey: quietKey) as? Bool ?? true }
 }
 
 /// Where to cut audio into stretches Whisper detects the language of one by one: at the middle of a pause once a stretch
@@ -220,6 +223,14 @@ enum WhisperLogic {
     static let domainTerms = ["Quiddly", "finq", "QDLY", "Jira", "PR"]
     /// Whisper reads at most 224 prompt tokens; this many characters stays under that in Swedish and English.
     static let promptLimit = 550
+
+    /// CPU threads and priority for Whisper. Quiet mode keeps to four threads at a low priority, a little higher on AC power
+    /// without Low Power Mode; the GPU does most of the work either way.
+    static func pace(quiet: Bool, onAC: Bool, lowPower: Bool, cores: Int) -> (threads: Int32, qos: DispatchQoS) {
+        let threads = Int32(min(8, max(1, cores - 2)))
+        guard quiet else { return (threads, .userInitiated) }
+        return (min(4, threads), onAC && !lowPower ? .utility : .background)
+    }
 
     /// A prompt that spells the words meetings are likely to use: the domain terms, people's names, Jira project keys,
     /// then the names and acronyms most used in ticket titles. Whatever does not fit in `limit` characters is dropped.
