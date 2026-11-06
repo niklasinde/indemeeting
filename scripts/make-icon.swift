@@ -13,41 +13,120 @@ let ctx = NSGraphicsContext.current!.cgContext
 let canvas = CGFloat(size)
 let inset = canvas * 0.0977
 let tile = CGRect(x: inset, y: inset, width: canvas - 2 * inset, height: canvas - 2 * inset)
-let squircle = NSBezierPath(roundedRect: tile, xRadius: tile.width * 0.2237, yRadius: tile.width * 0.2237)
+let unit = tile.width
+let center = CGPoint(x: tile.midX, y: tile.midY)
 
-ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -12), blur: 28, color: NSColor.black.withAlphaComponent(0.35).cgColor)
-NSColor.black.setFill()
-squircle.fill()
-ctx.restoreGState()
-
-ctx.saveGState()
-squircle.addClip()
-let gradient = NSGradient(colors: [NSColor(red: 1.0, green: 0.42, blue: 0.36, alpha: 1),
-                                   NSColor(red: 0.62, green: 0.07, blue: 0.14, alpha: 1)])!
-gradient.draw(in: tile, angle: -60)
-ctx.restoreGState()
-
-let heights: [CGFloat] = [0.16, 0.34, 0.54, 0.34, 0.16].map { $0 * tile.height * 0.78 }
-let barWidth = tile.width * 0.075
-let gap = tile.width * 0.058
-let total = CGFloat(heights.count) * barWidth + CGFloat(heights.count - 1) * gap
-var x = tile.midX - total / 2
-NSColor.white.setFill()
-for height in heights {
-    let bar = CGRect(x: x, y: tile.midY - height / 2 + tile.height * 0.04, width: barWidth, height: height)
-    NSBezierPath(roundedRect: bar, xRadius: barWidth / 2, yRadius: barWidth / 2).fill()
-    x += barWidth + gap
+func rgb(_ hex: UInt32, _ alpha: CGFloat = 1) -> CGColor {
+    CGColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255, alpha: alpha)
 }
 
-let dotRadius = tile.width * 0.043
-let dotCenter = CGPoint(x: tile.maxX - tile.width * 0.17, y: tile.maxY - tile.height * 0.17)
-NSColor.white.setFill()
-NSBezierPath(ovalIn: CGRect(x: dotCenter.x - dotRadius * 1.45, y: dotCenter.y - dotRadius * 1.45,
-                            width: dotRadius * 2.9, height: dotRadius * 2.9)).fill()
-NSColor(red: 0.86, green: 0.1, blue: 0.16, alpha: 1).setFill()
-NSBezierPath(ovalIn: CGRect(x: dotCenter.x - dotRadius, y: dotCenter.y - dotRadius,
-                            width: dotRadius * 2, height: dotRadius * 2)).fill()
+func gradient(_ colors: [CGColor], _ locations: [CGFloat]? = nil) -> CGGradient {
+    CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors as CFArray, locations: locations)!
+}
+
+func point(angle degrees: CGFloat, radius: CGFloat, from origin: CGPoint = center) -> CGPoint {
+    let radians = degrees * .pi / 180
+    return CGPoint(x: origin.x + sin(radians) * radius, y: origin.y + cos(radians) * radius)
+}
+
+func continuousSquircle(_ rect: CGRect) -> CGPath {
+    let path = CGMutablePath()
+    let exponent: CGFloat = 5
+    let steps = 720
+    for step in 0..<steps {
+        let t = CGFloat(step) / CGFloat(steps) * 2 * .pi
+        let x = pow(abs(cos(t)), 2 / exponent) * (cos(t) < 0 ? -1 : 1)
+        let y = pow(abs(sin(t)), 2 / exponent) * (sin(t) < 0 ? -1 : 1)
+        let p = CGPoint(x: rect.midX + x * rect.width / 2, y: rect.midY + y * rect.height / 2)
+        step == 0 ? path.move(to: p) : path.addLine(to: p)
+    }
+    path.closeSubpath()
+    return path
+}
+
+func withState(_ body: () -> Void) {
+    ctx.saveGState()
+    body()
+    ctx.restoreGState()
+}
+
+func withShadow(blur: CGFloat, offset: CGFloat, color: CGColor, _ body: () -> Void) {
+    withState {
+        ctx.setShadow(offset: CGSize(width: 0, height: -offset), blur: blur, color: color)
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+        body()
+        ctx.endTransparencyLayer()
+    }
+}
+
+func fill(_ path: CGPath, _ color: CGColor) {
+    ctx.addPath(path)
+    ctx.setFillColor(color)
+    ctx.fillPath()
+}
+
+func circle(_ c: CGPoint, _ radius: CGFloat) -> CGPath {
+    CGPath(ellipseIn: CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2), transform: nil)
+}
+
+func stroked(_ path: CGPath, width: CGFloat, cap: CGLineCap = .round, join: CGLineJoin = .round) -> CGPath {
+    path.copy(strokingWithWidth: width, lineCap: cap, lineJoin: join, miterLimit: 10)
+}
+
+func line(_ a: CGPoint, _ b: CGPoint, width: CGFloat, cap: CGLineCap = .round) -> CGPath {
+    let path = CGMutablePath()
+    path.move(to: a)
+    path.addLine(to: b)
+    return stroked(path, width: width, cap: cap)
+}
+
+func glyphShadow(_ body: () -> Void) {
+    withShadow(blur: unit * 0.045, offset: unit * 0.02, color: rgb(0x000000, 0.32), body)
+}
+
+func drawTile(top: CGColor, bottom: CGColor, glow: CGColor) {
+    let shape = continuousSquircle(tile)
+    withState {
+        ctx.setShadow(offset: CGSize(width: 0, height: -unit * 0.012), blur: unit * 0.034, color: rgb(0x000000, 0.38))
+        fill(shape, rgb(0x000000))
+    }
+    withState {
+        ctx.addPath(shape)
+        ctx.clip()
+        ctx.drawLinearGradient(gradient([top, bottom]), start: CGPoint(x: tile.minX, y: tile.maxY),
+                               end: CGPoint(x: tile.maxX, y: tile.minY), options: [])
+        ctx.drawRadialGradient(gradient([glow, glow.copy(alpha: 0)!]),
+                               startCenter: CGPoint(x: tile.midX, y: tile.maxY), startRadius: 0,
+                               endCenter: CGPoint(x: tile.midX, y: tile.maxY), endRadius: unit * 0.85, options: [])
+        ctx.drawLinearGradient(gradient([rgb(0x000000, 0), rgb(0x000000, 0.22)]),
+                               start: CGPoint(x: 0, y: tile.midY), end: CGPoint(x: 0, y: tile.minY), options: [])
+        ctx.addPath(shape)
+        ctx.setStrokeColor(rgb(0xFFFFFF, 0.22))
+        ctx.setLineWidth(unit * 0.008)
+        ctx.strokePath()
+    }
+}
+
+func drawVoiceDial() {
+    drawTile(top: rgb(0x6A7BFF), bottom: rgb(0x2A1478), glow: rgb(0x9FB4FF, 0.45))
+    let levels: [CGFloat] = [1.0, 0.35, 0.7, 0.25, 0.85, 0.4, 0.95, 0.3, 0.6, 0.2, 0.75, 0.45]
+    let ring = unit * 0.315
+    glyphShadow {
+        for (index, level) in levels.enumerated() {
+            let angle = CGFloat(index) * 30
+            let half = unit * (0.025 + 0.075 * level)
+            fill(line(point(angle: angle, radius: ring - half), point(angle: angle, radius: ring + half),
+                      width: unit * 0.05), rgb(0xC3CCFF))
+        }
+        fill(line(center, point(angle: 300, radius: unit * 0.12), width: unit * 0.085), rgb(0xFFFFFF))
+        fill(line(center, point(angle: 60, radius: unit * 0.18), width: unit * 0.066), rgb(0xFFFFFF))
+        fill(circle(center, unit * 0.058), rgb(0xFF7A59))
+        fill(circle(center, unit * 0.022), rgb(0xFFFFFF))
+    }
+}
+
+drawVoiceDial()
 
 NSGraphicsContext.restoreGraphicsState()
 
