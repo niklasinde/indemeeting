@@ -557,6 +557,17 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(none == "# T\n", "no empty sections, got \(none)")
     }),
 
+    ("summary markdown names the engine that made it", {
+        let summary = MeetingSummary(title: "T", actionItems: [], topics: [])
+        func source(_ engine: String?) -> String {
+            ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .english, engine: engine)
+        }
+        check(source(SummaryEngine.ollama.model).contains("English \u{00B7} on-device Ministral 3 8B_"), "Ministral")
+        check(source(SummaryEngine.apple.model).contains("English \u{00B7} on-device Apple Intelligence_"), "Apple")
+        check(source(SummaryEngine.claude.model).contains("English \u{00B7} Claude_"), "Claude")
+        check(source(nil).contains("English \u{00B7} on-device Apple Intelligence_"), "old meetings")
+    }),
+
     ("summary decodes from model JSON", {
         let json = #"{"title":"T","actionItems":[{"task":"x","owner":"Bo"},{"task":"y"}],"topics":[{"title":"A","points":["p"]}]}"#
         let summary = try MeetingSummary.decode(json: json)

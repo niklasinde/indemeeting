@@ -444,9 +444,12 @@ enum ProcessingLogic {
     }
 
     /// `# Title`, `## Action items` as `- [ ] Owner: task` lines, then one `## Topic` with bullets per topic.
-    static func summaryMarkdown(_ summary: MeetingSummary, audioName: String?, language: MeetingLanguage) -> String {
+    static func summaryMarkdown(_ summary: MeetingSummary, audioName: String?, language: MeetingLanguage,
+                                engine: String? = nil) -> String {
         var parts = ["# \(summary.title)"]
-        if let audioName { parts.append("_\(audioName) \u{00B7} \(language.displayName) \u{00B7} on-device Apple Intelligence_") }
+        if let audioName {
+            parts.append("_\(audioName) \u{00B7} \(language.displayName) \u{00B7} \(summarySource(engine: engine))_")
+        }
         if !summary.actionItems.isEmpty {
             parts.append("## \(language.headings.actionItems)")
             parts.append(summary.actionItems.map { item in
@@ -459,6 +462,12 @@ enum ProcessingLogic {
             parts.append(topic.points.map { "- \($0)" }.joined(separator: "\n"))
         }
         return parts.joined(separator: "\n\n") + "\n"
+    }
+
+    private static func summarySource(engine: String?) -> String {
+        guard let engine else { return "on-device Apple Intelligence" }
+        let name = SummaryEngine.displayName(stored: engine)
+        return engine.hasPrefix("claude") ? name : "on-device \(name)"
     }
 
     static func unavailableMarkdown(_ reason: SummaryUnavailable, audioName: String, language: MeetingLanguage) -> String {
@@ -478,7 +487,8 @@ enum ProcessingLogic {
         let language = meeting.language ?? .current
         let hasSummary = !content.summary.isEmpty
         var parts = [summaryMarkdown(MeetingSummary(content.summary, title: meeting.title),
-                                     audioName: hasSummary ? meeting.audioFile : nil, language: language)]
+                                     audioName: hasSummary ? meeting.audioFile : nil, language: language,
+                                     engine: meeting.summaryEngine)]
         if !hasSummary, let reason = meeting.statusMessage { parts.append(reason + "\n") }
         let notes = meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines)
         if !notes.isEmpty { parts.append("## \(language.headings.notes)\n\n\(notes)\n") }
