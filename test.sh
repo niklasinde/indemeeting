@@ -9,6 +9,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/MeetingRecorder/RecordingLogic.swift \
     Sources/MeetingRecorder/MeetingDetection.swift \
     Sources/MeetingRecorder/ProcessingLogic.swift \
+    Sources/MeetingRecorder/LiveTranscriptLogic.swift \
     Sources/MeetingRecorder/LanguageLogic.swift \
     Sources/MeetingRecorder/SettingsLogic.swift \
     Sources/MeetingRecorder/WhisperLogic.swift \
@@ -102,6 +103,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/MeetingRecorderTests/ASRBenchmarkTests.swift \
     Tests/MeetingRecorderTests/ClaudeSummarizerTests.swift \
     Tests/MeetingRecorderTests/OllamaSummarizerTests.swift \
+    Tests/MeetingRecorderTests/LiveTranscriptTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

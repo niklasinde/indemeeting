@@ -25,6 +25,9 @@ enum Main {
         if let output = UpgradePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { UpgradePreview.run(to: output) }
         }
+        if let audio = LiveTranscriptCheck.value(CommandLine.arguments) {
+            MainActor.assumeIsolated { LiveTranscriptCheck.run(audio, arguments: CommandLine.arguments) }
+        }
         #endif
         if let link = PhoneCommandLine.value("--open-link", in: CommandLine.arguments) { GitHubLink.printFromCommandLine(link) }
         if CommandLine.arguments.contains("--mcp") { MCPServer.runFromCommandLine() }
@@ -213,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.shared.speakers.store = store
         SettingsWindow.shared.projects.store = store
         SettingsWindow.shared.tracker = tracker
+        recorder.live.languages = { [store] in MeetingPipeline.languages(for: $0, store: store) }
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.summariseWhenModelReady()
         audioCleaner.start()
@@ -300,6 +304,7 @@ struct MenuContent: View {
     @AppStorage(MeetingWatcher.automaticKey) private var startStopAutomatically = true
     @AppStorage(MeetingWatcher.countdownKey) private var countdownSeconds = RecordingCountdown.defaultLength
     @AppStorage(AskPanel.shownKey) private var showAskBar = true
+    @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
     @ObservedObject private var listened = ListenedLanguages.shared
     @ObservedObject private var github = GitHubModel.shared
 
@@ -317,6 +322,7 @@ struct MenuContent: View {
         if recorder.isRecording {
             Text(recorder.statusText)
             Button(recorder.isPaused ? "Resume Recording" : "Pause Recording") { recorder.togglePause() }
+            if liveTranscription { Button("Show Live Transcript") { LiveTranscriptWindow.shared.show(recorder) } }
             Button("Stop Recording") {
                 Task { await processor.finishRecording(recorder) }
             }

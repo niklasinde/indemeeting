@@ -68,8 +68,22 @@ enum Transcriber {
     }
 }
 
-private protocol TextResult: SpeechModuleResult {
+protocol TextResult: SpeechModuleResult {
     var text: AttributedString { get }
+}
+
+extension TextResult {
+    var pieces: [(text: String, start: TimeInterval?, confidence: Double?)] {
+        text.runs.map { run in
+            (text: String(text[run.range].characters),
+             start: run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self]?.start.seconds,
+             confidence: run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self])
+        }
+    }
+
+    var sentences: [TranscriptSegment] {
+        ProcessingLogic.sentences(pieces.map { ($0.text, $0.start) }, from: range.start.seconds)
+    }
 }
 
 extension SpeechTranscriber.Result: TextResult {}
@@ -81,18 +95,20 @@ enum SpeechModel {
     case speech(SpeechTranscriber)
     case dictation(DictationTranscriber)
 
-    static func make(for language: MeetingLanguage) async -> SpeechModel? {
+    /// `live` also reports the words still being heard, for streaming audio.
+    static func make(for language: MeetingLanguage, live: Bool = false) async -> SpeechModel? {
         let locale = language.locale
         if await supports(SpeechTranscriber.supportedLocales, locale) {
-            return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
+            return .speech(SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: live ? [.volatileResults] : [],
                                              attributeOptions: [.audioTimeRange, .transcriptionConfidence]))
         }
         if await supports(DictationTranscriber.supportedLocales, locale) {
-            let preset = DictationTranscriber.Preset.timeIndexedLongDictation
+            let preset = live ? DictationTranscriber.Preset.progressiveLongDictation : .timeIndexedLongDictation
             return .dictation(DictationTranscriber(locale: locale, contentHints: preset.contentHints,
                                                    transcriptionOptions: preset.transcriptionOptions,
                                                    reportingOptions: preset.reportingOptions,
-                                                   attributeOptions: preset.attributeOptions.union([.transcriptionConfidence])))
+                                                   attributeOptions: preset.attributeOptions.union(live ? [.transcriptionConfidence, .audioTimeRange]
+                                                                                                        : [.transcriptionConfidence])))
         }
         return nil
     }
@@ -131,13 +147,8 @@ struct AppleSpeechEngine: SpeechEngine {
             var segments: [TranscriptSegment] = []
             var confidence = ConfidenceMean()
             for try await result in module.results where result.isFinal {
-                let pieces = result.text.runs.map { run in
-                    (text: String(result.text[run.range].characters),
-                     start: run[AttributeScopes.SpeechAttributes.TimeRangeAttribute.self]?.start.seconds,
-                     confidence: run[AttributeScopes.SpeechAttributes.ConfidenceAttribute.self])
-                }
-                pieces.forEach { confidence.add($0.confidence, weight: $0.text.count) }
-                segments += ProcessingLogic.sentences(pieces.map { ($0.text, $0.start) }, from: result.range.start.seconds)
+                result.pieces.forEach { confidence.add($0.confidence, weight: $0.text.count) }
+                segments += result.sentences
             }
             return Transcript(segments: segments, engine: engine, confidence: confidence.value)
         }

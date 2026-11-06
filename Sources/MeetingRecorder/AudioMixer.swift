@@ -11,14 +11,19 @@ final class PCMNormalizer {
     }
 
     func samples(from buffer: AVAudioPCMBuffer) -> [Float] {
+        guard let output = convert(buffer), let data = output.floatChannelData else { return [] }
+        return Array(UnsafeBufferPointer(start: data[0], count: Int(output.frameLength)))
+    }
+
+    func convert(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
         if converter?.inputFormat != buffer.format {
             converter = AVAudioConverter(from: buffer.format, to: format)
             converter?.downmix = true
         }
-        guard let converter else { return [] }
+        guard let converter else { return nil }
         let ratio = format.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 64
-        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return [] }
+        guard let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
 
         var consumed = false
         var error: NSError?
@@ -31,8 +36,16 @@ final class PCMNormalizer {
             status.pointee = .haveData
             return buffer
         }
-        guard error == nil, let data = output.floatChannelData else { return [] }
-        return Array(UnsafeBufferPointer(start: data[0], count: Int(output.frameLength)))
+        return error == nil ? output : nil
+    }
+
+    /// `samples` in the normalized format.
+    static func buffer(_ samples: [Float]) -> AVAudioPCMBuffer? {
+        guard !samples.isEmpty, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
+              let out = buffer.floatChannelData?[0] else { return nil }
+        samples.withUnsafeBufferPointer { out.update(from: $0.baseAddress!, count: samples.count) }
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        return buffer
     }
 }
 
@@ -88,6 +101,7 @@ final class AudioMixer {
     private var pending = AudioSource.allCases.map { _ in [Float]() }
     private var lastSeen = AudioSource.allCases.map { _ in Date.distantPast }
     private var meters = AudioSource.allCases.map { _ in LevelMeter() }
+    private var listener: ((AudioSource, [Float]) -> Void)?
 
     init(url: URL, stems: Bool = false) throws {
         self.url = url
@@ -130,6 +144,16 @@ final class AudioMixer {
 
     var framesWritten: Int { queue.sync { written } }
 
+    /// Hands each source's samples to `listener` as they are written, lined up like the stems, on the mixer's queue.
+    /// Returns the frame the first of them starts at.
+    @discardableResult
+    func listen(_ listener: ((AudioSource, [Float]) -> Void)?) -> Int {
+        queue.sync {
+            self.listener = listener
+            return written
+        }
+    }
+
     /// When either source last had more than silence in it (or recording started or resumed).
     var lastSound: Date { queue.sync { heard } }
 
@@ -144,6 +168,7 @@ final class AudioMixer {
             timer = nil
             flush(final: true)
             finished = true
+            listener = nil
         }
         stems.forEach { $0.finish() }
         return mix.finish()
@@ -163,7 +188,11 @@ final class AudioMixer {
             let take = min(count, pending[index].count)
             let samples = pending[index].prefix(take)
             for (frame, sample) in samples.enumerated() { mixed[frame] += sample }
-            if !stems.isEmpty { stems[index].write(Array(samples) + [Float](repeating: 0, count: count - take)) }
+            if !stems.isEmpty || listener != nil {
+                let aligned = Array(samples) + [Float](repeating: 0, count: count - take)
+                if !stems.isEmpty { stems[index].write(aligned) }
+                if let source = AudioSource(rawValue: index) { listener?(source, aligned) }
+            }
             pending[index].removeFirst(take)
         }
         mix.write(mixed.map { max(-1, min(1, $0)) })
@@ -185,12 +214,7 @@ final class AudioTrackWriter {
     }
 
     func write(_ samples: [Float]) {
-        guard let file, !samples.isEmpty,
-              let buffer = AVAudioPCMBuffer(pcmFormat: PCMNormalizer.format, frameCapacity: AVAudioFrameCount(samples.count)),
-              let out = buffer.floatChannelData?[0]
-        else { return }
-        samples.withUnsafeBufferPointer { out.update(from: $0.baseAddress!, count: samples.count) }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
+        guard let file, let buffer = PCMNormalizer.buffer(samples) else { return }
         try? file.write(from: buffer)
     }
 

@@ -11,6 +11,7 @@ final class Recorder: ObservableObject {
     @Published private(set) var notice: String?
     /// The meeting being recorded or continued, until it is saved.
     @Published private(set) var meeting: URL?
+    let live = LiveTranscription()
 
     private let microphone = MicrophoneCapture()
     private let system = SystemAudioCapture()
@@ -61,6 +62,7 @@ final class Recorder: ObservableObject {
             self.mixer = mixer
             try microphone.start(into: mixer)
             startSystemAudio(into: mixer)
+            live.start(meeting: meeting, mixer: mixer)
             beginTimer()
             continuing = url != meeting
             self.meeting = meeting
@@ -76,9 +78,11 @@ final class Recorder: ObservableObject {
         guard isRecording, let mixer else { return }
         if isPaused {
             mixer.resume()
+            live.resume()
             clock?.resume(at: Date())
         } else {
             mixer.pause()
+            live.pause()
             clock?.pause(at: Date())
         }
         isPaused.toggle()
@@ -155,6 +159,7 @@ final class Recorder: ObservableObject {
         timer?.invalidate()
         timer = nil
         clock = nil
+        live.stop()
         releaseAudioDevices()
         defer { mixer = nil }
         guard let mixer else { return nil }

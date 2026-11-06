@@ -384,6 +384,7 @@ struct MainView: View {
     @ObservedObject private var github = GitHubModel.shared
     @ObservedObject private var upgrade = AppUpgrade.shared
     @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
+    @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
 
     private var columns: Binding<NavigationSplitViewVisibility> {
         Binding(get: { sidebarHidden ? .detailOnly : .all }, set: { sidebarHidden = $0 == .detailOnly })
@@ -428,6 +429,7 @@ struct MainView: View {
             }
             ToolbarItemGroup(placement: .automatic) {
                 Spacer()
+                if recorder.isRecording, liveTranscription { liveTranscriptButton }
                 if recorder.isRecording { pauseButton }
                 if let entry = library.selected, !entry.inProgress, !recorder.isBusy, library.audioUnavailable(entry) == nil {
                     ContinueButton(recorder: recorder, entry: entry)
@@ -514,6 +516,13 @@ struct MainView: View {
 
     private func startNew() {
         if library.section == .sessions { SessionsModel.shared.newSession() } else { newMeeting() }
+    }
+
+    private var liveTranscriptButton: some View {
+        Button { LiveTranscriptWindow.shared.show(recorder) } label: {
+            Label("Live Transcript", systemImage: "captions.bubble").labelStyle(.titleAndIcon)
+        }
+        .help("Show Live Transcript")
     }
 
     private var pauseButton: some View {

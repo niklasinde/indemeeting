@@ -263,6 +263,7 @@ struct SettingsView: View {
     @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
     @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ollama
     @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
+    @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -343,6 +344,13 @@ struct SettingsView: View {
                 Divider().padding(.leading, 14)
                 row("Quiet transcription", detail: "Whisper on fewer cores at low priority, slower but cooler") {
                     Toggle("Quiet transcription", isOn: $quiet)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                        .labelsHidden()
+                }
+                Divider().padding(.leading, 14)
+                row("Live transcription", detail: "A preview while recording, with Apple\u{2019}s speech model; not saved") {
+                    Toggle("Live transcription", isOn: $liveTranscription)
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .labelsHidden()
