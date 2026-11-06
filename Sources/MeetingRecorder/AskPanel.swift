@@ -163,18 +163,23 @@ final class NotchBar: ObservableObject {
         panel.orderOut(nil)
     }
 
+    /// Where the bar sits on a screen: centred on the notch if it has one, as tall as the menu bar.
+    static func metrics(of screen: NSScreen) -> (centre: CGFloat, barHeight: CGFloat, notchWidth: CGFloat?) {
+        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
+        let barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
+        guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else {
+            return (screen.frame.midX, barHeight, nil)
+        }
+        return ((left.maxX + right.minX) / 2, barHeight, right.minX - left.maxX)
+    }
+
     func position(then: @escaping () -> Void = {}) {
         guard let content = panel.contentView else { return }
-        let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
-        barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
-        var centre = screen.frame.midX
-        hasNotch = screen.auxiliaryTopLeftArea != nil && screen.auxiliaryTopRightArea != nil
-        if let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea {
-            notchWidth = right.minX - left.maxX
-            centre = (left.maxX + right.minX) / 2
-        } else {
-            notchWidth = 200
-        }
+        let metrics = Self.metrics(of: screen)
+        barHeight = metrics.barHeight
+        hasNotch = metrics.notchWidth != nil
+        notchWidth = metrics.notchWidth ?? 200
+        let centre = metrics.centre
         let top = screen.frame.maxY
         DispatchQueue.main.async {
             let size = content.fittingSize

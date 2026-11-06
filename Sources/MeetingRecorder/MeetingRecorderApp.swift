@@ -292,6 +292,8 @@ struct MenuContent: View {
     let openApp: (URL?) -> Void
     @AppStorage(MeetingWatcher.enabledKey) private var notifyOnMeetingStart = true
     @AppStorage(MeetingWatcher.autoStopKey) private var stopWhenMeetingEnds = true
+    @AppStorage(MeetingWatcher.automaticKey) private var startStopAutomatically = true
+    @AppStorage(MeetingWatcher.countdownKey) private var countdownSeconds = RecordingCountdown.defaultLength
     @AppStorage(AskPanel.shownKey) private var showAskBar = true
     @ObservedObject private var listened = ListenedLanguages.shared
     @ObservedObject private var github = GitHubModel.shared
@@ -358,6 +360,11 @@ struct MenuContent: View {
         Divider()
         Toggle("Notify when a meeting starts", isOn: $notifyOnMeetingStart)
         Toggle("Stop automatically when the meeting ends", isOn: $stopWhenMeetingEnds)
+        Toggle("Start and stop automatically", isOn: $startStopAutomatically)
+        Picker("Countdown: \(RecordingCountdown.length(countdownSeconds)) seconds", selection: $countdownSeconds) {
+            ForEach(RecordingCountdown.lengths, id: \.self) { Text("\($0) seconds").tag($0) }
+        }
+        .disabled(!startStopAutomatically)
         Toggle("Show Ask Bar", isOn: $showAskBar)
         Button("Open Recordings Folder") { recorder.openFolder() }
         SettingsButton()

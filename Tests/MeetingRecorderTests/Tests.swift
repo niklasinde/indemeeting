@@ -78,7 +78,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + storeTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + countdownTests + storeTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
@@ -1104,6 +1104,94 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         check(markdown.contains("[00:00:01] You: Hi.\n\n[00:00:03] Others: Hello."), "markdown \(markdown)")
     }),
 ]
+
+private let countdownTests: [(name: String, run: () throws -> Void)] = {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+    func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+    return [
+        ("a countdown counts down and fires once", {
+            var countdown = RecordingCountdown()
+            check(countdown.state == .idle, "idle")
+            check(countdown.begin(.start, seconds: 5, now: at(0)), "begins")
+            check(countdown.remaining(now: at(0)) == 5, "five")
+            check(countdown.remaining(now: at(0.3)) == 5, "rounds up")
+            check(countdown.remaining(now: at(4.2)) == 1, "one")
+            check(countdown.tick(now: at(4.9)) == nil, "not yet")
+            check(countdown.tick(now: at(5)) == .start, "fires")
+            check(countdown.state == .fired(.start), "fired")
+            check(countdown.tick(now: at(6)) == nil, "fires once")
+            check(RecordingCountdown.text(.start, remaining: 5) == "Recording starts in 5", "start text")
+            check(RecordingCountdown.text(.stop, remaining: 3) == "Recording stops in 3", "stop text")
+        }),
+
+        ("a running countdown is not restarted", {
+            var countdown = RecordingCountdown()
+            _ = countdown.begin(.start, seconds: 5, now: at(0))
+            check(!countdown.begin(.start, seconds: 5, now: at(2)), "already counting")
+            check(countdown.remaining(now: at(2)) == 3, "keeps its deadline")
+        }),
+
+        ("a cancelled start is not offered again in the same meeting", {
+            var countdown = RecordingCountdown()
+            _ = countdown.begin(.start, seconds: 5, now: at(0))
+            countdown.cancel()
+            check(countdown.state == .cancelled(.start), "cancelled")
+            check(countdown.tick(now: at(10)) == nil, "never fires")
+            check(!countdown.begin(.start, seconds: 5, now: at(20)), "declined for this meeting")
+            countdown.micChanged(busy: false, now: at(30))
+            countdown.micChanged(busy: true, now: at(40))
+            check(!countdown.begin(.start, seconds: 5, now: at(43)), "a short mic gap is the same meeting")
+            countdown.micChanged(busy: false, now: at(50))
+            countdown.micChanged(busy: true, now: at(50 + RecordingCountdown.sessionGap))
+            check(countdown.begin(.start, seconds: 5, now: at(120)), "next meeting asks again")
+        }),
+
+        ("a cancelled stop does not decline the next start", {
+            var countdown = RecordingCountdown()
+            _ = countdown.begin(.stop, seconds: 3, now: at(0))
+            countdown.cancel()
+            check(countdown.state == .cancelled(.stop), "cancelled")
+            check(countdown.begin(.stop, seconds: 3, now: at(100)), "next end asks again")
+            countdown.cancel()
+            check(countdown.begin(.start, seconds: 3, now: at(200)), "start still offered")
+        }),
+
+        ("the meeting ending during a start countdown cancels it quietly", {
+            var countdown = RecordingCountdown()
+            _ = countdown.begin(.start, seconds: 5, now: at(0))
+            check(!countdown.micChanged(busy: true, now: at(1)), "still busy")
+            check(countdown.micChanged(busy: false, now: at(2)), "dropped")
+            check(countdown.state == .idle, "idle, not cancelled")
+            check(countdown.tick(now: at(10)) == nil, "never fires")
+            check(countdown.begin(.start, seconds: 5, now: at(12)), "not declined")
+        }),
+
+        ("the mic going quiet does not drop a stop countdown", {
+            var countdown = RecordingCountdown()
+            _ = countdown.begin(.stop, seconds: 5, now: at(0))
+            check(!countdown.micChanged(busy: false, now: at(1)), "kept")
+            check(countdown.drop(.stop), "the meeting coming back drops it")
+            check(!countdown.drop(.stop), "drops once")
+        }),
+
+        ("the countdown length falls back to five seconds", {
+            check(RecordingCountdown.length(3) == 3, "3")
+            check(RecordingCountdown.length(10) == 10, "10")
+            check(RecordingCountdown.length(0) == 5, "unset")
+            check(RecordingCountdown.length(7) == 5, "unknown")
+        }),
+
+        ("a cancelled stop waits for the next end of the meeting", {
+            var stop = AutoStop()
+            _ = stop.update(enabled: true, othersUsingMic: true, paused: false, lastSound: at(0), now: at(1))
+            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(5)) == .ask, "ended")
+            stop.waitForNextEnd()
+            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(500)) == .idle, "keeps recording")
+            _ = stop.update(enabled: true, othersUsingMic: true, paused: false, lastSound: at(0), now: at(600))
+            check(stop.update(enabled: true, othersUsingMic: false, paused: false, lastSound: at(0), now: at(700)) == .ask, "next end")
+        }),
+    ]
+}()
 
 private let autoStopTests: [(name: String, run: () throws -> Void)] = {
     let t0 = Date(timeIntervalSince1970: 1_000_000)
