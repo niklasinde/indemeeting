@@ -95,4 +95,18 @@ let liveTranscriptTests: [(name: String, run: () throws -> Void)] = [
         check(LiveTranscriptError.notInstalled(.swedish).note.contains("Swedish speech model"), "not installed")
         check(LiveTranscriptError.unsupported(.english).note.contains("not available in English"), "unsupported")
     }),
+
+    ("the meeting's Transcript tab shows live lines unless they are off or cannot be heard", {
+        check(LiveTranscriptLogic.showsInline(enabled: true, note: nil), "on")
+        check(!LiveTranscriptLogic.showsInline(enabled: false, note: nil), "off in Settings")
+        check(!LiveTranscriptLogic.showsInline(enabled: true, note: "needs the speech model"), "model missing")
+    }),
+
+    ("the empty live view says whether it is off, paused or listening", {
+        check(LiveTranscriptLogic.placeholder(enabled: false, note: "x", paused: false, recording: true).contains("is off"), "off")
+        check(LiveTranscriptLogic.placeholder(enabled: true, note: "x", paused: true, recording: true) == "x", "note")
+        check(LiveTranscriptLogic.placeholder(enabled: true, note: nil, paused: true, recording: true) == "Paused", "paused")
+        check(LiveTranscriptLogic.placeholder(enabled: true, note: nil, paused: false, recording: true).hasPrefix("Listening"), "listening")
+        check(LiveTranscriptLogic.placeholder(enabled: true, note: nil, paused: false, recording: false).hasPrefix("Start"), "idle")
+    }),
 ]

@@ -26,50 +26,16 @@ struct LiveTranscriptView: View {
     @ObservedObject var recorder: Recorder
     @ObservedObject var live: LiveTranscription
     @AppStorage(LiveTranscriptLogic.enabledKey) private var enabled = true
-    @State private var following = true
-    private let end = "end"
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        let lines = live.transcript.lines
-                        ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
-                            row(line, named: LiveTranscriptLogic.showsSpeaker(lines, at: index))
-                        }
-                        Color.clear.frame(height: 1).id(end)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .overlay { if live.transcript.isEmpty { placeholder } }
-                .overlay(alignment: .bottomTrailing) {
-                    if !following {
-                        Button("Jump to Latest", systemImage: "arrow.down") {
-                            following = true
-                            withAnimation { proxy.scrollTo(end, anchor: .bottom) }
-                        }
-                        .padding(12)
-                    }
-                }
-                .onScrollPhaseChange { _, phase, context in
-                    guard phase == .idle else { return }
-                    let geometry = context.geometry
-                    following = LiveTranscriptLogic.isAtBottom(offset: geometry.contentOffset.y, visibleHeight: geometry.containerSize.height,
-                                                               contentHeight: geometry.contentSize.height)
-                }
-                .onChange(of: live.transcript) {
-                    if following { proxy.scrollTo(end, anchor: .bottom) }
-                }
-            }
+            LiveLines(live: live, placeholder: LiveTranscriptLogic.placeholder(
+                enabled: enabled, note: live.note, paused: recorder.isPaused, recording: recorder.isRecording))
         }
         .frame(minWidth: 340, minHeight: 260)
     }
-
-    private var language: MeetingLanguage { live.language ?? .current }
 
     private var header: some View {
         HStack(spacing: 6) {
@@ -87,20 +53,76 @@ struct LiveTranscriptView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }
+}
 
-    private var placeholder: some View {
-        Text(placeholderText)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(24)
+/// The lines heard so far, following the latest one until scrolled away. `leading` is shown above them, and with it
+/// the placeholder goes below instead of over the empty list.
+struct LiveLines<Leading: View>: View {
+    @ObservedObject var live: LiveTranscription
+    let placeholder: String
+    let inset: EdgeInsets
+    let maxWidth: CGFloat
+    let leading: Leading
+    @State private var following = true
+    private let end = "end"
+
+    init(live: LiveTranscription, placeholder: String, inset: EdgeInsets = LiveLinesInset.window, maxWidth: CGFloat = .infinity,
+         @ViewBuilder leading: () -> Leading) {
+        self.live = live
+        self.placeholder = placeholder
+        self.inset = inset
+        self.maxWidth = maxWidth
+        self.leading = leading()
     }
 
-    private var placeholderText: String {
-        if !enabled { return "Live transcription is off. Turn it on in Settings \u{2192} Meetings." }
-        if let note = live.note { return note }
-        if recorder.isPaused { return "Paused" }
-        return recorder.isRecording ? "Listening\u{2026} Text appears here as people speak." : "Start a recording to see what is said."
+    private var language: MeetingLanguage { live.language ?? .current }
+    private var hasLeading: Bool { Leading.self != EmptyView.self }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    leading
+                    if hasLeading, live.transcript.isEmpty { placeholderText }
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        let lines = live.transcript.lines
+                        ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                            row(line, named: LiveTranscriptLogic.showsSpeaker(lines, at: index))
+                        }
+                        Color.clear.frame(height: 1).id(end)
+                    }
+                }
+                .frame(maxWidth: maxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(inset)
+            }
+            .overlay { if !hasLeading, live.transcript.isEmpty { placeholderText.multilineTextAlignment(.center).padding(24) } }
+            .overlay(alignment: .bottomTrailing) {
+                if !following {
+                    Button("Jump to Latest", systemImage: "arrow.down") {
+                        following = true
+                        withAnimation { proxy.scrollTo(end, anchor: .bottom) }
+                    }
+                    .padding(12)
+                }
+            }
+            .onScrollPhaseChange { oldPhase, phase, context in
+                guard phase == .idle, oldPhase != .idle else { return }
+                let geometry = context.geometry
+                following = LiveTranscriptLogic.isAtBottom(offset: geometry.contentOffset.y, visibleHeight: geometry.containerSize.height,
+                                                           contentHeight: geometry.contentSize.height)
+            }
+            .onAppear { proxy.scrollTo(end, anchor: .bottom) }
+            .onChange(of: live.transcript) {
+                if following { proxy.scrollTo(end, anchor: .bottom) }
+            }
+        }
+    }
+
+    private var placeholderText: some View {
+        Text(placeholder)
+            .font(.callout)
+            .foregroundStyle(.secondary)
     }
 
     private func row(_ line: LiveLine, named: Bool) -> some View {
@@ -122,4 +144,14 @@ struct LiveTranscriptView: View {
             }
         }
     }
+}
+
+extension LiveLines where Leading == EmptyView {
+    init(live: LiveTranscription, placeholder: String, inset: EdgeInsets = LiveLinesInset.window, maxWidth: CGFloat = .infinity) {
+        self.init(live: live, placeholder: placeholder, inset: inset, maxWidth: maxWidth) { EmptyView() }
+    }
+}
+
+enum LiveLinesInset {
+    static let window = EdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
 }

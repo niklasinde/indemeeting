@@ -48,6 +48,14 @@ final class Recorder: ObservableObject {
 
     nonisolated static var folder: URL { AppPaths.recordings }
 
+    #if DEBUG
+    /// For `--render-previews`: looks as if `meeting` were being recorded, without capturing anything.
+    func preview(meeting: URL?) {
+        self.meeting = meeting
+        isRecording = meeting != nil
+    }
+    #endif
+
     /// Records a new part of an existing meeting; Stop appends it to the meeting's file.
     func start(continuing meeting: URL) async {
         guard FileManager.default.fileExists(atPath: meeting.path) else {

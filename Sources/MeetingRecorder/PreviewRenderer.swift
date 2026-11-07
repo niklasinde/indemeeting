@@ -32,7 +32,8 @@ enum PreviewRenderer {
             exit(1)
         }
         try? SampleActivity.write(to: store, now: Date())
-        let (library, activity, window) = makeWindow(store: store, folder: folder)
+        let recorder = Recorder()
+        let (library, activity, window) = makeWindow(store: store, folder: folder, recorder: recorder)
         if let standup = library.recordings.first {
             try? store.saveTranscript(standup.fileName, segments: SampleLibrary.labelledTranscript, language: .swedish,
                                       engine: "DictationTranscriber", speakers: [SpeakerProfile(speaker: .numbered(2), name: "Elin")])
@@ -58,6 +59,7 @@ enum PreviewRenderer {
                     save(window, to: output.appendingPathComponent("\(shot.name)-\(mode).png"))
                 }
             }
+            await renderRecording(to: output, window: window, library: library, recorder: recorder, folder: folder)
             library.selection = library.recordings.first?.id
             library.showVersion(library.versions.first)
             library.comparing = true
@@ -108,17 +110,45 @@ enum PreviewRenderer {
     }
 
     @MainActor
-    private static func makeWindow(store: MeetingStore, folder: URL) -> (RecordingLibrary, ActivityModel, NSWindow) {
+    private static func makeWindow(store: MeetingStore, folder: URL,
+                                   recorder: Recorder? = nil) -> (RecordingLibrary, ActivityModel, NSWindow) {
         let library = RecordingLibrary(store: store, folder: folder)
         library.start()
         let activity = ActivityModel(store: store, tracker: ActivityTracker(store: store))
-        let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
+        let window = MainWindow.makeWindow(MainView(recorder: recorder ?? Recorder(), processor: MeetingProcessor(notifier: nil, store: store),
                                                     library: library, activity: activity, playback: AudioPlayback()))
         window.appearance = NSAppearance(named: .aqua)
         window.setContentSize(NSSize(width: 1040, height: 760))
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
         return (library, activity, window)
+    }
+
+    /// The Transcript tab of a new recording and of a continued meeting, with live lines heard so far.
+    @MainActor
+    private static func renderRecording(to output: URL, window: NSWindow, library: RecordingLibrary, recorder: Recorder,
+                                        folder: URL) async {
+        var heard = LiveTranscript()
+        heard.hear([TranscriptSegment(start: 2, text: "Shall we go through the release plan?")], from: .you, isFinal: true)
+        heard.hear([TranscriptSegment(start: 6, text: "Yes. The build is ready, QA signed off this morning."),
+                    TranscriptSegment(start: 11, text: "We only need the release notes.")], from: .others, isFinal: true)
+        heard.hear([TranscriptSegment(start: 16, text: "I can write those after")], from: .you, isFinal: false)
+        recorder.live.preview(heard, language: .english)
+        let continued = library.recordings.first?.audio
+        for (name, meeting) in [("recording-transcript", RecordingLogic.availableURL(in: folder, for: Date())),
+                                ("continue-transcript", continued)] {
+            recorder.preview(meeting: meeting)
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            library.selection = library.recordings.first { $0.audio == meeting }?.id
+            library.tab = .transcript
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                save(window, to: output.appendingPathComponent("\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+            }
+        }
+        recorder.preview(meeting: nil)
+        recorder.live.preview(LiveTranscript(), language: .english)
     }
 
     @MainActor

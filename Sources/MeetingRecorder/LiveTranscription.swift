@@ -62,6 +62,13 @@ final class LiveTranscription: ObservableObject {
         return transcript.lines.filter(\.isFinal)
     }
 
+    #if DEBUG
+    func preview(_ transcript: LiveTranscript, language: MeetingLanguage) {
+        self.transcript = transcript
+        self.language = language
+    }
+    #endif
+
     private func followSetting() {
         guard mixer != nil, !paused else { return }
         let enabled = LiveTranscriptLogic.isEnabled()

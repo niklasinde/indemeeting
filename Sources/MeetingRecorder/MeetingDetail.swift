@@ -161,12 +161,19 @@ struct RecordingDetail: View {
 
     @ViewBuilder private var content: some View {
         switch library.tab {
-        case .summary where entry.inProgress, .transcript where entry.inProgress:
-            scrolling {
-                Text("The transcript and summary are written after you stop recording. You can take notes meanwhile.")
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 12)
+        case .transcript where recorder.meeting == entry.audio && entry.inProgress:
+            LiveTranscriptTab(recorder: recorder, live: recorder.live) { EmptyView() } fallback: { note in
+                scrolling { recordingNote(note) }
             }
+        case .transcript where recorder.meeting == entry.audio:
+            LiveTranscriptTab(recorder: recorder, live: recorder.live) {
+                transcript
+                Divider().padding(.vertical, 8)
+            } fallback: { _ in
+                scrolling { transcript }
+            }
+        case .summary where entry.inProgress, .transcript where entry.inProgress:
+            scrolling { recordingNote(nil) }
         case .summary:
             scrolling { SummaryView(entry: entry, language: language, processor: processor, library: library) }
         case .notes:
@@ -185,11 +192,19 @@ struct RecordingDetail: View {
                     }
                 }
         case .transcript:
-            scrolling(maxWidth: library.comparing ? 1200 : 680) {
-                TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback,
-                               audioUnavailable: audioUnavailable)
-            }
+            scrolling(maxWidth: library.comparing ? 1200 : 680) { transcript }
         }
+    }
+
+    private var transcript: some View {
+        TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback,
+                       audioUnavailable: audioUnavailable)
+    }
+
+    private func recordingNote(_ note: String?) -> some View {
+        Text(note ?? "The transcript and summary are written after you stop recording. You can take notes meanwhile.")
+            .foregroundStyle(.secondary)
+            .padding(.top, 12)
     }
 
     private func scrolling<Content: View>(maxWidth: CGFloat = 680, @ViewBuilder _ content: () -> Content) -> some View {
@@ -215,6 +230,33 @@ struct RecordingDetail: View {
         guard let row = rows.last(where: { $0.paragraph.start <= target }) ?? rows.first else { return }
         withAnimation { proxy.scrollTo(row.paragraph.start, anchor: .top) }
         library.seekTarget = nil
+    }
+}
+
+/// The live lines of the meeting being recorded, below what `stored` shows; `fallback` while they are off or cannot be heard.
+private struct LiveTranscriptTab<Stored: View, Fallback: View>: View {
+    @ObservedObject var recorder: Recorder
+    @ObservedObject var live: LiveTranscription
+    @ViewBuilder let stored: () -> Stored
+    @ViewBuilder let fallback: (String?) -> Fallback
+    @AppStorage(LiveTranscriptLogic.enabledKey) private var enabled = true
+
+    var body: some View {
+        if LiveTranscriptLogic.showsInline(enabled: enabled, note: live.note) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Live preview \u{00B7} the final transcript is written when you stop")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, RecordingDetail.gutter)
+                    .padding(.bottom, 4)
+                LiveLines(live: live, placeholder: LiveTranscriptLogic.placeholder(
+                              enabled: enabled, note: live.note, paused: recorder.isPaused, recording: recorder.isRecording),
+                          inset: EdgeInsets(top: 8, leading: RecordingDetail.gutter, bottom: 28, trailing: RecordingDetail.gutter),
+                          maxWidth: 680, leading: stored)
+            }
+        } else {
+            fallback(live.note)
+        }
     }
 }
 

@@ -109,6 +109,17 @@ enum LiveTranscriptLogic {
         index == 0 || lines[index - 1].speaker != lines[index].speaker
     }
 
+    /// What the live view says while no line has been heard.
+    static func placeholder(enabled: Bool, note: String?, paused: Bool, recording: Bool) -> String {
+        if !enabled { return "Live transcription is off. Turn it on in Settings \u{2192} Meetings." }
+        if let note { return note }
+        if paused { return "Paused" }
+        return recording ? "Listening\u{2026} Text appears here as people speak." : "Start a recording to see what is said."
+    }
+
+    /// The meeting's Transcript tab shows the live lines while it records, unless they are off or cannot be heard.
+    static func showsInline(enabled: Bool, note: String?) -> Bool { enabled && note == nil }
+
     static func isAtBottom(offset: Double, visibleHeight: Double, contentHeight: Double) -> Bool {
         offset + visibleHeight >= contentHeight - bottomSlack
     }
