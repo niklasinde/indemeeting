@@ -23,13 +23,15 @@ import whisper
 
 /// Transcribes with a downloaded Whisper model through whisper.cpp, on the GPU with Metal.
 final class WhisperEngine: SpeechEngine, @unchecked Sendable {
-    static let sampleRate: Double = 16_000
+    static let sampleRate = WhisperLogic.sampleRate
 
     let id: String
     private let options: WhisperOptions
     private let context: OpaquePointer
     private let threads: Int32
     private let queue: DispatchQueue
+    private let cancelLock = NSLock()
+    private var cancelled = false
 
     convenience init(model: WhisperModel, options: WhisperOptions) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
@@ -68,14 +70,24 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     deinit { whisper_free(context) }
 
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
-        let samples = try Self.samples(of: audio)
-        let chunks = try await withCheckedThrowingContinuation { continuation in
-            queue.async { continuation.resume(with: Result { try self.chunks(of: samples, progress: progress) }) }
-        }
-        let segments = chunks.flatMap(\.segments)
+        let segments = try await transcribe(samples: try Self.samples(of: audio), progress: progress)
         guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
         return Transcript(segments: segments, engine: id)
     }
+
+    /// 16 kHz samples, after whatever was queued before them on the engine's one queue.
+    func transcribe(samples: [Float], progress: @escaping TranscriptionProgress = { _ in }) async throws -> [TranscriptSegment] {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try self.chunks(of: samples, progress: progress).flatMap(\.segments) }) }
+        }
+    }
+
+    /// Stops the transcription running now and every later one, for an engine about to be let go.
+    func cancel() {
+        cancelLock.withLock { cancelled = true }
+    }
+
+    private var isCancelled: Bool { cancelLock.withLock { cancelled } }
 
     /// The samples cut at pauses, each stretch transcribed in the language detected for it.
     func transcribeChunks(_ samples: [Float]) throws -> [WhisperChunk] {
@@ -125,6 +137,10 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
             box.map { Unmanaged<ProgressBox>.fromOpaque($0).takeUnretainedValue().report(Double(percent) / 100) }
         }
         params.progress_callback_user_data = Unmanaged.passUnretained(box).toOpaque()
+        params.abort_callback = { engine in
+            engine.map { Unmanaged<WhisperEngine>.fromOpaque($0).takeUnretainedValue().isCancelled } ?? false
+        }
+        params.abort_callback_user_data = Unmanaged.passUnretained(self).toOpaque()
         let status = withExtendedLifetime(box) {
             language.withCString { language in
                 (options.prompt ?? "").withCString { prompt in
@@ -134,6 +150,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
                 }
             }
         }
+        guard !isCancelled else { throw CancellationError() }
         guard status == 0 else { throw NSError(domain: "whisper", code: Int(status)) }
         let pieces = (0..<whisper_full_n_segments(context))
             .filter { Double(whisper_full_get_segment_no_speech_prob(context, $0)) <= ProcessingLogic.noSpeechLimit }
@@ -146,8 +163,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     /// The audio as 16 kHz mono floats, the input whisper.cpp expects.
     static func samples(of audio: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: audio)
-        let normalizer = PCMNormalizer(format: AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate,
-                                                             channels: 1, interleaved: false)!)
+        let normalizer = PCMNormalizer(format: PCMNormalizer.whisperFormat)
         guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 1 << 16) else { return [] }
         var samples: [Float] = []
         samples.reserveCapacity(Int(Double(file.length) * sampleRate / file.processingFormat.sampleRate))
@@ -165,5 +181,11 @@ final class WhisperEngine: SpeechEngine {
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
         throw WhisperModelError.unavailable
     }
+
+    func transcribe(samples: [Float], progress: @escaping TranscriptionProgress = { _ in }) async throws -> [TranscriptSegment] {
+        throw WhisperModelError.unavailable
+    }
+
+    func cancel() {}
 }
 #endif

@@ -76,12 +76,16 @@ struct TranscriptSegment: Equatable {
     let start: TimeInterval
     let text: String
     var speaker: Speaker? = nil
+    /// Set in a live transcript Whisper wrote, on the parts Apple's speech model wrote instead.
+    var engine: String? = nil
 
     func line(_ language: MeetingLanguage, names: SpeakerNames = [:]) -> String {
         "\(ProcessingLogic.timestamp(start)) " + (speaker.map { "\(names.name(of: $0, in: language)): " } ?? "") + text
     }
 
-    func with(speaker: Speaker?) -> TranscriptSegment { TranscriptSegment(start: start, text: text, speaker: speaker) }
+    func with(speaker: Speaker?) -> TranscriptSegment { TranscriptSegment(start: start, text: text, speaker: speaker, engine: engine) }
+
+    func with(engine: String?) -> TranscriptSegment { TranscriptSegment(start: start, text: text, speaker: speaker, engine: engine) }
 }
 
 struct MeetingSummary: Codable, Equatable {

@@ -264,6 +264,7 @@ struct SettingsView: View {
     @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ollama
     @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
     @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
+    @AppStorage(LiveModel.storageKey) private var liveModel = LiveModel.best
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
     /// Longer content scrolls, so the window fits a laptop screen.
@@ -349,11 +350,20 @@ struct SettingsView: View {
                         .labelsHidden()
                 }
                 Divider().padding(.leading, 14)
-                row("Live transcription", detail: "A preview while recording, with Apple\u{2019}s speech model; not saved") {
+                row("Live transcription", detail: "A preview while recording, kept as an earlier version of the transcript") {
                     Toggle("Live transcription", isOn: $liveTranscription)
                         .toggleStyle(.switch)
                         .controlSize(.small)
                         .labelsHidden()
+                }
+                Divider().padding(.leading, 14)
+                row("Live model", detail: "Best replaces Apple\u{2019}s text with Whisper\u{2019}s as it goes; Light is cooler") {
+                    Picker("Live model", selection: $liveModel) {
+                        ForEach(LiveModel.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .disabled(!liveTranscription)
                 }
             }
             section("Summary", footer: "Ministral runs on this Mac through Ollama. When the chosen engine is missing or "

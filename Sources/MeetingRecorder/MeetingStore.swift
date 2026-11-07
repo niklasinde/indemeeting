@@ -592,15 +592,16 @@ final class MeetingStore: @unchecked Sendable {
     func saveLiveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage?, at date: Date) throws {
         try write {
             let id = try ensure(audioFile)
-            let existingID = try db.query("SELECT id FROM transcript_versions WHERE meeting_id = ? AND engine = ? ORDER BY id DESC LIMIT 1",
-                                          [id, TranscriptionEngine.liveValue]) { $0.int64(0) }.first
+            let existingID = try db.query("""
+                SELECT id FROM transcript_versions WHERE meeting_id = ? AND (engine = ? OR engine LIKE ?) ORDER BY id DESC LIMIT 1
+                """, [id, TranscriptionEngine.liveValue, TranscriptionEngine.liveWhisperPrefix + "%"]) { $0.int64(0) }.first
             let existing = try existingID.flatMap { try storedVersion($0)?.snapshot }
             guard let snapshot = TranscriptVersionLogic.liveSnapshot(segments, appendingTo: existing, language: language, at: date) else {
                 return
             }
             if let existingID, existing != nil {
-                try db.run("UPDATE transcript_versions SET content = ? WHERE id = ?",
-                           [try TranscriptVersionLogic.encode(snapshot), existingID])
+                try db.run("UPDATE transcript_versions SET content = ?, engine = ? WHERE id = ?",
+                           [try TranscriptVersionLogic.encode(snapshot), snapshot.engine, existingID])
             } else {
                 try insertVersion(snapshot, meetingID: id)
             }

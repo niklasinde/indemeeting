@@ -193,6 +193,50 @@ let transcriptVersionTests: [(name: String, run: () throws -> Void)] = [
         }
     }),
 
+    ("a live transcript Whisper wrote is stored and labelled as Whisper's, with Apple's parts marked", {
+        let utc = TimeZone(identifier: "UTC")!
+        let engine = TranscriptionEngine.liveValue(model: "ggml-large-v3")
+        check(engine == "whisper-live:ggml-large-v3" && TranscriptionEngine.liveValue(model: nil) == "apple-live", "stored \(engine)")
+        check(TranscriptionEngine.displayName(stored: engine) == "Live \u{00B7} Whisper Large v3", "name")
+        check(TranscriptionEngine.isLive(engine) && TranscriptionEngine.isLive("apple-live") && !TranscriptionEngine.isLive("ggml-large-v3"),
+              "live engines")
+        let label = TranscriptVersionLogic.label(TranscriptVersionInfo(id: 1, transcribedAt: firstDate, engine: engine),
+                                                 locale: Locale(identifier: "en_GB"), timeZone: utc)
+        check(label.hasPrefix("Live \u{00B7} Whisper Large v3 \u{00B7} ") && label.hasSuffix("14:02"), "label \(label)")
+
+        let lines = [LiveLine(speaker: .others, start: 2, text: "Releasen är på tisdag.", isFinal: true, model: "ggml-large-v3"),
+                     LiveLine(speaker: .you, start: 70, text: "Bra.", isFinal: true)]
+        let segments = TranscriptVersionLogic.liveSegments(lines, offset: 0)
+        check(segments.map(\.engine) == ["ggml-large-v3", nil], "each line carries its model \(segments)")
+        let snapshot = TranscriptVersionLogic.liveSnapshot(segments, appendingTo: nil, language: .swedish, at: firstDate)
+        check(snapshot?.engine == engine, "whisper-live \(String(describing: snapshot?.engine))")
+        check(snapshot?.segments.map(\.engine) == [nil, "apple-live"], "Apple's part is marked \(String(describing: snapshot?.segments))")
+
+        let apple = TranscriptVersionLogic.liveSnapshot([TranscriptSegment(start: 1, text: "Hej.", speaker: .you)], appendingTo: nil,
+                                                        language: .swedish, at: firstDate)
+        let continued = TranscriptVersionLogic.liveSnapshot(segments, appendingTo: apple, language: .swedish, at: firstDate)
+        check(continued?.engine == engine, "a continued recording Whisper wrote makes the version Whisper's")
+        check(continued?.segments.map(\.engine) == ["apple-live", nil, "apple-live"], "\(String(describing: continued?.segments))")
+
+        let paragraphs = LibraryLogic.paragraphs([TranscriptSegment(start: 1, text: "A.", speaker: .you),
+                                                  TranscriptSegment(start: 3, text: "B.", speaker: .you, engine: "apple-live")])
+        check(paragraphs.count == 2 && paragraphs[1].engine == "apple-live", "a paragraph keeps to one engine \(paragraphs)")
+    }),
+
+    ("a live version Whisper wrote is found again when the recording is continued", {
+        try withVersionStore { store, _ in
+            let first = [TranscriptSegment(start: 1, text: "Releasen är på tisdag.", speaker: .others, engine: "ggml-large-v3")]
+            try store.saveLiveTranscript(name, segments: first, language: .swedish, at: firstDate)
+            let later = [TranscriptSegment(start: 120, text: "Och fredag.", speaker: .you)]
+            try store.saveLiveTranscript(name, segments: later, language: .swedish, at: firstDate.addingTimeInterval(900))
+            let versions = try store.versions(of: name)
+            check(versions.map(\.engine) == ["whisper-live:ggml-large-v3"], "one live version \(versions)")
+            let shown = try store.version(versions[0].id)
+            check(shown?.segments.map(\.text) == ["Releasen är på tisdag.", "Och fredag."], "both parts")
+            check(shown?.segments.map(\.engine) == [nil, "apple-live"], "Apple's part stays marked")
+        }
+    }),
+
     ("two transcripts line up side by side by time", {
         func segment(_ start: TimeInterval, _ text: String) -> TranscriptSegment { TranscriptSegment(start: start, text: text) }
         let rows = TranscriptVersionLogic.sideBySide(version: [segment(0, "a"), segment(10, "b"), segment(12, "c"), segment(50, "d")],

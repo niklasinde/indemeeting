@@ -2,6 +2,8 @@ import AVFoundation
 
 final class PCMNormalizer {
     static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
+    static let whisperFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: WhisperLogic.sampleRate, channels: 1,
+                                             interleaved: false)!
 
     private let format: AVAudioFormat
     private var converter: AVAudioConverter?

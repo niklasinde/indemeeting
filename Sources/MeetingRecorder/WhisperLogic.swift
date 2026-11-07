@@ -113,6 +113,8 @@ enum TranscriptionEngine: Hashable {
     static let appleValue = "apple"
     /// Stored with the transcript Apple's speech model wrote live while recording.
     static let liveValue = "apple-live"
+    /// Stored, followed by the model's id, with a live transcript Whisper wrote at least part of.
+    static let liveWhisperPrefix = "whisper-live:"
     static let storageKey = "transcriptionEngine"
     static let beamSearchKey = "whisperBeamSearch"
     static let quietKey = "whisperQuiet"
@@ -135,8 +137,20 @@ enum TranscriptionEngine: Hashable {
     static func displayName(stored engine: String) -> String {
         if let model = WhisperModel.with(id: engine) { return model.displayName }
         if engine == liveValue { return "Live \u{00B7} Apple Speech" }
+        if let model = liveModel(engine) { return "Live \u{00B7} " + displayName(stored: model) }
         return ["SpeechTranscriber", "DictationTranscriber"].contains(engine) ? "Apple Speech" : engine
     }
+
+    /// What a live transcript is stored as: `whisper-live:<model>` once Whisper wrote any of it, else `apple-live`.
+    static func liveValue(model: String?) -> String { model.map { liveWhisperPrefix + $0 } ?? liveValue }
+
+    /// The Whisper model of a live transcript's stored engine.
+    static func liveModel(_ engine: String?) -> String? {
+        guard let engine, engine.hasPrefix(liveWhisperPrefix) else { return nil }
+        return String(engine.dropFirst(liveWhisperPrefix.count))
+    }
+
+    static func isLive(_ engine: String?) -> Bool { engine == liveValue || liveModel(engine) != nil }
 
     /// The engines Settings offers: Apple, then each downloaded model, best first.
     static func choices(installed: [WhisperModel]) -> [TranscriptionEngine] { [.apple] + installed.map(Self.whisper) }
@@ -223,6 +237,8 @@ enum SpeechChunks {
 }
 
 enum WhisperLogic {
+    /// whisper.cpp takes 16 kHz mono floats.
+    static let sampleRate: Double = 16_000
     static let domainTerms = ["Quiddly", "finq", "QDLY", "Jira", "PR"]
     /// Whisper reads at most 224 prompt tokens; this many characters stays under that in Swedish and English.
     static let promptLimit = 550

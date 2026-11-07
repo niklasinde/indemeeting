@@ -34,10 +34,15 @@ enum Transcriber {
         switch TranscriptionEngine.current() {
         case .apple: return AppleSpeechEngine(language: language)
         case .whisper(let model):
-            let options = WhisperOptions(languages: (languages.isEmpty ? [language] : languages).map(\.code), fallback: language.code,
-                                         prompt: vocabulary, beamSearch: TranscriptionEngine.beamSearch())
-            return try WhisperEngine(model: model, options: options)
+            return try WhisperEngine(model: model, options: whisperOptions(language: language, among: languages, vocabulary: vocabulary,
+                                                                           beamSearch: TranscriptionEngine.beamSearch()))
         }
+    }
+
+    static func whisperOptions(language: MeetingLanguage, among languages: [MeetingLanguage], vocabulary: String?,
+                               beamSearch: Bool) -> WhisperOptions {
+        WhisperOptions(languages: (languages.isEmpty ? [language] : languages).map(\.code), fallback: language.code,
+                       prompt: vocabulary, beamSearch: beamSearch)
     }
 
     /// A meeting with stems is transcribed per stem, so every segment has a speaker; others from the mix.

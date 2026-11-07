@@ -36,28 +36,35 @@ enum TranscriptVersionLogic {
 
     /// "5 Nov 14:02 · Whisper Large v3 Turbo", or "Live · Apple Speech · 5 Nov 14:02" for the live transcript.
     static func label(_ version: TranscriptVersionInfo, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
-        guard let engine = version.engine, engine == TranscriptionEngine.liveValue else {
+        guard let engine = version.engine, TranscriptionEngine.isLive(engine) else {
             return LibraryLogic.transcriptionLabel(at: version.transcribedAt, engine: version.engine, locale: locale, timeZone: timeZone)
         }
         return TranscriptionEngine.displayName(stored: engine) + " \u{00B7} "
             + LibraryLogic.transcriptionLabel(at: version.transcribedAt, engine: nil, locale: locale, timeZone: timeZone)
     }
 
-    /// The finished live lines as transcript segments, `offset` seconds into the meeting's audio.
+    /// The finished live lines as transcript segments, `offset` seconds into the meeting's audio, each Whisper line
+    /// carrying its model.
     static func liveSegments(_ lines: [LiveLine], offset: TimeInterval) -> [TranscriptSegment] {
         lines.filter { $0.isFinal && !$0.text.isEmpty }
-            .map { TranscriptSegment(start: $0.start + offset, text: $0.text, speaker: $0.speaker) }
+            .map { TranscriptSegment(start: $0.start + offset, text: $0.text, speaker: $0.speaker, engine: $0.model) }
     }
 
     /// The live transcript to keep as a version: a new one, or `existing` with a continued recording's lines added.
-    /// Nil when nothing was heard.
+    /// Once Whisper wrote any of it, it is stored as Whisper's, with Apple's parts marked. Nil when nothing was heard.
     static func liveSnapshot(_ segments: [TranscriptSegment], appendingTo existing: TranscriptSnapshot?,
                              language: MeetingLanguage?, at date: Date) -> TranscriptSnapshot? {
         guard !segments.isEmpty else { return nil }
+        let model = TranscriptionEngine.liveModel(existing?.engine) ?? segments.lazy.compactMap(\.engine).first
+        let apple = model == nil ? nil : TranscriptionEngine.liveValue
+        let added = segments.map { $0.with(engine: $0.engine == nil ? apple : nil) }
         guard var snapshot = existing else {
-            return TranscriptSnapshot(segments: segments, language: language, engine: TranscriptionEngine.liveValue, transcribedAt: date)
+            return TranscriptSnapshot(segments: added, language: language, engine: TranscriptionEngine.liveValue(model: model),
+                                      transcribedAt: date)
         }
-        snapshot.segments = (snapshot.segments + segments).sorted { $0.start < $1.start }
+        if snapshot.engine == TranscriptionEngine.liveValue { snapshot.segments = snapshot.segments.map { $0.with(engine: apple) } }
+        snapshot.engine = TranscriptionEngine.liveValue(model: model)
+        snapshot.segments = (snapshot.segments + added).sorted { $0.start < $1.start }
         return snapshot
     }
 
@@ -109,7 +116,7 @@ enum TranscriptVersionLogic {
     static func encode(_ snapshot: TranscriptSnapshot) throws -> Data {
         let summary = snapshot.summary
         return try JSONEncoder().encode(Body(
-            segments: snapshot.segments.map { Body.Segment(start: $0.start, text: $0.text, speaker: $0.speaker?.rawValue) },
+            segments: snapshot.segments.map { Body.Segment(start: $0.start, text: $0.text, speaker: $0.speaker?.rawValue, engine: $0.engine) },
             speakers: snapshot.speakers.map { Body.Voice(speaker: $0.speaker.rawValue, name: $0.name, embedding: $0.embedding) },
             title: summary.title, unavailable: summary.unavailable, summaryEngine: summary.engine,
             actionItems: summary.actionItems.map { Body.Item(task: $0.task, owner: $0.owner, done: $0.done) },
@@ -127,7 +134,9 @@ enum TranscriptVersionLogic {
             sections: body.topics.map { SummarySection(heading: $0.title, lines: $0.points.map(MarkdownBlock.bullet)) },
             unavailable: body.unavailable, engine: body.summaryEngine)
         return TranscriptSnapshot(
-            segments: body.segments.map { TranscriptSegment(start: $0.start, text: $0.text, speaker: $0.speaker.flatMap(Speaker.init(rawValue:))) },
+            segments: body.segments.map {
+                TranscriptSegment(start: $0.start, text: $0.text, speaker: $0.speaker.flatMap(Speaker.init(rawValue:)), engine: $0.engine)
+            },
             speakers: body.speakers.compactMap { voice in
                 Speaker(rawValue: voice.speaker).map { SpeakerProfile(speaker: $0, name: voice.name, embedding: voice.embedding) }
             },
@@ -135,7 +144,7 @@ enum TranscriptVersionLogic {
     }
 
     private struct Body: Codable {
-        struct Segment: Codable { let start: Double; let text: String; let speaker: String? }
+        struct Segment: Codable { let start: Double; let text: String; let speaker: String?; var engine: String? }
         struct Voice: Codable { let speaker: String; let name: String?; let embedding: [Float]? }
         struct Item: Codable { let task: String; let owner: String?; let done: Bool }
         struct Topic: Codable { let title: String; let points: [String] }

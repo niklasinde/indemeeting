@@ -480,6 +480,7 @@ struct TranscriptView: View {
                                 }
                             }
                             TimestampButton(start: row.paragraph.start, playback: playback, audioUnavailable: audioUnavailable)
+                            PartEngine(engine: row.paragraph.engine)
                         }
                         .font(.caption.monospacedDigit())
                         Text(row.paragraph.text)
@@ -504,6 +505,15 @@ private struct TimestampButton: View {
             .foregroundStyle(audioUnavailable == nil ? Color.accentColor : .secondary)
             .disabled(audioUnavailable != nil)
             .help(audioUnavailable ?? "Play from here")
+    }
+}
+
+/// Names the engine of a part of a live transcript that another engine wrote than the rest.
+private struct PartEngine: View {
+    let engine: String?
+
+    var body: some View {
+        if let engine { Text(TranscriptionEngine.displayName(stored: engine)).foregroundStyle(.tertiary) }
     }
 }
 
@@ -541,6 +551,7 @@ private struct ComparedTranscript: View {
                         Text(names.name(of: speaker, in: .english)).foregroundStyle(.secondary)
                     }
                     TimestampButton(start: paragraph.start, playback: playback, audioUnavailable: audioUnavailable)
+                    PartEngine(engine: paragraph.engine)
                 }
                 .font(.caption.monospacedDigit())
                 Text(paragraph.text)

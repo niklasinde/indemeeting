@@ -137,7 +137,7 @@ struct LiveLines<Leading: View>: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.tertiary)
                 Text(line.text)
-                    .foregroundStyle(line.isFinal ? .primary : .secondary)
+                    .foregroundStyle(line.isFinal && !line.isPending ? .primary : .secondary)
                     .italic(!line.isFinal)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)

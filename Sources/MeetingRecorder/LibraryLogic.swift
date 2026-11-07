@@ -295,9 +295,9 @@ enum LibraryLogic {
     /// Joins sentences of the same speaker into paragraphs that each start a new `span` of seconds.
     static func paragraphs(_ segments: [TranscriptSegment], span: TimeInterval = 30) -> [TranscriptSegment] {
         segments.reduce(into: []) { result, segment in
-            if let last = result.last, last.speaker == segment.speaker, segment.start - last.start < span {
+            if let last = result.last, last.speaker == segment.speaker, last.engine == segment.engine, segment.start - last.start < span {
                 result[result.count - 1] = TranscriptSegment(start: last.start, text: last.text + " " + segment.text,
-                                                             speaker: last.speaker)
+                                                             speaker: last.speaker, engine: last.engine)
             } else {
                 result.append(segment)
             }
