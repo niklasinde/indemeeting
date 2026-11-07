@@ -1,4 +1,5 @@
 import AppKit
+import os
 import SwiftUI
 
 @MainActor
@@ -8,7 +9,8 @@ final class Recorder: ObservableObject {
     @Published private(set) var elapsed: TimeInterval = 0
     @Published private(set) var errorMessage: String?
     @Published private(set) var permissionDenied = false
-    @Published private(set) var notice: String?
+    @Published private var systemAudioNotice: String?
+    @Published private(set) var microphoneWarning: String?
     /// The meeting being recorded or continued, until it is saved.
     @Published private(set) var meeting: URL?
     let live = LiveTranscription()
@@ -16,10 +18,18 @@ final class Recorder: ObservableObject {
     private let microphone = MicrophoneCapture()
     private let system = SystemAudioCapture()
     private var mixer: AudioMixer?
-    private var timer: Timer?
+    private var ticker: Task<Void, Never>?
     private var clock: ElapsedClock?
     private var lastLevels: [LevelMeter]?
     private var continuing = false
+    private var triedVoiceProcessing = false
+
+    private static let log = Logger(subsystem: "MeetingRecorder", category: "recording")
+
+    var notice: String? {
+        let notices = [microphoneWarning, systemAudioNotice].compactMap { $0 }
+        return notices.isEmpty ? nil : notices.joined(separator: "\n")
+    }
 
     var elapsedText: String {
         RecordingLogic.elapsedText(elapsed)
@@ -53,7 +63,9 @@ final class Recorder: ObservableObject {
     private func start(meeting: URL, recordingTo url: URL) async {
         guard !isBusy else { return }
         errorMessage = nil
-        notice = nil
+        systemAudioNotice = nil
+        microphoneWarning = nil
+        triedVoiceProcessing = false
         permissionDenied = false
         do {
             try await Permissions.ensureMicrophone()
@@ -91,7 +103,7 @@ final class Recorder: ObservableObject {
 
     private func startSystemAudio(into mixer: AudioMixer) {
         let active = RecordingLogic.attemptsSystemAudio(Permissions.systemAudio) && (try? system.start(into: mixer)) != nil
-        notice = RecordingLogic.notice(systemAudioActive: active)
+        systemAudioNotice = RecordingLogic.notice(systemAudioActive: active)
     }
 
     /// Finalizes the recording; a continued meeting gets the new part appended. Returns the meeting's file.
@@ -156,8 +168,9 @@ final class Recorder: ObservableObject {
     }
 
     private func teardown() -> URL? {
-        timer?.invalidate()
-        timer = nil
+        ticker?.cancel()
+        ticker = nil
+        microphoneWarning = nil
         clock = nil
         live.stop()
         releaseAudioDevices()
@@ -171,12 +184,42 @@ final class Recorder: ObservableObject {
     private func beginTimer() {
         elapsed = 0
         clock = ElapsedClock(started: Date())
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.tick() }
+        ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard let self else { return }
+                tick()
+            }
         }
     }
 
     private func tick() {
         if let clock { elapsed = clock.elapsed(at: Date()) }
+        watchMicrophone()
+    }
+
+    private func watchMicrophone() {
+        guard isRecording, !isPaused, let mixer else { return }
+        let silent = mixer.silence(of: .microphone)
+        switch MicrophoneSilence.action(silentFor: silent, triedVoiceProcessing: triedVoiceProcessing,
+                                        warned: microphoneWarning != nil) {
+        case .none:
+            break
+        case .useVoiceProcessing:
+            triedVoiceProcessing = true
+            Self.log.error("Microphone gave digital silence for \(Int(silent)) s; capturing it with voice processing")
+            do {
+                try microphone.start(into: mixer, voiceProcessing: true)
+            } catch {
+                Self.log.error("Voice processing failed: \(error.localizedDescription, privacy: .public)")
+                try? microphone.start(into: mixer)
+            }
+        case .warn:
+            Self.log.error("Microphone is digital silence for \(Int(silent)) s, input \(self.microphone.isRunning ? "running" : "stopped", privacy: .public)")
+            microphoneWarning = MicrophoneSilence.warning
+        case .clear:
+            Self.log.notice("Microphone has sound again")
+            microphoneWarning = nil
+        }
     }
 }

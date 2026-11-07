@@ -6,12 +6,22 @@ final class MicrophoneCapture {
     private var engine: AVAudioEngine?
     private let normalizer = PCMNormalizer()
 
-    func start(into mixer: AudioMixer) throws {
+    var isRunning: Bool { engine?.isRunning ?? false }
+
+    /// With `voiceProcessing` the input is echo-cancelled like a call app's, with other audio not ducked. It is the
+    /// only way to hear the microphone while another app has voice processing on; it also silences plain input
+    /// clients, so it is not the default.
+    func start(into mixer: AudioMixer, voiceProcessing: Bool = false) throws {
         stop()
         let engine = AVAudioEngine()
         let input = engine.inputNode
+        if voiceProcessing {
+            try input.setVoiceProcessingEnabled(true)
+            input.voiceProcessingOtherAudioDuckingConfiguration = .init(enableAdvancedDucking: false, duckingLevel: .min)
+        }
         input.installTap(onBus: 0, bufferSize: 4096, format: input.outputFormat(forBus: 0)) { [normalizer] buffer, _ in
-            mixer.append(normalizer.samples(from: buffer), from: .microphone)
+            let voice = voiceProcessing ? Self.firstChannel(of: buffer) : buffer
+            mixer.append(normalizer.samples(from: voice), from: .microphone)
         }
         do {
             try engine.start()
@@ -28,6 +38,18 @@ final class MicrophoneCapture {
         engine.stop()
         engine.reset()
         self.engine = nil
+    }
+
+    /// Voice processing puts the processed voice on the first of its channels.
+    private static func firstChannel(of buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer {
+        guard buffer.format.channelCount > 1, let data = buffer.floatChannelData,
+              let format = AVAudioFormat(standardFormatWithSampleRate: buffer.format.sampleRate, channels: 1),
+              let mono = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: buffer.frameLength),
+              let out = mono.floatChannelData?[0]
+        else { return buffer }
+        out.update(from: data[0], count: Int(buffer.frameLength))
+        mono.frameLength = buffer.frameLength
+        return mono
     }
 }
 

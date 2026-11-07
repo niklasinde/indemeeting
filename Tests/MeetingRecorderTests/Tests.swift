@@ -1085,6 +1085,45 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         check(rms(Array(mic.suffix(14_400))) < 0.01 && rms(Array(system.suffix(14_400))) > 0.1, "the rest is theirs")
     }),
 
+    ("the microphone comes out in its stem and the mix with a live listener attached", {
+        let url = tempURL()
+        let stems = AudioSource.allCases.map { RecordingLogic.stemURL(for: url, source: $0) }
+        defer { ([url] + stems).forEach { try? FileManager.default.removeItem(at: $0) } }
+        let mixer = try AudioMixer(url: url, stems: true)
+        nonisolated(unsafe) var heard = AudioSource.allCases.map { _ in [Float]() }
+        mixer.listen { source, samples in heard[source.rawValue] += samples }
+        feed(mixer, .microphone, sine(440, seconds: 0.5))
+        feed(mixer, .system, sine(660, seconds: 0.5, amplitude: 0.001))
+        mixer.finish()
+        check(rms(heard[0]) > 0.1, "the listener hears the microphone, rms \(rms(heard[0]))")
+        check(rms(try decode(stems[0])) > 0.1, "the mic stem has the microphone")
+        check(rms(try decode(url)) > 0.1, "the mix has the microphone")
+    }),
+
+    ("the mixer tells how long a source has been digital silence", {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let mixer = try AudioMixer(url: url)
+        let start = Date()
+        feed(mixer, .microphone, [Float](repeating: 0, count: 48_000))
+        check(mixer.silence(of: .microphone, now: start.addingTimeInterval(5)) >= 4.9, "zeros are silence")
+        feed(mixer, .microphone, sine(440, seconds: 0.1, amplitude: 0.0001))
+        check(mixer.silence(of: .microphone) < 1, "faint sound is not")
+        check(mixer.silence(of: .system, now: start.addingTimeInterval(5)) >= 4.9, "no audio at all is silence")
+        mixer.finish()
+    }),
+
+    ("a silent microphone switches to voice processing first, then warns", {
+        typealias S = MicrophoneSilence
+        check(S.action(silentFor: 1, triedVoiceProcessing: false, warned: false) == .none, "sound")
+        check(S.action(silentFor: 4, triedVoiceProcessing: false, warned: false) == .useVoiceProcessing, "switch")
+        check(S.action(silentFor: 12, triedVoiceProcessing: false, warned: false) == .useVoiceProcessing, "switch before warning")
+        check(S.action(silentFor: 5, triedVoiceProcessing: true, warned: false) == .none, "give voice processing time")
+        check(S.action(silentFor: 10, triedVoiceProcessing: true, warned: false) == .warn, "warn")
+        check(S.action(silentFor: 30, triedVoiceProcessing: true, warned: true) == .none, "warn once")
+        check(S.action(silentFor: 0, triedVoiceProcessing: true, warned: true) == .clear, "sound again")
+    }),
+
     ("a part's stems are appended to the meeting's, or dropped when they would not line up", {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("stems-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

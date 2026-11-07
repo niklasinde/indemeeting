@@ -101,6 +101,7 @@ final class AudioMixer {
     private var pending = AudioSource.allCases.map { _ in [Float]() }
     private var lastSeen = AudioSource.allCases.map { _ in Date.distantPast }
     private var meters = AudioSource.allCases.map { _ in LevelMeter() }
+    private var signal = AudioSource.allCases.map { _ in Date() }
     private var listener: ((AudioSource, [Float]) -> Void)?
 
     init(url: URL, stems: Bool = false) throws {
@@ -121,6 +122,7 @@ final class AudioMixer {
             self.pending[source.rawValue].append(contentsOf: samples)
             self.lastSeen[source.rawValue] = Date()
             self.meters[source.rawValue].add(samples)
+            if samples.contains(where: { $0 != 0 }) { self.signal[source.rawValue] = Date() }
             var chunk = LevelMeter()
             chunk.add(samples)
             if chunk.rms >= LevelMeter.soundThreshold { self.heard = Date() }
@@ -139,6 +141,7 @@ final class AudioMixer {
         queue.sync {
             paused = false
             heard = Date()
+            signal = signal.map { _ in Date() }
         }
     }
 
@@ -158,6 +161,11 @@ final class AudioMixer {
     var lastSound: Date { queue.sync { heard } }
 
     func level(of source: AudioSource) -> LevelMeter { queue.sync { meters[source.rawValue] } }
+
+    /// How long `source` has given nothing but digital silence (exact zeros, or no audio at all) while recording.
+    func silence(of source: AudioSource, now: Date = Date()) -> TimeInterval {
+        queue.sync { now.timeIntervalSince(signal[source.rawValue]) }
+    }
 
     /// Writes what is pending, closes the files and moves them to their final names.
     /// Returns where the recording ended up (the partial name if the move failed).

@@ -154,3 +154,25 @@ struct ElapsedClock: Equatable {
         self.pausedAt = nil
     }
 }
+
+/// What to do about a microphone that gives digital silence. macOS hands plain input clients exact zeros while another
+/// app (FaceTime, Chrome) captures the microphone with voice processing, so the recorder first switches to voice
+/// processing itself, and warns if the microphone is still silent after that.
+enum MicrophoneSilence {
+    static let switchAfter: TimeInterval = 3
+    static let warnAfter: TimeInterval = 10
+    static let warning = "Microphone is silent \u{2014} your voice is not being recorded"
+
+    enum Action: Equatable {
+        case none
+        case useVoiceProcessing
+        case warn
+        case clear
+    }
+
+    static func action(silentFor: TimeInterval, triedVoiceProcessing: Bool, warned: Bool) -> Action {
+        if silentFor < switchAfter { return warned ? .clear : .none }
+        if !triedVoiceProcessing { return .useVoiceProcessing }
+        return silentFor >= warnAfter && !warned ? .warn : .none
+    }
+}
