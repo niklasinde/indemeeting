@@ -111,6 +111,8 @@ enum TranscriptionEngine: Hashable {
     case whisper(WhisperModel)
 
     static let appleValue = "apple"
+    /// Stored with the transcript Apple's speech model wrote live while recording.
+    static let liveValue = "apple-live"
     static let storageKey = "transcriptionEngine"
     static let beamSearchKey = "whisperBeamSearch"
     static let quietKey = "whisperQuiet"
@@ -132,6 +134,7 @@ enum TranscriptionEngine: Hashable {
     /// The name of the engine stored with a transcript: a Whisper model's id, or Apple's speech module.
     static func displayName(stored engine: String) -> String {
         if let model = WhisperModel.with(id: engine) { return model.displayName }
+        if engine == liveValue { return "Live \u{00B7} Apple Speech" }
         return ["SpeechTranscriber", "DictationTranscriber"].contains(engine) ? "Apple Speech" : engine
     }
 

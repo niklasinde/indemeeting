@@ -14,6 +14,8 @@ final class Recorder: ObservableObject {
     /// The meeting being recorded or continued, until it is saved.
     @Published private(set) var meeting: URL?
     let live = LiveTranscription()
+    /// What the last recording heard live, timed in the meeting's audio.
+    private(set) var liveSegments: [TranscriptSegment] = []
 
     private let microphone = MicrophoneCapture()
     private let system = SystemAudioCapture()
@@ -113,8 +115,12 @@ final class Recorder: ObservableObject {
         isRecording = false
         isPaused = false
         defer { meeting = nil }
+        liveSegments = []
         guard var url = teardown() else { return nil }
+        let lines = await live.finalLines()
+        var offset: TimeInterval = 0
         if continuing, let meeting {
+            offset = (try? AudioFiles.duration(of: meeting)) ?? 0
             do {
                 try await AudioAppender.append(url, to: meeting)
                 await AudioAppender.appendStems(of: url, to: meeting)
@@ -124,6 +130,7 @@ final class Recorder: ObservableObject {
                 return nil
             }
         }
+        liveSegments = TranscriptVersionLogic.liveSegments(lines, offset: offset)
         if reveal { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         return url
     }

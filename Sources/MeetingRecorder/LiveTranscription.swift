@@ -3,7 +3,7 @@ import Combine
 import Speech
 
 /// A preview of what is being said while recording, from Apple's streaming speech model fed with the recorder's two
-/// stems. It is never saved: the meeting's transcript is made from the recording after it stops.
+/// stems. The meeting's transcript is made from the recording after it stops; this one is kept as an earlier version.
 @MainActor
 final class LiveTranscription: ObservableObject {
     @Published private(set) var transcript = LiveTranscript()
@@ -19,6 +19,7 @@ final class LiveTranscription: ObservableObject {
     private var streams: [LiveStream] = []
     private var generation = 0
     private var recording = 0
+    private var finishing = 0
     private var settingObserver: NSObjectProtocol?
 
     init() {
@@ -52,6 +53,13 @@ final class LiveTranscription: ObservableObject {
     func stop() {
         endStreams()
         mixer = nil
+    }
+
+    /// The finished lines once the streams have turned what they heard into final results, or after `timeout`.
+    func finalLines(timeout: TimeInterval = 5) async -> [LiveLine] {
+        let deadline = Date().addingTimeInterval(timeout)
+        while finishing > 0, Date() < deadline { try? await Task.sleep(nanoseconds: 50_000_000) }
+        return transcript.lines.filter(\.isFinal)
     }
 
     private func followSetting() {
@@ -99,7 +107,12 @@ final class LiveTranscription: ObservableObject {
         let ending = streams
         streams = []
         isListening = false
-        Task { for stream in ending { await stream.finish() } }
+        guard !ending.isEmpty else { return }
+        finishing += 1
+        Task {
+            for stream in ending { await stream.finish() }
+            finishing -= 1
+        }
     }
 }
 

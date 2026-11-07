@@ -36,6 +36,10 @@ enum PreviewRenderer {
         if let standup = library.recordings.first {
             try? store.saveTranscript(standup.fileName, segments: SampleLibrary.labelledTranscript, language: .swedish,
                                       engine: "DictationTranscriber", speakers: [SpeakerProfile(speaker: .numbered(2), name: "Elin")])
+            let live = SampleLibrary.labelledTranscript.map {
+                TranscriptSegment(start: $0.start + 1, text: $0.text, speaker: $0.speaker == .you ? .you : .others)
+            }
+            try? store.saveLiveTranscript(standup.fileName, segments: live, language: .swedish, at: Date())
         }
 
         let shots: [(name: String, meeting: Int, tab: DetailTab)] = [
@@ -54,6 +58,16 @@ enum PreviewRenderer {
                     save(window, to: output.appendingPathComponent("\(shot.name)-\(mode).png"))
                 }
             }
+            library.selection = library.recordings.first?.id
+            library.showVersion(library.versions.first)
+            library.comparing = true
+            library.tab = .transcript
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                save(window, to: output.appendingPathComponent("live-compare-\(appearance == .aqua ? "light" : "dark").png"))
+            }
+            library.showVersion(nil)
             for hidden in [false, true] {
                 library.selection = library.recordings.first?.id
                 library.tab = .summary

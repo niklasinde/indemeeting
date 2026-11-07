@@ -587,6 +587,26 @@ final class MeetingStore: @unchecked Sendable {
         }
     }
 
+    /// Keeps what was transcribed live while recording as a version of the meeting; a continued recording adds to the
+    /// live version already there.
+    func saveLiveTranscript(_ audioFile: String, segments: [TranscriptSegment], language: MeetingLanguage?, at date: Date) throws {
+        try write {
+            let id = try ensure(audioFile)
+            let existingID = try db.query("SELECT id FROM transcript_versions WHERE meeting_id = ? AND engine = ? ORDER BY id DESC LIMIT 1",
+                                          [id, TranscriptionEngine.liveValue]) { $0.int64(0) }.first
+            let existing = try existingID.flatMap { try storedVersion($0)?.snapshot }
+            guard let snapshot = TranscriptVersionLogic.liveSnapshot(segments, appendingTo: existing, language: language, at: date) else {
+                return
+            }
+            if let existingID, existing != nil {
+                try db.run("UPDATE transcript_versions SET content = ? WHERE id = ?",
+                           [try TranscriptVersionLogic.encode(snapshot), existingID])
+            } else {
+                try insertVersion(snapshot, meetingID: id)
+            }
+        }
+    }
+
     func deleteVersion(_ versionID: Int64) throws {
         try write { try db.run("DELETE FROM transcript_versions WHERE id = ?", [versionID]) }
     }

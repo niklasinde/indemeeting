@@ -110,6 +110,8 @@ final class RecordingLibrary: ObservableObject {
     /// The earlier transcript shown read-only instead of the current one.
     @Published private(set) var viewedVersion: TranscriptVersionInfo?
     @Published private var versionContent: MeetingContent?
+    /// Shows the viewed version next to the current transcript.
+    @Published var comparing = false
 
     let folder: URL
     private let store: MeetingStore
@@ -230,8 +232,17 @@ final class RecordingLibrary: ObservableObject {
 
     func showVersion(_ version: TranscriptVersionInfo?) {
         viewedVersion = version
+        if version == nil { comparing = false }
         versionContent = version.flatMap { try? store.version($0.id) }
     }
+
+    /// The current transcript, while the viewed version is compared with it.
+    func comparedContent(of entry: RecordingEntry) -> MeetingContent? {
+        guard comparing, versionContent != nil, let content, content.meeting.audioFile == entry.fileName else { return nil }
+        return content
+    }
+
+    var canCompare: Bool { content?.segments.isEmpty == false }
 
     func restore(_ version: TranscriptVersionInfo, of entry: RecordingEntry) {
         showVersion(nil)

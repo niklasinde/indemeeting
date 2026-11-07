@@ -242,8 +242,19 @@ final class MeetingProcessor: ObservableObject {
     @discardableResult
     func finishRecording(_ recorder: Recorder, reveal: Bool = true) async -> URL? {
         guard let url = await recorder.stop(reveal: reveal) else { return nil }
+        saveLiveTranscript(recorder.liveSegments, of: url, language: recorder.live.language)
         process(url)
         return url
+    }
+
+    private func saveLiveTranscript(_ segments: [TranscriptSegment], of audio: URL, language: MeetingLanguage?) {
+        guard LiveTranscriptLogic.isEnabled(), !segments.isEmpty else { return }
+        do {
+            try store.saveLiveTranscript(audio.lastPathComponent, segments: segments, language: language, at: Date())
+        } catch {
+            Logger(subsystem: "MeetingRecorder", category: "processing")
+                .error("Saving the live transcript failed: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func chooseRecording() {

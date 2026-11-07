@@ -34,8 +34,59 @@ enum TranscriptVersionLogic {
         RestorePlan(current: version, archive: isWorthKeeping(current) ? current : nil)
     }
 
+    /// "5 Nov 14:02 · Whisper Large v3 Turbo", or "Live · Apple Speech · 5 Nov 14:02" for the live transcript.
     static func label(_ version: TranscriptVersionInfo, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
-        LibraryLogic.transcriptionLabel(at: version.transcribedAt, engine: version.engine, locale: locale, timeZone: timeZone)
+        guard let engine = version.engine, engine == TranscriptionEngine.liveValue else {
+            return LibraryLogic.transcriptionLabel(at: version.transcribedAt, engine: version.engine, locale: locale, timeZone: timeZone)
+        }
+        return TranscriptionEngine.displayName(stored: engine) + " \u{00B7} "
+            + LibraryLogic.transcriptionLabel(at: version.transcribedAt, engine: nil, locale: locale, timeZone: timeZone)
+    }
+
+    /// The finished live lines as transcript segments, `offset` seconds into the meeting's audio.
+    static func liveSegments(_ lines: [LiveLine], offset: TimeInterval) -> [TranscriptSegment] {
+        lines.filter { $0.isFinal && !$0.text.isEmpty }
+            .map { TranscriptSegment(start: $0.start + offset, text: $0.text, speaker: $0.speaker) }
+    }
+
+    /// The live transcript to keep as a version: a new one, or `existing` with a continued recording's lines added.
+    /// Nil when nothing was heard.
+    static func liveSnapshot(_ segments: [TranscriptSegment], appendingTo existing: TranscriptSnapshot?,
+                             language: MeetingLanguage?, at date: Date) -> TranscriptSnapshot? {
+        guard !segments.isEmpty else { return nil }
+        guard var snapshot = existing else {
+            return TranscriptSnapshot(segments: segments, language: language, engine: TranscriptionEngine.liveValue, transcribedAt: date)
+        }
+        snapshot.segments = (snapshot.segments + segments).sorted { $0.start < $1.start }
+        return snapshot
+    }
+
+    struct ComparedRow: Equatable {
+        let version: TranscriptSegment?
+        let current: TranscriptSegment?
+    }
+
+    /// Two transcripts side by side: a paragraph shares a row with the other side's paragraph that starts before
+    /// either one's next paragraph, otherwise it stands alone, in order of time.
+    static func sideBySide(version: [TranscriptSegment], current: [TranscriptSegment]) -> [ComparedRow] {
+        var rows: [ComparedRow] = []
+        var left = version[...], right = current[...]
+        while left.first != nil || right.first != nil {
+            let a = left.first, b = right.first
+            let nextA = left.dropFirst().first?.start ?? .infinity, nextB = right.dropFirst().first?.start ?? .infinity
+            if let a, let b, b.start < nextA, a.start < nextB {
+                rows.append(ComparedRow(version: a, current: b))
+                left = left.dropFirst()
+                right = right.dropFirst()
+            } else if let a, b.map({ a.start <= $0.start }) ?? true {
+                rows.append(ComparedRow(version: a, current: nil))
+                left = left.dropFirst()
+            } else {
+                rows.append(ComparedRow(version: nil, current: b))
+                right = right.dropFirst()
+            }
+        }
+        return rows
     }
 
     /// `meeting` as it was when `snapshot` was its transcript, for showing a version read-only.

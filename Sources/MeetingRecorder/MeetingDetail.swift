@@ -185,19 +185,19 @@ struct RecordingDetail: View {
                     }
                 }
         case .transcript:
-            scrolling {
+            scrolling(maxWidth: library.comparing ? 1200 : 680) {
                 TranscriptView(entry: entry, language: language, processor: processor, library: library, playback: playback,
                                audioUnavailable: audioUnavailable)
             }
         }
     }
 
-    private func scrolling<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+    private func scrolling<Content: View>(maxWidth: CGFloat = 680, @ViewBuilder _ content: () -> Content) -> some View {
         let content = content()
         return ScrollViewReader { proxy in
             ScrollView {
                 content
-                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: maxWidth, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Self.gutter)
                     .padding(.top, 8)
@@ -280,7 +280,7 @@ private struct EarlierVersionsMenu: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Transcripts and summaries replaced by re-transcribing")
+        .help("Transcripts and summaries replaced by re-transcribing, and the transcript written live while recording")
     }
 }
 
@@ -296,6 +296,15 @@ private struct EarlierVersionBar: View {
             Image(systemName: "clock.arrow.circlepath")
             Text("Viewing earlier version \u{00B7} " + TranscriptVersionLogic.label(version)).lineLimit(1)
             Spacer()
+            if library.canCompare {
+                Toggle("Compare with current", isOn: Binding(get: { library.comparing }, set: { compare in
+                    library.comparing = compare
+                    if compare { library.tab = .transcript }
+                }))
+                .toggleStyle(.checkbox)
+                .fixedSize()
+                .help("Show this version next to the current transcript, lined up by time")
+            }
             Button("Delete", role: .destructive) { confirmingDelete = true }
             Button("Restore") { library.restore(version, of: entry) }
                 .disabled(processor.processing == entry.audio)
@@ -413,7 +422,9 @@ struct TranscriptView: View {
     var body: some View {
         let content = library.content(of: entry)
         let rows = SpeakerLogic.rows(content?.segments ?? [])
-        if rows.isEmpty {
+        if let content, let current = library.comparedContent(of: entry) {
+            ComparedTranscript(version: content, current: current, playback: playback, audioUnavailable: audioUnavailable)
+        } else if rows.isEmpty {
             EmptyState(entry: entry, processor: processor, notice: SummaryNotice(
                 title: "No transcript yet", message: "Transcribe this recording on this Mac. Nothing leaves your computer."))
         } else {
@@ -426,11 +437,7 @@ struct TranscriptView: View {
                                     library.renameSpeaker(speaker, of: entry, to: $0)
                                 }
                             }
-                            Button(LibraryLogic.durationText(row.paragraph.start)) { playback.play(from: row.paragraph.start) }
-                                .buttonStyle(.plain)
-                                .foregroundStyle(audioUnavailable == nil ? Color.accentColor : .secondary)
-                                .disabled(audioUnavailable != nil)
-                                .help(audioUnavailable ?? "Play from here")
+                            TimestampButton(start: row.paragraph.start, playback: playback, audioUnavailable: audioUnavailable)
                         }
                         .font(.caption.monospacedDigit())
                         Text(row.paragraph.text)
@@ -440,6 +447,67 @@ struct TranscriptView: View {
                     .id(row.paragraph.start)
                 }
             }
+        }
+    }
+}
+
+private struct TimestampButton: View {
+    let start: TimeInterval
+    let playback: AudioPlayback
+    let audioUnavailable: String?
+
+    var body: some View {
+        Button(LibraryLogic.durationText(start)) { playback.play(from: start) }
+            .buttonStyle(.plain)
+            .foregroundStyle(audioUnavailable == nil ? Color.accentColor : .secondary)
+            .disabled(audioUnavailable != nil)
+            .help(audioUnavailable ?? "Play from here")
+    }
+}
+
+/// An earlier version next to the current transcript, paragraphs that were said at the same time on one row.
+private struct ComparedTranscript: View {
+    let version: MeetingContent
+    let current: MeetingContent
+    let playback: AudioPlayback
+    let audioUnavailable: String?
+
+    var body: some View {
+        let rows = TranscriptVersionLogic.sideBySide(version: SpeakerLogic.rows(version.segments).map(\.paragraph),
+                                                     current: SpeakerLogic.rows(current.segments).map(\.paragraph))
+        Grid(alignment: .topLeading, horizontalSpacing: 28, verticalSpacing: 18) {
+            GridRow {
+                Text("This version")
+                Text("Current")
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                GridRow {
+                    cell(row.version, names: version.names)
+                    cell(row.current, names: current.names)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func cell(_ paragraph: TranscriptSegment?, names: SpeakerNames) -> some View {
+        if let paragraph {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    if let speaker = paragraph.speaker {
+                        Text(names.name(of: speaker, in: .english)).foregroundStyle(.secondary)
+                    }
+                    TimestampButton(start: paragraph.start, playback: playback, audioUnavailable: audioUnavailable)
+                }
+                .font(.caption.monospacedDigit())
+                Text(paragraph.text)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Color.clear.frame(maxWidth: .infinity, maxHeight: 0)
         }
     }
 }

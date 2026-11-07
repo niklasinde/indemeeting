@@ -135,4 +135,71 @@ let transcriptVersionTests: [(name: String, run: () throws -> Void)] = [
             check(try db.query("SELECT count(*) FROM transcript_versions") { $0.int64(0) } == [0], "cascaded")
         }
     }),
+    ("the live transcript is labelled as live Apple Speech before its time", {
+        let utc = TimeZone(identifier: "UTC")!
+        let label = TranscriptVersionLogic.label(TranscriptVersionInfo(id: 1, transcribedAt: firstDate, engine: TranscriptionEngine.liveValue),
+                                                 locale: Locale(identifier: "en_GB"), timeZone: utc)
+        check(label.hasPrefix("Live \u{00B7} Apple Speech \u{00B7} ") && label.contains("5 Nov") && label.hasSuffix("14:02"),
+              "label \(label)")
+        check(TranscriptionEngine.displayName(stored: "apple-live") == "Live \u{00B7} Apple Speech", "engine name")
+    }),
+
+    ("live lines become segments timed in the meeting's audio, leaving out what is still being heard", {
+        let lines = [LiveLine(speaker: .you, start: 2, text: "Hej.", isFinal: true),
+                     LiveLine(speaker: .others, start: 4, text: "Hallå.", isFinal: true),
+                     LiveLine(speaker: .others, start: 9, text: "Och sen", isFinal: false)]
+        check(TranscriptVersionLogic.liveSegments(lines, offset: 60)
+              == [TranscriptSegment(start: 62, text: "Hej.", speaker: .you), TranscriptSegment(start: 64, text: "Hallå.", speaker: .others)],
+              "segments")
+    }),
+
+    ("a live snapshot is new for a first recording and appended to when the recording is continued", {
+        let first = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you)]
+        check(TranscriptVersionLogic.liveSnapshot([], appendingTo: nil, language: .swedish, at: firstDate) == nil, "nothing heard")
+        let snapshot = TranscriptVersionLogic.liveSnapshot(first, appendingTo: nil, language: .swedish, at: firstDate)
+        check(snapshot == TranscriptSnapshot(segments: first, language: .swedish, engine: "apple-live", transcribedAt: firstDate),
+              "new \(String(describing: snapshot))")
+        let more = [TranscriptSegment(start: 90, text: "Igen.", speaker: .others)]
+        let continued = TranscriptVersionLogic.liveSnapshot(more, appendingTo: snapshot, language: .english,
+                                                            at: firstDate.addingTimeInterval(600))
+        check(continued?.segments == first + more && continued?.transcribedAt == firstDate && continued?.language == .swedish,
+              "appended \(String(describing: continued))")
+    }),
+
+    ("the live transcript is kept beside the final one, appended to on continue, and restorable", {
+        try withVersionStore { store, _ in
+            let live = [TranscriptSegment(start: 1, text: "Releasen är på tisdag.", speaker: .others)]
+            try store.saveLiveTranscript(name, segments: [], language: .swedish, at: firstDate)
+            check(try store.versions(of: name).isEmpty, "nothing heard keeps nothing")
+            try store.saveLiveTranscript(name, segments: live, language: .swedish, at: firstDate)
+            try transcribeFirst(store)
+            var versions = try store.versions(of: name)
+            check(versions.map(\.engine) == ["apple-live"], "the final transcript leaves the live one \(versions)")
+            check(try store.content(of: name)?.segments == firstSegments, "the final transcript is current")
+
+            let later = [TranscriptSegment(start: 120, text: "Och fredag.", speaker: .you)]
+            try store.saveLiveTranscript(name, segments: later, language: .swedish, at: firstDate.addingTimeInterval(900))
+            try retranscribe(store)
+            versions = try store.versions(of: name)
+            check(versions.compactMap(\.engine).sorted() == ["apple-live", "ggml-large-v3-turbo"], "re-transcribing adds beside it \(versions)")
+            let liveVersion = versions.first { $0.engine == "apple-live" }!
+            let shown = try store.version(liveVersion.id)
+            check(shown?.segments == live + later && shown?.summary.isEmpty == true, "one live version for both parts")
+            check(liveVersion.transcribedAt == firstDate, "dated by the first part")
+
+            try store.restoreVersion(liveVersion.id, of: name)
+            check(try store.content(of: name)?.segments == live + later, "restored")
+            check(try store.versions(of: name).count == 2, "the replaced one is kept")
+        }
+    }),
+
+    ("two transcripts line up side by side by time", {
+        func segment(_ start: TimeInterval, _ text: String) -> TranscriptSegment { TranscriptSegment(start: start, text: text) }
+        let rows = TranscriptVersionLogic.sideBySide(version: [segment(0, "a"), segment(10, "b"), segment(12, "c"), segment(50, "d")],
+                                                     current: [segment(1, "A"), segment(30, "B")])
+        check(rows.map { [$0.version?.text ?? "-", $0.current?.text ?? "-"].joined() }
+              == ["aA", "b-", "cB", "d-"], "rows \(rows)")
+        check(TranscriptVersionLogic.sideBySide(version: [], current: [segment(1, "A")]) == [.init(version: nil, current: segment(1, "A"))],
+              "one side empty")
+    }),
 ]
