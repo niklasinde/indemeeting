@@ -9,6 +9,7 @@ struct WhisperFamily: Hashable {
     static let openAI = WhisperFamily(name: "Whisper", about: "OpenAI\u{2019}s multilingual speech models, downloaded from Hugging "
                                       + "Face and run on this Mac with whisper.cpp. The language is detected for each stretch of "
                                       + "speech, so a meeting can switch between the languages you listen for.")
+    static let silero = WhisperFamily(name: "Silero VAD", about: "Finds the speech in the audio, so Whisper never hears silence.")
 }
 
 /// A whisper.cpp model that can be downloaded from Hugging Face. Add one to `all` to offer it in Settings; the list is
@@ -38,6 +39,11 @@ struct WhisperModel: Hashable, Identifiable {
                 sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"),
     ]
 
+    /// The voice activity model whisper.cpp runs before Whisper, fetched along with the Whisper models. Not an engine.
+    static let vad = WhisperModel(id: "ggml-silero-v6.2.0", name: "Silero VAD v6.2.0", family: .silero, repo: "ggml-org/whisper-vad",
+                                  file: "ggml-silero-v6.2.0.bin", bytes: 885_098,
+                                  sha256: "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987", languages: [])
+
     /// A model from whisper.cpp's own repository, named after its file: `ggml-large-v3-turbo-q8_0`.
     static func openAI(_ file: String, name: String, hint: String, recommended: Bool = false, bytes: Int64,
                        sha256: String) -> WhisperModel {
@@ -64,11 +70,17 @@ struct WhisperModel: Hashable, Identifiable {
 
     /// Model files in the folder that no model in the catalogue uses, such as KB-Whisper's.
     static func leftovers(in folder: URL = AppPaths.models) -> [URL] {
-        let names = Set(all.map(\.fileName))
+        let names = Set((all + [vad]).map(\.fileName))
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "bin" && !names.contains($0.lastPathComponent) }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
+
+    /// The voice activity model's file once it is downloaded; without it Whisper hears all the audio, as before.
+    static func vadFile(in folder: URL = AppPaths.models) -> URL? { vad.isInstalled(in: folder) ? vad.url(in: folder) : nil }
+
+    /// Whether to fetch the voice activity model: a Whisper model is downloaded and it is not.
+    static func needsVAD(in folder: URL = AppPaths.models) -> Bool { !installed(in: folder).isEmpty && vadFile(in: folder) == nil }
 
     /// Checks a downloaded file is this model, byte for byte.
     func verify(_ file: URL) throws {
@@ -234,6 +246,17 @@ enum SpeechChunks {
         let minimum = Int(minimumSpeech / frameLength)
         return chunks.filter { chunk in levels[chunk].lazy.filter { $0 >= threshold }.count >= minimum }
     }
+}
+
+/// How Silero VAD cuts speech from silence before Whisper, tuned for meetings: a short "Ja." still counts as speech,
+/// a pause must last half a second to end it, and each stretch keeps a quarter second either side.
+struct WhisperVAD: Equatable {
+    var threshold: Float = 0.5
+    var minSpeechMs: Int32 = 150
+    var minSilenceMs: Int32 = 500
+    var speechPadMs: Int32 = 250
+
+    static let meetings = WhisperVAD()
 }
 
 enum WhisperLogic {

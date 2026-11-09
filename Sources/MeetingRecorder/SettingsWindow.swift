@@ -10,7 +10,7 @@ final class SettingsWindow {
     @Published var anchor: SettingsAnchor?
 
     private let models = SpeechModels()
-    private let whisper = WhisperModels()
+    let whisper = WhisperModels()
     let speakers = SpeakerRecognitionModels()
     let projects = ActivityProjectsModel()
     var tracker: ActivityTracker?
@@ -157,6 +157,12 @@ final class WhisperModels: ObservableObject {
         task.resume()
     }
 
+    /// Fetches the small voice activity model once a Whisper model is downloaded, so Whisper skips silence.
+    func fetchVADIfNeeded() {
+        guard downloads[.vad] == nil, WhisperModel.needsVAD() else { return }
+        download(.vad)
+    }
+
     func cancel(_ model: WhisperModel) {
         downloads[model]?.task.cancel()
     }
@@ -174,7 +180,9 @@ final class WhisperModels: ObservableObject {
     private func finish(_ model: WhisperModel, _ result: Result<Void, Error>) {
         downloads[model] = nil
         switch result {
-        case .success: statuses[model] = .installed
+        case .success:
+            statuses[model] = .installed
+            fetchVADIfNeeded()
         case .failure(let error as URLError) where error.code == .cancelled: statuses[model] = .notDownloaded
         case .failure(let error): statuses[model] = .failed(error.localizedDescription)
         }

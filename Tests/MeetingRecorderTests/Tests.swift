@@ -684,10 +684,35 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("models-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder.appendingPathComponent("speaker-diarization"), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        for name in ["kb-whisper-medium-q5_0.bin", "ggml-large-v3.bin", "notes.txt"] {
+        for name in ["kb-whisper-medium-q5_0.bin", "ggml-large-v3.bin", "ggml-silero-v6.2.0.bin", "notes.txt"] {
             try Data(count: 1).write(to: folder.appendingPathComponent(name))
         }
         check(WhisperModel.leftovers(in: folder).map(\.lastPathComponent) == ["kb-whisper-medium-q5_0.bin"], "leftovers")
+    }),
+
+    ("the voice activity model comes with the first Whisper model, and Whisper hears everything without it", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("models-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let vad = WhisperModel.vad
+        check(vad.remoteURL.absoluteString == "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v6.2.0.bin", "url")
+        check(vad.sha256.count == 64 && !WhisperModel.all.contains(vad) && WhisperModel.with(id: vad.id) == nil, "not an engine")
+        check(WhisperModel.vadFile(in: folder) == nil && !WhisperModel.needsVAD(in: folder), "nothing downloaded")
+        let fastest = whisper("-turbo-q5_0")
+        FileManager.default.createFile(atPath: fastest.url(in: folder).path, contents: nil)
+        try FileHandle(forWritingTo: fastest.url(in: folder)).truncate(atOffset: UInt64(fastest.bytes))
+        check(WhisperModel.vadFile(in: folder) == nil && WhisperModel.needsVAD(in: folder), "a Whisper model wants the VAD model")
+        try Data(count: 10).write(to: vad.url(in: folder))
+        check(WhisperModel.vadFile(in: folder) == nil && WhisperModel.needsVAD(in: folder), "a partial VAD model is not used")
+        try Data(count: Int(vad.bytes)).write(to: vad.url(in: folder))
+        check(WhisperModel.vadFile(in: folder) == vad.url(in: folder) && !WhisperModel.needsVAD(in: folder), "downloaded")
+    }),
+
+    ("voice activity detection keeps short answers and pads speech for meetings", {
+        let vad = WhisperVAD.meetings
+        check(vad.minSpeechMs <= 200, "a short \"Ja.\" is speech")
+        check((200...300).contains(vad.speechPadMs), "padding around speech")
+        check(vad.minSilenceMs >= 300 && vad.threshold == 0.5, "a breath does not end speech")
     }),
 
     ("transcription engine choice falls back to the best downloaded model, then Apple", {

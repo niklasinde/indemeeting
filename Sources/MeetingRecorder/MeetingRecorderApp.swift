@@ -216,6 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.shared.speakers.store = store
         SettingsWindow.shared.projects.store = store
         SettingsWindow.shared.tracker = tracker
+        SettingsWindow.shared.whisper.fetchVADIfNeeded()
         recorder.live.languages = { [store] in MeetingPipeline.languages(for: $0, store: store) }
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.summariseWhenModelReady()

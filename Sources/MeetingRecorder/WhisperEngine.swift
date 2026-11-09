@@ -32,6 +32,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     private let queue: DispatchQueue
     private let cancelLock = NSLock()
     private var cancelled = false
+    private var vadFile = WhisperModel.vadFile()?.path
 
     convenience init(model: WhisperModel, options: WhisperOptions) throws {
         guard model.isInstalled() else { throw WhisperModelError.notInstalled(model) }
@@ -144,13 +145,24 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         let status = withExtendedLifetime(box) {
             language.withCString { language in
                 (options.prompt ?? "").withCString { prompt in
-                    params.language = language
-                    if options.prompt?.isEmpty == false { params.initial_prompt = prompt }
-                    return samples.withUnsafeBufferPointer { whisper_full(context, params, $0.baseAddress, Int32($0.count)) }
+                    (vadFile ?? "").withCString { vadPath in
+                        params.language = language
+                        if options.prompt?.isEmpty == false { params.initial_prompt = prompt }
+                        if vadFile != nil {
+                            params.vad = true
+                            params.vad_model_path = vadPath
+                            params.vad_params = Self.vadParams
+                        }
+                        return samples.withUnsafeBufferPointer { whisper_full(context, params, $0.baseAddress, Int32($0.count)) }
+                    }
                 }
             }
         }
         guard !isCancelled else { throw CancellationError() }
+        if status != 0, vadFile != nil {
+            vadFile = nil
+            return try run(samples, language: language, progress: progress)
+        }
         guard status == 0 else { throw NSError(domain: "whisper", code: Int(status)) }
         let pieces = (0..<whisper_full_n_segments(context))
             .filter { Double(whisper_full_get_segment_no_speech_prob(context, $0)) <= ProcessingLogic.noSpeechLimit }
@@ -158,6 +170,16 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
                 (text: String(cString: whisper_full_get_segment_text(context, index)), start: whisper_full_get_segment_t0(context, index))
             }
         return ProcessingLogic.whisperSentences(pieces)
+    }
+
+    private static var vadParams: whisper_vad_params {
+        var params = whisper_vad_default_params()
+        let vad = WhisperVAD.meetings
+        params.threshold = vad.threshold
+        params.min_speech_duration_ms = vad.minSpeechMs
+        params.min_silence_duration_ms = vad.minSilenceMs
+        params.speech_pad_ms = vad.speechPadMs
+        return params
     }
 
     /// The audio as 16 kHz mono floats, the input whisper.cpp expects.
