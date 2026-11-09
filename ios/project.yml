@@ -21,7 +21,7 @@ targets:
       - path: MeetingRecorderPhone
       - path: ../Sources/Shared
         group: Shared
-      - path: ../Sources/MeetingRecorder/SQLiteDatabase.swift
+      - path: ../Sources/WorkTime/SQLiteDatabase.swift
         group: Shared
     settings:
       base:

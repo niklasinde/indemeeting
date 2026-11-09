@@ -1,11 +1,11 @@
 {
-  "name": "meetingrecorder",
+  "name": "worktime",
   "description": "Local Claude Code session tracking for WorkTime, and read-only access to your activity, time report and meetings",
   "version": "1.0.0",
   "author": {
     "name": "Niklas Inde"
   },
-  "homepage": "https://github.com/niklasinde/indemeeting",
-  "repository": "https://github.com/niklasinde/indemeeting",
+  "homepage": "https://github.com/niklasinde/worktime",
+  "repository": "https://github.com/niklasinde/worktime",
   "keywords": ["time-tracking", "meetings", "activity", "mcp", "hooks"]
 }

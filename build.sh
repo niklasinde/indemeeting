@@ -26,25 +26,25 @@ fi
 [ -d .deps/whisper.xcframework ] || scripts/build-whisper.sh
 
 if swift build -c release $ARCHS; then
-    BIN="$(swift build -c release $ARCHS --show-bin-path)/MeetingRecorder"
+    BIN="$(swift build -c release $ARCHS --show-bin-path)/WorkTime"
 elif [ $RELEASE = 1 ]; then
     echo "error: swift build failed"
     exit 1
 else
     echo "swift build failed, falling back to swiftc (without KB-Whisper)"
-    BIN=.build/swiftc/MeetingRecorder
+    BIN=.build/swiftc/WorkTime
     mkdir -p "$(dirname "$BIN")"
-    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/MeetingRecorder/*.swift Sources/Shared/*.swift -o "$BIN"
+    swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/WorkTime/*.swift Sources/Shared/*.swift -o "$BIN"
 fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN" "$APP/Contents/MacOS/MeetingRecorder"
+cp "$BIN" "$APP/Contents/MacOS/WorkTime"
 cp Info.plist "$APP/Contents/Info.plist"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 if BUILD_NUMBER="$(git rev-list --count HEAD 2>/dev/null)"; then
     /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi
 
-codesign --force --options runtime --sign "$SIGN" --entitlements MeetingRecorder.entitlements "$APP"
+codesign --force --options runtime --sign "$SIGN" --entitlements WorkTime.entitlements "$APP"
 echo "Built $APP"

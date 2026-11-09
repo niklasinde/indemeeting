@@ -1,9 +1,10 @@
 #!/bin/sh
 # Appends one line per Claude Code hook event to WorkTime's inbox. Prompt text, tool input and tool output are
-# left out; MEETING_RECORDER_HOOK_PROMPTS=1 keeps the first 500 characters of each prompt. Never fails the session.
-dir="${MEETING_RECORDER_DATA_DIR:-$HOME/Library/Application Support/MeetingRecorder}"
+# left out; WORKTIME_HOOK_PROMPTS=1 (or the older MEETING_RECORDER_HOOK_PROMPTS=1) keeps the first 500 characters
+# of each prompt. Never fails the session.
+dir="${WORKTIME_DATA_DIR:-${MEETING_RECORDER_DATA_DIR:-$HOME/Library/Application Support/MeetingRecorder}}"
 [ -d "$dir/claude-hooks" ] || mkdir -p "$dir/claude-hooks" 2>/dev/null || exit 0
-awk -v dir="$dir" -v prompts="${MEETING_RECORDER_HOOK_PROMPTS:-0}" '
+awk -v dir="$dir" -v prompts="${WORKTIME_HOOK_PROMPTS:-${MEETING_RECORDER_HOOK_PROMPTS:-0}}" '
 function field(key,    at, rest) {
     at = index(json, "\"" key "\"")
     if (!at) return ""

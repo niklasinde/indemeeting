@@ -14,7 +14,7 @@ mkdir -p "$STAGE"
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 codesign -dv "$APP" 2>&1 | grep -E "Authority|Identifier|Runtime|flags"
-lipo -info "$APP/Contents/MacOS/MeetingRecorder"
+lipo -info "$APP/Contents/MacOS/WorkTime"
 echo "Gatekeeper (expected to reject: the app is not notarized):"
 spctl -a -vv "$APP" 2>&1 || true
 

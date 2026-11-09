@@ -6,8 +6,8 @@ Core Audio process tap) into one mono AAC file at
 (`-2`, `-3`, … when a minute already has one). All sources are converted to 48 kHz mono float, summed, and encoded.
 Works independently of Notion or any other meeting tool.
 
-WorkTime was called Meeting Recorder before. Its executable, bundle identifier, data folder, Keychain items and signing
-identity still use `MeetingRecorder`, so existing meetings, keys and privacy permissions carry over.
+WorkTime was called Meeting Recorder before. Its bundle identifier, data folder, Keychain items and signing identity
+still use `MeetingRecorder`, so existing meetings, keys and privacy permissions carry over.
 
 Next to the mix, each source is also written on its own with the same AAC settings: `Meeting-…-HHmm.stem-mic.m4a`
 (you) and `Meeting-…-HHmm.stem-system.m4a` (the others), padded with silence so both line up with the mix. They are
@@ -38,7 +38,7 @@ permissions are kept.
 
     ./build.sh
 
-Produces `WorkTime.app`, signed with `MeetingRecorder.entitlements` and the hardened runtime, versioned with
+Produces `WorkTime.app`, signed with `WorkTime.entitlements` and the hardened runtime, versioned with
 `CFBundleShortVersionString` from `Info.plist` and `git rev-list --count HEAD` as the build number. Needs macOS 26+
 (SpeechAnalyzer for transcription, Foundation Models for summaries). Builds with `swift build` (Command Line Tools 27 /
 Swift 6.4 or Xcode); if SwiftPM fails, the script falls back to plain `swiftc`. `./build.sh --release <path>.app`
@@ -84,7 +84,7 @@ Security, grant the permissions once more, and they then persist across rebuilds
 
 `test.sh` compiles the mixer, the appender, the database layer and the pure recording, processing and library helpers (chunking, timestamps, markdown, file
 names, paused time, part and combined files and their length and bit rate, stems and their appends, merging the
-stems' transcripts and dropping echoes, speaker labels, speaker recognition (numbering, overlap assignment, cosine matching and its threshold, voice blending), auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/MeetingRecorderTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
+stems' transcripts and dropping echoes, speaker labels, speaker recognition (numbering, overlap assignment, cosine matching and its threshold, voice blending), auto-stop decisions, the recordings list, summary parsing, the meta sidecar, date groups, titles and search) with `swiftc` together with `Tests/WorkTimeTests/*.swift` and runs them (exit code is non-zero on failure). The database tests run against a temporary file: schema and
 migrations (including adding the speaker column and the speakers and known voices tables to an existing database), naming speakers and remembering their voices, a database that cannot be opened in an
 unwritable folder, reading and writing every field, full-text search, deletes and the sidecar import. `swift test` runs the same list through Swift Testing (or XCTest where that is the only framework). The iPhone tests cover request parsing and its limits, ranges, pairing urls and codes, one-use and expiry of a pairing, the auth decision and the failure limiter, the data types, and every endpoint against a scratch database (including stripped activity blocks and a stored file name that tries to leave the recordings folder). Tests that
 need real permissions, hardware, speech models or Apple Intelligence are not covered; use the command-line mode below.
@@ -188,13 +188,13 @@ hidden (and kept). Earlier versions kept the data next to each recording in `<na
 existing ones) those files are read once and imported; they are never changed or used again, so after checking the
 app you can delete them.
 
-`--data-dir <folder>` (or `MEETING_RECORDER_DATA_DIR=<folder>`) makes the app use `<folder>/Recordings` and
+`--data-dir <folder>` (or `WORKTIME_DATA_DIR=<folder>`, or the older `MEETING_RECORDER_DATA_DIR`) makes the app use `<folder>/Recordings` and
 `<folder>/meetings.sqlite` instead, for trying a copy of the library without touching the real one.
 
 To check the window's layout without a screen, a debug build can render it offscreen with a Swedish sample meeting
 (the sample data and the flag are only compiled into debug builds):
 
-    swift build && .build/debug/MeetingRecorder --render-previews /tmp/previews
+    swift build && .build/debug/WorkTime --render-previews /tmp/previews
 
 It writes the sample library to `/tmp/previews/library` as audio and old-style sidecar files, imports it into
 `/tmp/previews/library.sqlite` and saves PNGs of the Summary, Notes and Transcript tabs (the transcript with speakers),
@@ -237,7 +237,7 @@ The winner needs 55% of the combined score, else the first candidate in the Mac'
 General > Language & Region) is used, else Svenska. It adds about 2–3 seconds per meeting. KB-Whisper's language
 detection is not used: fine-tuned on Swedish, it rates clear English as Swedish with probability 1.0. To see the scores:
 
-    .build/debug/MeetingRecorder --detect-language /path/to/Meeting.m4a [--languages sv-SE,en-US]
+    .build/debug/WorkTime --detect-language /path/to/Meeting.m4a [--languages sv-SE,en-US]
 
 A language is a `MeetingLanguage` case with its locale, names and headings; Settings, the menus and detection follow
 `allCases`.
@@ -279,7 +279,7 @@ diarized speaker is matched against the known voices by cosine similarity, best 
 at a cosine distance of at most 0.5 (FluidAudio's "same speaker, high confidence" range) the speaker is named
 automatically, and you can still rename them. Settings > Known voices lists the names with Forget.
 
-To download the models headlessly: `MeetingRecorder --download-speaker-model [--data-dir <folder>]`.
+To download the models headlessly: `WorkTime --download-speaker-model [--data-dir <folder>]`.
 
 ### KB-Whisper (Swedish)
 
@@ -318,7 +318,7 @@ validation stays on under the hardened runtime. It adds about 3.7 MB per archite
 fallback builds without KB-Whisper. To try a model headlessly without changing
 the saved choice, pass it as an argument default:
 
-    .build/debug/MeetingRecorder --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny
+    .build/debug/WorkTime --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny
 
 Settings… (Cmd-, in the menu bar menu, the app menu and the window's "…" menu) holds the meeting languages, each
 language's speech model (installed, downloading with progress, not downloaded, or unavailable, with Download and Remove;
@@ -326,22 +326,22 @@ Remove releases the app's reservation so macOS may delete the model) and the App
 
 For a headless check, run the binary with a file:
 
-    .build/debug/MeetingRecorder --process /path/to/Meeting.m4a --language sv-SE   # or en-US; leave out to detect
+    .build/debug/WorkTime --process /path/to/Meeting.m4a --language sv-SE   # or en-US; leave out to detect
 
 It prints the progress, the database it saved to, the language (and whether it was detected) and the summary title (or why there is none) and exits non-zero on
 failure, without starting the menu-bar app.
 
 To record headlessly through the same code path as the menu:
 
-    .build/debug/MeetingRecorder --record 5 --out /tmp/test.m4a   # --out optional, defaults to the recordings folder
+    .build/debug/WorkTime --record 5 --out /tmp/test.m4a   # --out optional, defaults to the recordings folder
 
 It prints the RMS level of each source (`(silent)` below 0.001) and the saved path. Ctrl-C stops early and still
 finalizes the file. `--pause-after A --resume-after B` pauses after A seconds for B seconds (default 1) and then
 records the rest, so the file is still `--record` seconds long. `--continue /path/to/Meeting.m4a` records a part and
 appends it to that meeting instead of writing a new file (`--out` is ignored):
 
-    .build/debug/MeetingRecorder --record 4 --pause-after 2 --resume-after 1 --out /tmp/paused.m4a
-    .build/debug/MeetingRecorder --continue /tmp/copy-of-Meeting.m4a --record 3 Privacy prompts are attributed to the process that launched the binary (e.g. Terminal), so run
+    .build/debug/WorkTime --record 4 --pause-after 2 --resume-after 1 --out /tmp/paused.m4a
+    .build/debug/WorkTime --continue /tmp/copy-of-Meeting.m4a --record 3 Privacy prompts are attributed to the process that launched the binary (e.g. Terminal), so run
 the app itself to test with its own grants.
 
 ## First-run setup
@@ -429,7 +429,7 @@ project, with the main repositories, tickets and websites) save the week through
 projects, apps, repositories with branches, tickets, websites, Claude sessions, window titles, categories, what you
 wrote and the meetings in the window. The same summary prints headlessly:
 
-    WorkTime.app/Contents/MacOS/MeetingRecorder --context 4     # the last 4 hours (8 without a number)
+    WorkTime.app/Contents/MacOS/WorkTime --context 4     # the last 4 hours (8 without a number)
 
 Debug builds also take `--simulate-activity <samples.json>` (an array of `{"offset", "app", "bundle", "title", "url",
 "repo", "branch", "claude": [...], "idle"}`), which feeds the samples through the tracker into the data directory's
@@ -474,12 +474,12 @@ model answers in the language of the question. If Apple Intelligence is unavaila
 `chat_messages`); the text that was read to answer is not stored. Chats about a meeting are deleted with it. Settings >
 Meetings > Chat has **Delete All Chats**. Chat titles come from the model, or from the first 40 characters of the question.
 
-**Command line.** `MeetingRecorder --chat "<question>" [--meeting <id>] [--day <YYYY-MM-DD>] [--data-dir <folder>]` prints the
+**Command line.** `WorkTime --chat "<question>" [--meeting <id>] [--day <YYYY-MM-DD>] [--data-dir <folder>]` prints the
 lookups and the streamed answer and exits, reading the database without writing, for example against a copy of the data
 folder:
 
 ```sh
-MeetingRecorder --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
+WorkTime --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
 ```
 
 ## Sessions
@@ -527,7 +527,7 @@ Claude Code. Open it from the **Claude API** row in the main window's sidebar.
 - **Errors.** No key, invalid key (401), rate limit (429, with the retry-after when given), overloaded (529), no credit
   (billing), network, and an incomplete reply each show a plain message.
 
-To check the client without the real API, `MeetingRecorder --claude-api-check http://127.0.0.1:<port>/v1/messages` runs it with
+To check the client without the real API, `WorkTime --claude-api-check http://127.0.0.1:<port>/v1/messages` runs it with
 a fake key against a loopback stub. It refuses any other host.
 
 ## GitHub
@@ -612,7 +612,7 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
   `~/Library/Application Support/MeetingRecorder/claude-prompts/` (removed when read, and after a day at the latest), so no title
   is ever quoted into a shell and no Automation permission is needed. Without a checkout it starts in your home folder and says
   `gh repo clone owner/repo`. The Claude app opens `claude://code/new?q=...&folder=...`; a prompt too long for a link is copied
-  instead. Meetings have the same under Ask > Open in Claude, which points Claude at the MeetingRecorder MCP tools.
+  instead. Meetings have the same under Ask > Open in Claude, which points Claude at the WorkTime MCP tools.
 - **In this app (embedded terminal):** the first group of the Open in Claude menu is Open in; "In this app" runs the interactive
   `claude "<prompt>"` in a terminal pane on the pull request page instead of another app. Nothing starts on selection, only on the click.
   The pane sits to the right of the page in a window at least 1500 pt wide and below it otherwise, 480 to 720 points wide to the right (the width is remembered), with a draggable edge, and a toolbar
@@ -693,7 +693,7 @@ Allow actions on GitHub (approve, merge, close). While off, the row menu shows n
   embedded terminal and Open in Claude only start Claude), not the chat tools, the MCP server, the phone API, command-line flags or
   deep links (there is no URL scheme). The tests read the sources and fail if any of them can reach the code that runs the commands.
 
-`MeetingRecorder --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
+`WorkTime --github-prs` runs the same searches once and prints the counts, the rows that need attention most with their
 signals, and the GraphQL points used (read only). `--github-pr-threads owner/repo#n` is a probe that prints what the review
 threads of one pull request look like (no UI uses it).
 `--github-pr owner/repo#number` fetches one pull request page and prints the parsed summary. `--github-pr-comments owner/repo#n` fetches
@@ -727,7 +727,7 @@ The contract for the phone app, with every endpoint, the pairing flow and the er
 [docs/phone-api.md](docs/phone-api.md); the data types are in `Sources/Shared/PhoneAPI.swift`, which an iOS target can
 compile as it is.
 
-**Testing without a phone.** `MeetingRecorder --serve [--port N] --data-dir <folder>` runs only the server against a data
+**Testing without a phone.** `WorkTime --serve [--port N] --data-dir <folder>` runs only the server against a data
 folder (use a copy; it refuses to run without `--data-dir`) and reads commands from stdin: `pair [seconds]` prints a pairing
 url and code, `devices`, `revoke <id>`, `quit`. The keys go to `phone-secrets.json` in the folder, or to a test service in the
 Keychain with `--keychain`. In a debug build `--phone-client <host:port> <url> <path> [--method M] [--body JSON|@file]
@@ -745,22 +745,23 @@ pairing and troubleshooting are in [ios/README.md](ios/README.md).
 
 ## Claude Code plugin
 
-`plugin/` is a Claude Code plugin, published from this repository as the `indemeeting` marketplace. Install it from
+`plugin/` is a Claude Code plugin, published from this repository as the `worktime` marketplace. Install it from
 Settings > Activity > Claude Code plugin (Install Plugin runs the `claude` CLI; Install from Folder uses a local
 checkout while developing), or in Claude Code:
 
-    /plugin marketplace add niklasinde/indemeeting
-    /plugin install meetingrecorder@indemeeting
+    /plugin marketplace add niklasinde/worktime
+    /plugin install worktime@worktime
 
-Open WorkTime once first: on launch it links itself as `~/Library/Application Support/MeetingRecorder/bin/meetingrecorder`,
-which the plugin's MCP server starts. New Claude Code sessions pick the plugin up. Remove it with Remove Plugin or
-`/plugin uninstall meetingrecorder@indemeeting`.
+Open WorkTime once first: on launch it links itself as `~/Library/Application Support/MeetingRecorder/bin/worktime`,
+which the plugin's MCP server starts, with `meetingrecorder` beside it pointing there for installs from before the
+rename. New Claude Code sessions pick the plugin up. Remove it with Remove Plugin or `/plugin uninstall worktime@worktime`.
+An install made as `meetingrecorder@indemeeting` keeps working and shows as installed; Remove Plugin removes it.
 
 What it adds:
 
 - Hooks on SessionStart, UserPromptSubmit, PostToolUse (at most once per 30 seconds per session), Notification,
   SubagentStop, Stop and SessionEnd run `plugin/hooks/record-event.sh`, a POSIX `sh` + `awk` script (no Node or Python)
-  that appends one line to `claude-events.jsonl` in the data folder (`MEETING_RECORDER_DATA_DIR` is respected) and
+  that appends one line to `claude-events.jsonl` in the data folder (`WORKTIME_DATA_DIR` and `MEETING_RECORDER_DATA_DIR` are respected) and
   always exits 0:
 
       {"time":1792399066,"event":"UserPromptSubmit","session_id":"…","cwd":"/Users/me/git/repo","transcript_path":"…/….jsonl","prompt_bytes":27}
@@ -770,7 +771,7 @@ What it adds:
   working until Stop, SessionEnd, a Notification (waiting for you) or 10 minutes without events; the session you
   prompted last while Claude is frontmost is the one you are in. The context summary shows per session the time it was
   working or in front of you and, of that, the time "with you".
-- An MCP server (`meetingrecorder --mcp`, JSON-RPC 2.0 over stdio, protocol 2025-11-25 back to 2024-11-05) with
+- An MCP server `worktime` (`worktime --mcp`, JSON-RPC 2.0 over stdio, protocol 2025-11-25 back to 2024-11-05) with
   read-only tools: `activity_context(hours)` (the `--context` summary), `time_report(week_start?)` (the week export
   per day, project, branch and ticket), `search_meetings(query, limit?)` (full-text, with snippets), `get_meeting(id)`
   (summary, action items, notes and the transcript with speakers) and `recent_meetings(limit?)`. It opens the database
@@ -784,7 +785,7 @@ What it adds:
   we decide in the standup", "what was I working on").
 
 Privacy: everything stays on the Mac. Prompt text, tool input and tool output are never written; only the prompt's
-length is. `MEETING_RECORDER_HOOK_PROMPTS=1` in Claude Code's environment keeps the first 500 characters of each
+length is. `WORKTIME_HOOK_PROMPTS=1` (or `MEETING_RECORDER_HOOK_PROMPTS=1`) in Claude Code's environment keeps the first 500 characters of each
 prompt (otherwise the app reads your last prompt from the transcript, as without the plugin). Either way the app
 stores a prompt in the activity database only while "Store last prompt" is on.
 

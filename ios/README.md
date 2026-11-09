@@ -60,7 +60,7 @@ too, revoke it in the Mac's iPhone settings; the app then asks you to pair again
   prompt, so that permission flow and Bonjour across devices still need a real phone. `xcodebuild` may keep running after
   the UI tests finish; stop it once the summary line has been printed.
 - End to end: the `MeetingRecorderPhoneE2E` scheme drives the app with XCUITest against the Mac's headless server and saves a
-  screenshot per state. Start the server on a copy of your data (`MeetingRecorder --serve --port N --data-dir <copy>`, then
+  screenshot per state. Start the server on a copy of your data (`WorkTime --serve --port N --data-dir <copy>`, then
   type `pair`), and pass `TEST_RUNNER_E2E_CODE`, `TEST_RUNNER_E2E_ADDRESS` (`host:pairing-port`) and `TEST_RUNNER_E2E_SHOTS`.
 
 ## Troubleshooting

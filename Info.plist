@@ -5,7 +5,7 @@
     <key>CFBundleName</key><string>WorkTime</string>
     <key>CFBundleDisplayName</key><string>WorkTime</string>
     <key>CFBundleIdentifier</key><string>com.niklasinde.MeetingRecorder</string>
-    <key>CFBundleExecutable</key><string>MeetingRecorder</string>
+    <key>CFBundleExecutable</key><string>WorkTime</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>

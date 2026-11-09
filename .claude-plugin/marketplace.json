@@ -1,5 +1,5 @@
 {
-  "name": "indemeeting",
+  "name": "worktime",
   "owner": {
     "name": "Niklas Inde"
   },
@@ -8,7 +8,7 @@
   },
   "plugins": [
     {
-      "name": "meetingrecorder",
+      "name": "worktime",
       "source": "./plugin",
       "description": "Local Claude Code session tracking for WorkTime, and read-only access to your activity, time report and meetings",
       "version": "1.0.0",

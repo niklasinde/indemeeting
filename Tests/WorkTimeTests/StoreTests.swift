@@ -1,0 +1,402 @@
+import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
+
+private func tempFolder() throws -> URL {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("store-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder
+}
+
+private func withStore(_ body: (MeetingStore, URL) throws -> Void) throws {
+    let folder = try tempFolder()
+    defer { try? FileManager.default.removeItem(at: folder) }
+    try body(try MeetingStore.open(at: folder.appendingPathComponent("db/meetings.sqlite")), folder)
+}
+
+private func count(_ table: String, in folder: URL) throws -> Int64 {
+    let db = try SQLiteDatabase(path: folder.appendingPathComponent("db/meetings.sqlite").path)
+    return try db.query("SELECT count(*) FROM \(table)") { $0.int64(0) }.first ?? -1
+}
+
+private let standup = MeetingSummary(
+    title: "Daglig standup",
+    actionItems: [.init(task: "Skicka rapporten", owner: "Anna"), .init(task: "Boka rum", owner: nil)],
+    topics: [.init(title: "Release", points: ["Releasen är på tisdag.", "Kundteamet informeras."])])
+
+private let segments = [TranscriptSegment(start: 4, text: "Vi har sex öppna tickets."),
+                        TranscriptSegment(start: 12, text: "Testdata saknas.")]
+
+let storeTests: [(name: String, run: () throws -> Void)] = [
+    ("the database is created with WAL, foreign keys and the latest schema", {
+        try withStore { store, folder in
+            check(try store.schemaVersion() == MeetingStore.migrations.count, "schema version")
+            let db = try SQLiteDatabase(path: folder.appendingPathComponent("db/meetings.sqlite").path)
+            check(try db.query("PRAGMA journal_mode") { $0.string(0) } == ["wal"], "wal")
+            check(try db.query("PRAGMA foreign_keys") { $0.int64(0) } == [1], "foreign keys")
+            try store.setNotes("Meeting-2026-10-15-1430.m4a", "kept")
+            let reopened = try MeetingStore.open(at: folder.appendingPathComponent("db/meetings.sqlite"))
+            check(try reopened.meetings().map(\.notes) == ["kept"], "data survives reopening")
+            check(try reopened.schemaVersion() == MeetingStore.migrations.count, "no migration ran twice")
+        }
+    }),
+
+    ("a meeting's source is stored once and replaced only when asked", {
+        try withStore { store, _ in
+            let file = "Meeting-2026-11-06-1000.m4a"
+            let huddle = MeetingSource(app: "Slack", title: "Huddle with Andy", bundle: "com.tinyspeck.slackmacgap")
+            check(try store.setSource(file, huddle) == huddle, "stored")
+            check(try store.setSource(file, MeetingSource(app: "Zoom")) == huddle, "a continued meeting keeps its source")
+            let named = MeetingSource(app: "Slack", title: "Huddle with Andy Smith", bundle: "com.tinyspeck.slackmacgap")
+            try store.setSource(file, named, replacing: true)
+            let meeting = try store.meetings().first
+            check(meeting?.source == named && meeting?.title == "Huddle with Andy Smith", "refined, and titles the meeting")
+            check(meeting?.sourceLabel == "Slack", "the name is not repeated")
+            check(MCPServer.meetingLine(meeting!).hasSuffix("(source: Huddle with Andy Smith \u{00B7} Slack)"), "mcp line")
+            try store.setTitleOverride(file, "Planning")
+            check(try store.meetings().first?.sourceLabel == "Huddle with Andy Smith \u{00B7} Slack", "full label under another title")
+        }
+    }),
+
+    ("a database that cannot be opened makes the store unavailable instead of keeping data in memory", {
+        let folder = try tempFolder()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: folder.path)
+        for url in [folder.appendingPathComponent("meetings.sqlite"), folder.appendingPathComponent("db/meetings.sqlite")] {
+            let store = MeetingStore.openDefault(at: url)
+            check(!store.isAvailable && store.openError?.url == url, "unavailable for \(url.path)")
+            check(store.openError?.existingLocation == folder, "reveals the folder that exists")
+            check(store.openError?.errorDescription?.contains("could not be opened") == true, "says why")
+            var refused = 0
+            for write in [{ try store.setNotes("Meeting-2026-10-15-1430.m4a", "lost") },
+                          { try store.saveTranscript("Meeting-2026-10-15-1430.m4a", segments: segments, language: .swedish, engine: "x") },
+                          { _ = try store.meetings() }] as [() throws -> Void] {
+                do { try write() } catch is DatabaseUnavailable { refused += 1 } catch {}
+            }
+            check(refused == 3, "reads and writes throw, \(refused)")
+        }
+        check(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty, "nothing created")
+
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: folder.path)
+        let store = MeetingStore.openDefault(at: folder.appendingPathComponent("meetings.sqlite"))
+        check(store.isAvailable && store.openError == nil, "opens once the folder is writable")
+    }),
+
+    ("migrations run forward once each", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let db = try SQLiteDatabase(path: folder.appendingPathComponent("m.sqlite").path)
+        let first = "CREATE TABLE t (a TEXT); INSERT INTO t VALUES ('x')"
+        try MeetingStore.migrate(db, [first])
+        try MeetingStore.migrate(db, [first, "ALTER TABLE t ADD COLUMN b TEXT DEFAULT 'y'"])
+        try MeetingStore.migrate(db, [first, "ALTER TABLE t ADD COLUMN b TEXT DEFAULT 'y'"])
+        check(try db.query("SELECT a, b FROM t") { $0.string(0) + $0.string(1) } == ["xy"], "v1 then v2 applied once")
+        check(try db.query("SELECT version FROM schema_version ORDER BY version") { $0.int64(0) } == [1, 2], "versions")
+        var failed = false
+        do { try MeetingStore.migrate(db, [first, "SELECT 1", "CREATE TABLE u (a); SELEKT"]) } catch { failed = true }
+        check(try failed && db.query("SELECT count(*) FROM sqlite_master WHERE name = 'u'") { $0.int64(0) } == [0],
+              "a failing migration is rolled back")
+    }),
+
+    ("migration 2 adds a speaker to transcript segments and keeps old rows without one", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(1)))
+        try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (1, 0, 3, 'Gammal.')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
+        check(try store.content(of: "Meeting-2026-10-14-0900.m4a")?.segments == [TranscriptSegment(start: 3, text: "Gammal.")],
+              "old row has no speaker")
+        let labelled = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you),
+                        TranscriptSegment(start: 2, text: "Hallå.", speaker: .others)]
+        try store.saveTranscript("Meeting-2026-10-15-1430.m4a", segments: labelled, language: .swedish, engine: "x")
+        let content = try store.content(of: "Meeting-2026-10-15-1430.m4a")
+        check(content?.segments == labelled, "speakers read back")
+        check(ProcessingLogic.exportMarkdown(content!).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Övriga: Hallå."), "export")
+    }),
+
+    ("migration 4 adds speakers and known voices to an existing database", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(3)))
+        try old.run("INSERT INTO meetings (id, audio_file, created) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0)")
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text, speaker) VALUES (1, 0, 3, 'Hej.', 'others')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
+        let content = try store.content(of: "Meeting-2026-10-14-0900.m4a")
+        check(content?.segments == [TranscriptSegment(start: 3, text: "Hej.", speaker: .others)] && content?.names == [:], "kept")
+        check(try store.knownVoices().isEmpty, "no voices")
+    }),
+
+    ("the last migration adds when a meeting was transcribed, empty for existing meetings", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.dropLast()))
+        try old.run("INSERT INTO meetings (id, audio_file, created, transcript_engine) VALUES (1, 'Meeting-2026-10-14-0900.m4a', 0, 'x')")
+        let store = try MeetingStore.open(at: url)
+        check(try store.schemaVersion() == MeetingStore.migrations.count, "migrated")
+        let meeting = try store.content(of: "Meeting-2026-10-14-0900.m4a")?.meeting
+        check(meeting?.transcriptEngine == "x" && meeting?.transcribedAt == nil, "old meeting has no time")
+    }),
+
+    ("the time of the last transcription is kept until the meeting is transcribed again", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            let first = Date(timeIntervalSince1970: 1_793_887_320)
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "SpeechTranscriber", transcribedAt: first)
+            check(try store.content(of: name)?.meeting.transcribedAt == first, "stored")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "SpeechTranscriber")
+            check(try store.content(of: name)?.meeting.transcribedAt == first, "recognising speakers keeps it")
+            let second = first.addingTimeInterval(3600)
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "ggml-large-v3-turbo", transcribedAt: second)
+            let meeting = try store.meetings().first
+            check(meeting?.transcribedAt == second && meeting?.transcriptEngine == "ggml-large-v3-turbo", "replaced")
+            check(try store.searchMeetings("testdata", limit: 5).first?.snippet.contains("**Testdata**") == true, "search snippet")
+        }
+    }),
+
+    ("naming a speaker names it in the meeting and remembers its voice", {
+        try withStore { store, folder in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            let labelled = [TranscriptSegment(start: 1, text: "Hej.", speaker: .you),
+                            TranscriptSegment(start: 2, text: "Hallå.", speaker: .numbered(1)),
+                            TranscriptSegment(start: 3, text: "Tjena.", speaker: .numbered(2))]
+            try store.saveTranscript(name, segments: labelled, language: .swedish, engine: "x", speakers: [
+                SpeakerProfile(speaker: .numbered(1), embedding: [1, 0]), SpeakerProfile(speaker: .numbered(2), name: "Erik", embedding: [0, 1])])
+            check(try store.content(of: name)?.names == [.numbered(2): "Erik"], "recognised name saved")
+            try store.renameSpeaker(name, .numbered(1), to: "  Anna ")
+            let content = try store.content(of: name)!
+            check(content.names == [.numbered(1): "Anna", .numbered(2): "Erik"], "names \(content.names)")
+            check(ProcessingLogic.exportMarkdown(content).contains("[00:00:01] Du: Hej.\n\n[00:00:02] Anna: Hallå.\n\n[00:00:03] Erik: Tjena."),
+                  "export uses the names")
+            check(try store.knownVoices().map(\.name) == ["Anna"], "voice remembered")
+            check(try store.knownVoices().first?.embedding == [1, 0], "with the speaker's embedding")
+            let other = "Meeting-2026-10-16-0900.m4a"
+            try store.saveTranscript(other, segments: labelled, language: .swedish, engine: "x",
+                                     speakers: [SpeakerProfile(speaker: .numbered(1), embedding: [0, 2])])
+            try store.renameSpeaker(other, .numbered(1), to: "anna")
+            let voices = try store.knownVoices()
+            check(voices.count == 1 && voices[0].embedding == [0.5, 0.5], "same name blends \(voices)")
+            try store.renameSpeaker(name, .you, to: "Niklas")
+            check(try store.content(of: name)?.names[.you] == "Niklas" && (try store.knownVoices().count) == 1,
+                  "you can be named, without a voice")
+            try store.renameSpeaker(name, .numbered(1), to: "")
+            check(try store.content(of: name)?.names[.numbered(1)] == nil, "an empty name gives the label back")
+            try store.saveTranscript(name, segments: labelled, language: .swedish, engine: "x")
+            check(try store.content(of: name)?.names == [:], "a new transcript replaces the speakers")
+            try store.deleteKnownVoice(voices[0].id)
+            check(try store.knownVoices().isEmpty, "voice forgotten")
+            try store.delete(other)
+            check(try count("speakers", in: folder) == 0, "speakers deleted with their meeting")
+        }
+    }),
+
+    ("migration 3 backfills the transcribed and summarised flags", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.prefix(2)))
+        try old.run("""
+            INSERT INTO meetings (id, audio_file, created, status) VALUES
+                (1, 'a.m4a', 0, 'summarised'), (2, 'b.m4a', 0, 'unavailable'), (3, 'c.m4a', 0, 'none')
+            """)
+        try old.run("INSERT INTO transcript_segments (meeting_id, position, start, text) VALUES (1, 0, 0, 'A.'), (2, 0, 0, 'B.')")
+        let store = try MeetingStore.open(at: url)
+        let flags = Dictionary(uniqueKeysWithValues: try store.meetings().map { ($0.audioFile, [$0.transcribed, $0.summarised]) })
+        check(flags == ["a.m4a": [true, true], "b.m4a": [true, false], "c.m4a": [false, false]], "backfilled \(flags)")
+    }),
+
+    ("meetings awaiting a summary are the transcribed, unsummarised and not failed ones, newest first", {
+        try withStore { store, _ in
+            let names = ["Meeting-2026-10-13-0900.m4a", "Meeting-2026-10-14-0900.m4a", "Meeting-2026-10-15-0900.m4a",
+                         "Meeting-2026-10-16-0900.m4a", "Meeting-2026-10-17-0900.m4a"]
+            for name in names.dropLast() { try store.saveTranscript(name, segments: segments, language: .swedish, engine: "x") }
+            try store.setNotes(names[4], "no transcript")
+            try store.saveSummary(names[1], ParsedSummary(unavailable: "Apple Intelligence is off"))
+            try store.saveSummary(names[2], ParsedSummary(standup))
+            try store.setFailed(names[3], message: "The model refused.")
+            check(try store.awaitingSummary().map(\.audioFile) == [names[1], names[0]], "awaiting \(try store.awaitingSummary().map(\.audioFile))")
+        }
+    }),
+
+    ("saving a transcript or summary sets the flags, and an unavailable summary clears summarised", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            func flags() throws -> [Bool]? { try store.content(of: name).map { [$0.meeting.transcribed, $0.meeting.summarised] } }
+            try store.setNotes(name, "x")
+            check(try flags() == [false, false], "new meeting")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "x")
+            check(try flags() == [true, false], "transcribed")
+            try store.saveSummary(name, ParsedSummary(standup))
+            check(try flags() == [true, true], "summarised")
+            try store.saveSummary(name, ParsedSummary(unavailable: "Apple Intelligence is off."))
+            check(try flags() == [true, false], "unavailable clears summarised")
+            try store.saveTranscript(name, segments: [], language: .swedish, engine: "x")
+            check(try flags() == [false, false], "empty transcript clears transcribed")
+        }
+    }),
+
+    ("transcript, summary, notes, title and checks are stored and read back", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "DictationTranscriber")
+            try store.saveSummary(name, ParsedSummary(standup))
+            try store.setNotes(name, "Fråga Johan.")
+            try store.setTitleOverride(name, "Standup")
+            var content = try store.content(of: name)
+            check(content?.segments == segments, "segments")
+            let meeting = content?.meeting
+            check(meeting?.language == .swedish && meeting?.transcriptEngine == "DictationTranscriber", "language and engine")
+            check(meeting?.languageDetected == false, "chosen language")
+            try store.saveTranscript(name, segments: segments, language: .english, detected: true, engine: "SpeechTranscriber")
+            let detected = try store.content(of: name)?.meeting
+            check(detected?.language == .english && detected?.languageDetected == true, "detected language")
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "DictationTranscriber")
+            check(meeting?.title == "Standup" && meeting?.aiTitle == "Daglig standup", "titles")
+            check(meeting?.notes == "Fråga Johan." && meeting?.status == .summarised, "notes and status")
+            check(meeting?.created == RecordingLogic.date(fromFileName: name), "created from the name")
+            let items = content?.summary.actionItems ?? []
+            check(items.map(\.owner) == ["Anna", nil] && items.map(\.task) == ["Skicka rapporten", "Boka rum"], "action items")
+            check(content?.summary.sections == [SummarySection(heading: "Release", lines: [.bullet("Releasen är på tisdag."),
+                                                                                          .bullet("Kundteamet informeras.")])],
+                  "topics and points")
+
+            try store.setChecked(actionItem: Int64(items[0].key)!, true)
+            try store.saveSummary(name, ParsedSummary(MeetingSummary(title: "Ny", actionItems: standup.actionItems + [
+                .init(task: "Ny punkt", owner: nil)], topics: [])))
+            content = try store.content(of: name)
+            check(content?.summary.actionItems.map(\.done) == [true, false, false], "checks survive a new summary")
+
+            try store.saveSummary(name, ParsedSummary(unavailable: "Apple Intelligence is off"))
+            content = try store.content(of: name)
+            check(content?.summary.isEmpty == true && content?.meeting.aiTitle == nil, "unavailable clears the summary")
+            check(content?.meeting.status == .unavailable && content?.meeting.statusMessage == "Apple Intelligence is off", "reason")
+            check(content?.segments == segments && content?.meeting.notes == "Fråga Johan.", "transcript and notes kept")
+
+            try store.setFailed(name, message: "No speech")
+            check(try store.content(of: name)?.meeting.status == .failed, "failure recorded")
+            try store.setDurations([name: 61.5, "unknown.m4a": 3])
+            check(try store.meetings().map(\.duration) == [61.5], "duration, unknown files ignored")
+            check(try store.content(of: "unknown.m4a") == nil, "no row for an unknown file")
+        }
+    }),
+
+    ("full-text search covers titles, transcript, summary and notes", {
+        try withStore { store, _ in
+            let a = "Meeting-2026-10-15-1430.m4a", b = "Meeting-2026-10-16-0900.m4a"
+            try store.saveTranscript(a, segments: segments, language: .swedish, engine: "x")
+            try store.saveSummary(a, ParsedSummary(standup))
+            try store.setNotes(b, "Kaffe med kundteamet")
+            try store.setTitleOverride(b, "Budget Q4")
+            check(try store.search("") == nil, "empty query")
+            check(try store.search("STANDUP") == [a], "ai title, case")
+            check(try store.search("oppna") == [a], "transcript, diacritics")
+            check(try store.search("tisdag") == [a], "summary point")
+            check(try store.search("anna") == [a], "action item owner")
+            check(try store.search("kaffe") == [b], "notes")
+            check(try store.search("budg") == [b], "title prefix")
+            check(try store.search("kundteamet") == [a, b], "both")
+            check(try store.search("kundteamet kaffe") == [b], "every word")
+            check(try store.search("\"or") == [], "quotes are harmless")
+            try store.setNotes(b, "Te")
+            check(try store.search("kaffe") == [], "index follows edits")
+        }
+    }),
+
+    ("sidecar files are imported once and left untouched", {
+        try withStore { store, folder in
+            let recordings = folder.appendingPathComponent("rec", isDirectory: true)
+            try FileManager.default.createDirectory(at: recordings, withIntermediateDirectories: true)
+            let first = recordings.appendingPathComponent("Meeting-2026-10-15-1430.m4a")
+            let second = recordings.appendingPathComponent("Meeting-2026-10-14-0900.m4a")
+            let sidecars: [URL: String] = [
+                ProcessingLogic.transcriptURL(for: first): ProcessingLogic.transcriptMarkdown(
+                    audioName: first.lastPathComponent, language: .swedish, engine: "DictationTranscriber", segments: segments),
+                ProcessingLogic.summaryURL(for: first): ProcessingLogic.summaryMarkdown(standup, audioName: first.lastPathComponent,
+                                                                                        language: .swedish),
+                ProcessingLogic.notesURL(for: first): "Mina anteckningar\n",
+                ProcessingLogic.metaURL(for: first): String(decoding: MeetingMeta(title: "Retro", checked: ["Boka rum": true]).encoded(),
+                                                            as: UTF8.self),
+                ProcessingLogic.summaryURL(for: second): ProcessingLogic.unavailableMarkdown(
+                    .appleIntelligenceOff, audioName: second.lastPathComponent, language: .english),
+            ]
+            for (url, text) in sidecars { try text.write(to: url, atomically: true, encoding: .utf8) }
+            let audio = ["Meeting-2026-10-15-1430.m4a", "Meeting-2026-10-14-0900.m4a", "Interview.mp3",
+                         "Meeting-2026-10-16-0800.recording.m4a"]
+            for name in audio { try Data("audio".utf8).write(to: recordings.appendingPathComponent(name)) }
+            let created = Date(timeIntervalSince1970: 2_000_000_000)
+            let files = try FileManager.default.contentsOfDirectory(atPath: recordings.path).map { FolderItem(name: $0, created: created) }
+
+            check(try store.sync(folder: recordings, files: files) == 3, "three recordings imported")
+            try store.setNotes(first.lastPathComponent, "Ändrad")
+            check(try store.sync(folder: recordings, files: files) == 0, "second sync imports nothing")
+            check(try store.meetings().count == 3, "one row each")
+
+            let content = try store.content(of: first.lastPathComponent)
+            check(content?.segments == segments && content?.meeting.language == .swedish, "transcript")
+            check(content?.meeting.transcriptEngine == "DictationTranscriber", "engine")
+            check(content?.meeting.title == "Retro" && content?.meeting.aiTitle == "Daglig standup", "titles")
+            check(content?.summary.actionItems.map(\.done) == [false, true], "checked from meta")
+            check(content?.summary.sections.first?.lines.count == 2, "topics")
+            check(content?.meeting.notes == "Ändrad", "edits are not overwritten by a later sync")
+            let unavailable = try store.content(of: second.lastPathComponent)?.meeting
+            check(unavailable?.status == .unavailable && unavailable?.statusMessage == SummaryUnavailable.appleIntelligenceOff.message,
+                  "reason \(unavailable?.statusMessage ?? "nil")")
+            let plain = try store.content(of: "Interview.mp3")?.meeting
+            check(plain?.status == ProcessingStatus.none && plain?.created == created, "no sidecars, dated by the file")
+            for (url, text) in sidecars {
+                check((try? String(contentsOf: url, encoding: .utf8)) == text, "\(url.lastPathComponent) unchanged")
+            }
+        }
+    }),
+
+    ("deleting a meeting removes its rows and search entries", {
+        try withStore { store, folder in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "x")
+            try store.saveSummary(name, ParsedSummary(standup))
+            try store.setNotes("Meeting-2026-10-16-0900.m4a", "other")
+            try store.delete(name)
+            check(try store.content(of: name) == nil, "meeting gone")
+            check(try store.search("tickets") == [], "not found")
+            for table in ["transcript_segments", "action_items", "summary_topics", "summary_points"] {
+                check(try count(table, in: folder) == 0, "\(table) emptied")
+            }
+            check(try count("meetings_fts", in: folder) == 1 && store.meetings().count == 1, "other meeting kept")
+        }
+    }),
+
+    ("a meeting exports summary, action items, notes and transcript as one markdown file", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a"
+            try store.saveTranscript(name, segments: segments, language: .swedish, engine: "DictationTranscriber")
+            try store.saveSummary(name, ParsedSummary(standup))
+            try store.setNotes(name, "Fråga Johan.\n")
+            let items = try store.content(of: name)?.summary.actionItems ?? []
+            try store.setChecked(actionItem: Int64(items[1].key)!, true)
+            let markdown = ProcessingLogic.exportMarkdown(try store.content(of: name)!)
+            check(markdown.hasPrefix("# Daglig standup\n"), "title")
+            check(markdown.contains("## Åtgärdspunkter\n\n- [ ] Anna: Skicka rapporten\n- [x] Boka rum\n"), "action items \(markdown)")
+            check(markdown.contains("## Release\n\n- Releasen är på tisdag."), "topics")
+            check(markdown.contains("## Anteckningar\n\nFråga Johan.\n"), "notes")
+            check(markdown.contains("[00:00:04] Vi har sex öppna tickets."), "transcript")
+            check(LibraryLogic.parseSummary(markdown).actionItems.map(\.done) == [false, true], "parses back")
+
+            try store.saveSummary(name, ParsedSummary(unavailable: "Apple Intelligence is off"))
+            let fallback = ProcessingLogic.exportMarkdown(try store.content(of: name)!)
+            check(fallback.hasPrefix("# Meeting\n\nApple Intelligence is off\n"), "no summary \(fallback)")
+        }
+    }),
+]

@@ -3,7 +3,7 @@ description: Show the time report for a week from WorkTime, per project, branch 
 argument-hint: "[week start YYYY-MM-DD, or last]"
 ---
 
-Call the `time_report` tool of the `meetingrecorder` MCP server. Arguments: `$ARGUMENTS`
+Call the `time_report` tool of the `worktime` MCP server. Arguments: `$ARGUMENTS`
 
 - Empty: this week, so leave `week_start` out.
 - A date (YYYY-MM-DD): pass it as `week_start`; any day of the week works.
