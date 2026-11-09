@@ -45,6 +45,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/GitHubStore.swift \
     Sources/WorkTime/GitHubSelection.swift \
     Sources/WorkTime/GitHubLayout.swift \
+    Sources/WorkTime/NotchLayout.swift \
     Sources/WorkTime/GitHubClaude.swift \
     Sources/WorkTime/GitHubActions.swift \
     Sources/WorkTime/GitHubLink.swift \
@@ -81,6 +82,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/GitHubDetailTests.swift \
     Tests/WorkTimeTests/GitHubSelectionTests.swift \
     Tests/WorkTimeTests/GitHubLayoutTests.swift \
+    Tests/WorkTimeTests/NotchLayoutTests.swift \
     Tests/WorkTimeTests/GitHubActivityTests.swift \
     Tests/WorkTimeTests/GitHubCommentsTests.swift \
     Tests/WorkTimeTests/GitHubDiffTests.swift \

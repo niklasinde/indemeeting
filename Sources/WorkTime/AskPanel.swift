@@ -29,7 +29,10 @@ final class AskPanel {
         UserDefaults.standard.register(defaults: [Self.shownKey: true])
         let center = NotificationCenter.default
         center.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { AskPanel.shared.rebuild() }
+            MainActor.assumeIsolated { AskPanel.shared.screensChanged() }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated { AskPanel.shared.screensChanged() }
         }
         center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
@@ -38,6 +41,12 @@ final class AskPanel {
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
         rebuild()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.screensChanged() }
+    }
+
+    private func screensChanged() {
+        guard bars.map(\.screen) == NSScreen.screens else { return rebuild() }
+        bars.forEach { $0.position() }
     }
 
     private func rebuild() {
@@ -62,9 +71,10 @@ final class NotchBar: ObservableObject {
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
     @Published private(set) var hasNotch = false
-    private let screen: NSScreen
+    let screen: NSScreen
     private lazy var panel = makePanel()
     private var resign: NSObjectProtocol?
+    private var resized: NSObjectProtocol?
     @Published private(set) var openedByHover = false
     private var typing = false
     private var held = false
@@ -74,6 +84,9 @@ final class NotchBar: ObservableObject {
         self.screen = screen
         resign = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.collapse() }
+        }
+        resized = NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: panel, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.place() }
         }
     }
 
@@ -159,7 +172,7 @@ final class NotchBar: ObservableObject {
     }
 
     func close() {
-        if let resign { NotificationCenter.default.removeObserver(resign) }
+        [resign, resized].compactMap { $0 }.forEach(NotificationCenter.default.removeObserver)
         panel.orderOut(nil)
     }
 
@@ -167,10 +180,8 @@ final class NotchBar: ObservableObject {
     static func metrics(of screen: NSScreen) -> (centre: CGFloat, barHeight: CGFloat, notchWidth: CGFloat?) {
         let menuBar = screen.frame.maxY - screen.visibleFrame.maxY
         let barHeight = menuBar > 0 ? menuBar : NSStatusBar.system.thickness
-        guard let left = screen.auxiliaryTopLeftArea, let right = screen.auxiliaryTopRightArea else {
-            return (screen.frame.midX, barHeight, nil)
-        }
-        return ((left.maxX + right.minX) / 2, barHeight, right.minX - left.maxX)
+        let notch = NotchLayout.notch(screen: screen.frame, left: screen.auxiliaryTopLeftArea, right: screen.auxiliaryTopRightArea)
+        return (notch.centre, barHeight, notch.width)
     }
 
     func position(then: @escaping () -> Void = {}) {
@@ -179,14 +190,17 @@ final class NotchBar: ObservableObject {
         barHeight = metrics.barHeight
         hasNotch = metrics.notchWidth != nil
         notchWidth = metrics.notchWidth ?? 200
-        let centre = metrics.centre
-        let top = screen.frame.maxY
         DispatchQueue.main.async {
-            let size = content.fittingSize
-            self.panel.setFrame(NSRect(x: centre - size.width / 2, y: top - size.height,
-                                       width: size.width, height: size.height), display: true)
+            self.place(size: content.fittingSize)
             then()
         }
+    }
+
+    /// The hosting view resizes the panel from its bottom-left corner when the content changes, so every resize is put back on the notch.
+    private func place(size: NSSize? = nil) {
+        let frame = NotchLayout.panelFrame(screen: screen.frame, left: screen.auxiliaryTopLeftArea,
+                                           right: screen.auxiliaryTopRightArea, size: size ?? panel.frame.size)
+        if panel.frame != frame { panel.setFrame(frame, display: true) }
     }
 
     private func makePanel() -> NSPanel {
