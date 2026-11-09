@@ -1214,6 +1214,32 @@ private let speakerTests: [(name: String, run: () throws -> Void)] = [
         check(late.contains { $0.speaker == .you }, "the same words long after the system said them are the user's")
     }),
 
+    ("whisper's made-up outro lines are dropped, real speech that mentions them is kept", {
+        let made = [
+            "Tack för att du har tittat på den här videon!", "Tack för att ni har tittat på den här videon.",
+            "Tack för att ni tittade.", "tack för att du har tittat", "Prenumerera på kanalen!",
+            "Undertexter från Amara.org-gemenskapen", "Textning av Stina Hedin", "Svensktextning.nu",
+            "Thank you for watching, and see you in the next video.", "Thank you for watching!",
+            "THANKS FOR WATCHING!!!", "thanks   for watching ... and see you next time", "Please subscribe.",
+            "Please like and subscribe to my channel!", "Subtitles by the Amara.org community",
+            "Thank you for watching, everyone. Bye!", "Takk for at du så på.", "Tak fordi du så med.",
+            "Danke fürs Zuschauen!", "Untertitel im Auftrag des ZDF für funk, 2017",
+        ]
+        for text in made { check(ProcessingLogic.isHallucination(text), "dropped: \(text)") }
+        let kept = [
+            "Tack så mycket.", "Tack.", "Thank you.", "Vi ses nästa gång.", "See you in the next meeting.",
+            "Tack för att ni har tittat på den här videon, nu går vi igenom budgeten.",
+            "Han sa thank you for watching i slutet av demon.", "Thank you for watching the demo.",
+            "Tack för att du tittade på pull requesten.",
+        ]
+        for text in kept { check(!ProcessingLogic.isHallucination(text), "kept: \(text)") }
+        let sentences = ProcessingLogic.whisperSentences([(" Okej, vi hörs.", 0), (" Tack för att du har tittat på den här videon!", 300),
+                                                          (" Tack så mycket.", 600), (" Thank you for watching,", 900),
+                                                          (" and see you in the next video.", 1000)])
+        check(sentences == [TranscriptSegment(start: 0, text: "Okej, vi hörs."), TranscriptSegment(start: 6, text: "Tack så mycket.")],
+              "\(sentences)")
+    }),
+
     ("transcript paragraphs are labelled whenever the speaker changes", {
         let segments = [segment(0, "Hej.", .you), segment(4, "Hur går det?", .you), segment(8, "Bra.", .numbered(1)),
                         segment(12, "Vi börjar.", .numbered(1)), segment(60, "Punkt två.", .numbered(1)),

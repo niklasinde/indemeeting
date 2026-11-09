@@ -298,10 +298,6 @@ enum WhisperLogic {
 }
 
 extension ProcessingLogic {
-    static let hallucinations = ["tack för att ni tittade", "tack för att du tittade", "tack för att ni lyssnade", "textning",
-                                 "undertexter", "thanks for watching", "thank you for watching", "subtitles by"]
-    /// Phrases no meeting says, which Whisper adds to whatever it heard over silence.
-    static let channelPhrases = ["subscribe to my channel", "please subscribe", "like and subscribe", "prenumerera på kanalen"]
     /// Above this no-speech probability a Whisper segment is taken for silence.
     static let noSpeechLimit = 0.6
 
@@ -312,14 +308,10 @@ extension ProcessingLogic {
         return "[(*♪".contains(first) && "])*♪".contains(last) || isHallucination(trimmed)
     }
 
-    /// A known phrase Whisper writes over silence, such as "Tack för att ni tittade!" or "Textning: …", alone in a
-    /// segment of a few words.
+    /// A whole line Whisper writes over silence, such as "Tack för att ni tittade!", never real speech that quotes one.
     static func isHallucination(_ text: String) -> Bool {
-        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
-        let normalized = words.joined(separator: " ")
-        return hallucinations.contains { phrase in
-            normalized.hasPrefix(phrase) && words.count <= phrase.split(separator: " ").count + 4
-        } || words.count <= 16 && channelPhrases.contains { normalized.contains($0) }
+        let normalized = text.lowercased().split { !$0.isLetter && !$0.isNumber }.joined(separator: " ")
+        return WhisperHallucinations.line.firstMatch(in: normalized, range: NSRange(normalized.startIndex..., in: normalized)) != nil
     }
 
     /// The text with any run of a word or phrase of up to four words repeated four or more times kept once, as Whisper
@@ -354,11 +346,61 @@ extension ProcessingLogic {
 
     /// Sentences from whisper.cpp segments, whose times are in hundredths of a second.
     static func whisperSentences(_ segments: [(text: String, start: Int64)]) -> [TranscriptSegment] {
-        sentences(segments.filter { !isWhisperNoise($0.text) }.map { ($0.text, TimeInterval($0.start) / 100) }, from: 0)
+        sentences(withoutNoise(segments).map { ($0.text, TimeInterval($0.start) / 100) }, from: 0)
             .compactMap { segment in
                 let text = collapseRepeats(segment.text)
                 guard text.contains(where: { $0.isLetter || $0.isNumber }), !isWhisperNoise(text) else { return nil }
                 return TranscriptSegment(start: segment.start, text: text)
             }
     }
+
+    /// Whisper often splits an outro, as "Thank you for watching," and "and see you in the next video.", so a piece
+    /// that only makes sense as the rest of a dropped outro goes with it.
+    private static func withoutNoise(_ segments: [(text: String, start: Int64)]) -> [(text: String, start: Int64)] {
+        var outro = ""
+        return segments.filter { segment in
+            if isWhisperNoise(segment.text) {
+                outro = isHallucination(segment.text) ? segment.text : ""
+                return false
+            }
+            guard !outro.isEmpty, isHallucination(outro + segment.text) else { outro = ""; return true }
+            outro += segment.text
+            return false
+        }
+    }
+}
+
+/// Stock lines Whisper invents over silence, learnt from YouTube subtitles. The patterns run on lowercased words
+/// without punctuation. A closer or filler only counts after an outro, so "Vi ses nästa gång." and "Tack." stay.
+enum WhisperHallucinations {
+    static let outros = [
+        "tack (så mycket )?för att (du|ni) (har )?(tittat|tittade|kollat|kollade|lyssnat|lyssnade)( på (den här|denna) (video|videon|klipp|klippet))?",
+        "(glöm inte att )?prenumerera på (min |vår )?kanal(en)?",
+        "(svensk )?(textning|undertexter|undertext)( gjord)?( (av|från))? [^ ]+( [^ ]+){0,2}",
+        "svensktextning( nu)?",
+        "thank you (so much |very much )?for watching( this video| the video)?",
+        "thanks (so much )?for watching( this video| the video)?",
+        "(please|don t forget to) (like and )?subscribe( to (my|the|our) channel)?",
+        "(like and )?subscribe to (my|the|our) channel",
+        "(subtitles|captions) by (the )?amara org community",
+        "takk for at (du|dere) (så|har sett)( på( videoen| denne videoen)?)?",
+        "tak (fordi|for at) (du|i) (så|har set)( med)?( (på )?(videoen|denne video))?",
+        "abonner på (kanalen|min kanal)",
+        "(teksting|tekstet|undertekster|undertekstet) (av|af) [^ ]+( [^ ]+){0,2}",
+        "(vielen )?danke? (fürs|für das|für ihr|für eure) zuschauen",
+        "untertitel (von|der|im auftrag des) [^ ]+( [^ ]+){0,4}",
+    ]
+    static let closers = [
+        "see you (in the |on the )?next (video|time|one)",
+        "vi ses (i nästa (video|klipp)|nästa gång)",
+        "vi ses (i neste video|neste gang)",
+        "bis zum nächsten (mal|video)",
+    ]
+    static let fillers = ["alla", "allihop", "allihopa", "everyone", "everybody", "guys", "bye", "hej", "då", "igen", "again", "alle"]
+
+    static let line: NSRegularExpression = {
+        func any(_ patterns: [String]) -> String { "(?:" + patterns.joined(separator: "|") + ")" }
+        let next = "(?: (?:och|and|og|und|så))? " + any(outros + closers)
+        return try! NSRegularExpression(pattern: "^" + any(outros) + "(?:" + next + ")*(?: " + any(fillers) + "){0,3}$")
+    }()
 }
