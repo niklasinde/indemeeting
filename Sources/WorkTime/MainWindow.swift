@@ -634,6 +634,7 @@ struct SectionSidebar: View {
         switch section {
         case .chat: ChatWindow.shared.show()
         case .claudeAPI: ClaudeAPIWindow.shared.show()
+        case .agent: AgentWindow.shared.show()
         default: library.show(section)
         }
     }

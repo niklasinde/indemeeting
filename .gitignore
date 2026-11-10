@@ -9,3 +9,4 @@ xcuserdata/
 ios/MeetingRecorderPhoneSim.xcodeproj/
 ios/.project-sim.yml
 bench/
+node_modules/

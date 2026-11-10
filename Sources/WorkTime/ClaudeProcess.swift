@@ -28,7 +28,7 @@ final class ClaudeProcess: @unchecked Sendable {
             process.standardError = errors
 
             let finished = DispatchGroup()
-            let lines = Buffer(), errorText = Buffer()
+            let lines = LineBuffer(), errorText = LineBuffer()
             finished.enter()
             output.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
@@ -110,7 +110,7 @@ final class ClaudeProcess: @unchecked Sendable {
 }
 
 /// Bytes read from a pipe, handed out as complete lines.
-private final class Buffer: @unchecked Sendable {
+final class LineBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private var data = Data()
 

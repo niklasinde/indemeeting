@@ -108,9 +108,9 @@ Quitting while paused saves the recording like Stop.
 
 "Open WorkTime" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
 main window (with a Dock icon while it is open). The sidebar holds the sections: **Meetings** (first), Activity, GitHub,
-Chat and Claude API. Meetings shows the recordings in `~/Library/Application Support/MeetingRecorder/Recordings` in a list beside the selected meeting,
+Chat, Claude API and Agent. Meetings shows the recordings in `~/Library/Application Support/MeetingRecorder/Recordings` in a list beside the selected meeting,
 grouped by Today, Yesterday, This week and Earlier; below 780 points the list and the meeting take turns, with a back
-button. Chat and Claude API open their own windows. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
+button. Chat, Claude API and Agent open their own windows. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
 hides the sidebar so the content takes the full width; the choice is remembered between launches. Each row shows the meeting title (a rename, else the title of the
 summary, else "Meeting") and the time and length. The search field at the top searches titles, transcripts, summaries
 and notes in the database (every word has to match as the start of a word, ignoring case and accents); the arrow keys
@@ -529,6 +529,33 @@ Claude Code. Open it from the **Claude API** row in the main window's sidebar.
 
 To check the client without the real API, `WorkTime --claude-api-check http://127.0.0.1:<port>/v1/messages` runs it with
 a fake key against a loopback stub. It refuses any other host.
+
+## Agent (proof of concept)
+
+A coding agent in its own window, built on the Claude Agent SDK and run with the Claude API key. Open it from **Agent…** in the
+menu bar menu or the **Agent** row in the main window's sidebar.
+
+- **Sidecar.** `agent/` is a small TypeScript program (`agent/src/main.ts`) around `query()` from `@anthropic-ai/claude-agent-sdk`
+  (pinned to 0.3.311). It speaks JSON lines over stdin and stdout. In: `{type:"prompt", text, cwd, sessionId?}`,
+  `{type:"permission", id, allow}`, `{type:"interrupt"}`. Out: `ready`, `session`, `text`, `tool_use`, `tool_result`, `result`,
+  `error`, `idle` and `permission_request {id, tool, input}`. Model `claude-opus-5-5` (override with `WORKTIME_AGENT_MODEL`).
+  Tools: Read, Grep and Glob run without asking; Edit, Write and Bash ask in the window first. Project settings (`CLAUDE.md`,
+  `.claude/settings.json`) of the folder are loaded, user settings are not.
+- **Build.** `cd agent && npm ci && npm run build` writes `agent/dist/main.js`. `build.sh` runs it when `npm` is installed. The
+  sidecar is not copied into the app bundle (its SDK carries a native binary that would need signing); the app finds it at
+  `$WORKTIME_AGENT_DIR/dist/main.js`, then `Contents/Resources/agent/dist/main.js`, then `agent/dist/main.js` in the checkout it
+  was built from. `node` is looked for on the PATH, in `/opt/homebrew/bin`, `/usr/local/bin` and the newest `~/.nvm` version.
+- **Auth.** The key saved under Settings > Models > Claude API is passed to the sidecar as `ANTHROPIC_API_KEY` in its
+  environment only. It is not logged; the sidecar's stderr is redacted before it is shown.
+- **Context.** The sidecar registers WorkTime's own read-only MCP server (`WorkTime --mcp`) as `worktime`, so the agent can read
+  meetings and activity.
+- **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.
+  Type `@` to pick a file of the folder (`git ls-files`, or a bounded walk); `@path:10-40` adds a line range. On send the
+  referenced files are listed by absolute path under the prompt, not inlined. `path/file.swift:123` references and Markdown
+  links to files in replies open the file at that line: Xcode for Swift and Objective-C when installed, else `cursor` or
+  `code --goto` when on the PATH, else the default app. Stop interrupts, New Session forgets the session id.
+
+`WorkTime --render-agent <folder>` (debug builds) saves PNGs of the window with a made-up transcript.
 
 ## GitHub
 

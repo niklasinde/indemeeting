@@ -377,7 +377,7 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("the Claude API chat is reachable only from the app window: the MCP server and the phone API never mention it", {
-        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "WorkTimeApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift"]
+        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "WorkTimeApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift", "AgentClient.swift"]
         for file in try sourceFiles() {
             let name = file.lastPathComponent
             guard !name.hasPrefix("ClaudeAPI") else { continue }

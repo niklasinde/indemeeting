@@ -25,6 +25,9 @@ enum Main {
         if let output = ClaudeAPIPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { ClaudeAPIPreview.run(to: output) }
         }
+        if let output = AgentPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { AgentPreview.run(to: output) }
+        }
         if let output = UpgradePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { UpgradePreview.run(to: output) }
         }
@@ -214,6 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         ClaudeAPIWindow.shared.configure(store: store)
+        AgentWindow.shared.configure { [tracker] in
+            tracker.current.flatMap { block in
+                (block.key.claude.first { $0.id == block.key.claudeFocus } ?? block.key.claude.first)
+                    .flatMap { ActivityLogic.claudeCheckout(cwd: $0.folder)?.checkout.path }
+            }
+        }
         AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
@@ -359,6 +368,7 @@ struct MenuContent: View {
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
         Button("Chat\u{2026}") { ChatWindow.shared.show() }
             .keyboardShortcut("a", modifiers: [.command, .shift])
+        Button("Agent\u{2026}") { AgentWindow.shared.show() }
         Menu("Languages: \(listened.summary)") {
             ForEach(MeetingLanguage.allCases) { language in
                 Toggle(language.displayName, isOn: listened.isListening(language)).disabled(listened.isOnly(language))

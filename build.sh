@@ -37,6 +37,10 @@ else
     swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/WorkTime/*.swift Sources/Shared/*.swift -o "$BIN"
 fi
 
+if [ -f agent/package.json ] && command -v npm >/dev/null; then
+    (cd agent && npm ci --no-audit --no-fund --silent && npm run build --silent) || echo "warning: the agent sidecar did not build; the Agent window will say so"
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/WorkTime"

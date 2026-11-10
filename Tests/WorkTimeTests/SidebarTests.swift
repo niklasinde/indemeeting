@@ -5,9 +5,9 @@ import Foundation
 
 let sidebarTests: [(name: String, run: () throws -> Void)] = [
     ("sidebar lists Meetings above Activity, GitHub, Sessions, Chat and Claude API", {
-        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Sessions", "Chat", "Claude API"],
+        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Sessions", "Chat", "Claude API", "Agent"],
               "order \(SidebarSection.allCases.map(\.title))")
-        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI], "chat and Claude API open their windows")
+        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI, .agent], "chat, Claude API and Agent open their windows")
     }),
 
     ("the sidebar opens on Meetings, and Activity or GitHub replace it", {
