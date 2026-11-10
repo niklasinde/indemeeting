@@ -463,7 +463,7 @@ private struct AssignedTickets: View {
 
     private func setUp() {
         onOpen()
-        SettingsWindow.shared.show(tab: .activity, anchor: .jira)
+        SettingsWindow.shared.show(anchor: .jira)
     }
 }
 

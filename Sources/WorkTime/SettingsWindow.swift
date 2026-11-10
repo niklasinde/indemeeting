@@ -253,10 +253,46 @@ final class SpeakerRecognitionModels: ObservableObject {
 enum SettingsTab: String, CaseIterable {
     case meetings = "Meetings"
     case activity = "Activity"
+    case privacy = "Privacy"
+    case projects = "Projects"
+    case notchBar = "Notch bar"
+    case gitHub = "GitHub"
+    case jira = "Jira"
+    case slack = "Slack"
     case models = "Models"
     case iphone = "iPhone"
 
     static let storageKey = "settingsTab"
+
+    var symbol: String {
+        switch self {
+        case .meetings: return "waveform"
+        case .activity: return "chart.bar.fill"
+        case .privacy: return "hand.raised.fill"
+        case .projects: return "folder.fill"
+        case .notchBar: return "rectangle.topthird.inset.filled"
+        case .gitHub: return "chevron.left.forwardslash.chevron.right"
+        case .jira: return "ticket.fill"
+        case .slack: return "number"
+        case .models: return "cpu.fill"
+        case .iphone: return "iphone"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .meetings: return .red
+        case .activity: return .orange
+        case .privacy: return .blue
+        case .projects: return .cyan
+        case .notchBar: return .gray
+        case .gitHub: return Color(white: 0.3)
+        case .jira: return .teal
+        case .slack: return .purple
+        case .models: return .indigo
+        case .iphone: return .green
+        }
+    }
 }
 
 struct SettingsView: View {
@@ -273,43 +309,45 @@ struct SettingsView: View {
     @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
     @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
     @AppStorage(LiveModel.storageKey) private var liveModel = LiveModel.best
+    @State private var target: SettingsAnchor?
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-    /// Longer content scrolls, so the window fits a laptop screen.
-    static let maxContentHeight: CGFloat = 760
+    /// Pages scroll, so the window fits a laptop screen.
+    static let size = CGSize(width: 760, height: 640)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Picker("Settings", selection: $tab) {
-                ForEach(SettingsTab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        HStack(spacing: 0) {
+            List(SettingsTab.allCases, id: \.self, selection: Binding(get: { tab }, set: { if let tab = $0 { self.tab = tab } })) { tab in
+                Label {
+                    Text(tab.rawValue)
+                } icon: {
+                    Image(systemName: tab.symbol)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 20, height: 20)
+                        .background(RoundedRectangle(cornerRadius: 5).fill(tab.tint.gradient))
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
+            .listStyle(.sidebar)
+            .frame(width: 190)
+            Divider()
             ScrollViewReader { proxy in
                 ScrollView {
-                    switch tab {
-                    case .meetings: meetings
-                    case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
-                    case .iphone: PhoneSettingsSection(model: .shared)
-                    case .models:
-                        ModelOverview(models: models, whisper: whisper, speakers: speakers, tracker: tracker) { anchor in
-                            tab = .meetings
-                            DispatchQueue.main.async { withAnimation { proxy.scrollTo(anchor, anchor: .top) } }
-                        }
+                    VStack(alignment: .leading, spacing: 22) {
+                        Text(tab.rawValue).font(.title2.bold()).id(tab)
+                        page { reveal($0, proxy: proxy) }
                     }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(maxHeight: Self.maxContentHeight)
+                .onChange(of: tab) { scroll(proxy) }
                 .onReceive(SettingsWindow.shared.$anchor.compactMap { $0 }) { anchor in
                     SettingsWindow.shared.anchor = nil
-                    DispatchQueue.main.async { withAnimation { proxy.scrollTo(anchor, anchor: .top) } }
+                    reveal(anchor, proxy: proxy)
                 }
             }
         }
-        .padding(24)
-        .frame(width: 520)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: Self.size.width, height: Self.size.height)
         .onReceive(poll) { _ in
             models.refresh()
             whisper.refresh()
@@ -317,6 +355,39 @@ struct SettingsView: View {
             projects.refresh()
         }
         .onChange(of: listened.languages) { models.refresh() }
+    }
+
+    @ViewBuilder private func page(show: @escaping (SettingsAnchor) -> Void) -> some View {
+        switch tab {
+        case .meetings: meetings
+        case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
+        case .privacy: PrivacySettingsView(tracker: tracker, projects: projects)
+        case .projects: ProjectsSettingsView(projects: projects)
+        case .notchBar: NotchBarSettingsSection(model: .shared)
+        case .gitHub: GitHubSettingsSection(model: .shared)
+        case .jira: JiraSettingsSection(model: .shared).id(SettingsAnchor.jira)
+        case .slack: SlackSettingsSection(model: .shared).id(SettingsAnchor.slack)
+        case .models: ModelOverview(models: models, whisper: whisper, speakers: speakers, tracker: tracker, show: show)
+        case .iphone: PhoneSettingsSection(model: .shared)
+        }
+    }
+
+    /// Opens the page of `anchor` and scrolls to it once the page is shown.
+    private func reveal(_ anchor: SettingsAnchor, proxy: ScrollViewProxy) {
+        target = anchor
+        if tab == anchor.tab { scroll(proxy) } else { tab = anchor.tab }
+    }
+
+    private func scroll(_ proxy: ScrollViewProxy) {
+        let anchor = target
+        target = nil
+        DispatchQueue.main.async {
+            if let anchor {
+                withAnimation { proxy.scrollTo(anchor, anchor: .top) }
+            } else {
+                proxy.scrollTo(tab, anchor: .top)
+            }
+        }
     }
 
     private var meetings: some View {
