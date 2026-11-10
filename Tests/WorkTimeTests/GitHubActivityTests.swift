@@ -247,6 +247,37 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.waitingFirst(rows, status: .onHold).map(\.number) == [1], "the notch list keeps the tab")
     }),
 
+    ("a pull request I review is my turn, waiting on the author, or approved by me", {
+        func status(_ activity: GitHubActivity?) -> GitHubStatus { GitHubLogic.reviewStatus(pr(author: "elin", activity: activity)) }
+        check(status(GitHubActivity(me: "me", requested: ["me"])) == .myTurn, "review asked and not given")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("me"), "APPROVED", 3)], lastCommit: at(1), requested: ["me"])) == .myTurn, "asked again")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("me"), "COMMENTED", 3)], lastCommit: at(4))) == .myTurn, "pushed since my review")
+        check(status(GitHubActivity(me: "me", open: [event(person("elin"), 5)], reviews: [review(person("me"), "CHANGES_REQUESTED", 3)], lastCommit: at(1))) == .myTurn,
+              "the author replied since my review")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("me"), "CHANGES_REQUESTED", 3)], lastCommit: at(1))) == .waiting, "on the author")
+        check(status(GitHubActivity(me: "me", open: [event(person("sara"), 5)], reviews: [review(person("me"), "COMMENTED", 3)], lastCommit: at(1))) == .waiting,
+              "someone else replied")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("me"), "APPROVED", 3), review(person("sara"), "CHANGES_REQUESTED", 4)], lastCommit: at(1))) == .approved,
+              "approved by me, whatever the others say")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("me"), "APPROVED", 3)], lastCommit: at(4))) == .myTurn, "pushed since my approval")
+        check(status(GitHubActivity(me: "me", reviews: [review(person("sara"), "APPROVED", 3)], lastCommit: at(1))) == .waiting, "someone else's approval")
+        check(status(nil) == .myTurn, "no discussion cached")
+    }),
+
+    ("the Reviewing list joins the requested and reviewed searches, once each, open and by others, my turn first", {
+        let asked = pr(1, author: "elin", updated: 1, activity: GitHubActivity(me: "me", requested: ["me"]))
+        let approved = pr(2, author: "sara", updated: 5, activity: GitHubActivity(me: "me", reviews: [review(person("me"), "APPROVED", 3)], lastCommit: at(1)))
+        let waiting = pr(3, author: "johan", updated: 4, activity: GitHubActivity(me: "me", reviews: [review(person("me"), "COMMENTED", 3)], lastCommit: at(1)))
+        let merged = pr(4, author: "elin", state: .merged)
+        let mine = pr(5, author: "me", updated: 9)
+        let prs: [GitHubKind: [GitHubPR]] = [.reviewRequested: [asked, mine], .reviewed: [approved, asked, waiting, merged], .created: [pr(6, updated: 10)]]
+        check(GitHubLogic.reviewing(prs).map(\.number) == [1, 2, 3], "deduplicated, my turn first, then newest \(GitHubLogic.reviewing(prs).map(\.number))")
+        check(GitHubLogic.reviewing(prs, status: .approved).map(\.number) == [2] && GitHubLogic.reviewing(prs, status: .waiting).map(\.number) == [3], "tabs")
+        check(GitHubLogic.reviewingCounts(prs) == [.all: 3, .myTurn: 1, .waiting: 1, .approved: 1], "counts \(GitHubLogic.reviewingCounts(prs))")
+        check(GitHubLogic.reviewing([.reviewed: [waiting]]).map(\.number) == [3], "the reviewed search alone")
+        check(GitHubLogic.reviewing([:]).isEmpty, "nothing fetched")
+    }),
+
     ("the review queue lists the open requests in the filter's repository and search", {
         let other = GitHubPR(url: "https://github.com/acme/web/pull/2", number: 2, title: "Web", repo: "acme/web", updated: at(2), author: "elin")
         let rows = [pr(1, author: "elin", updated: 1), other, pr(3, author: "elin", state: .closed)]

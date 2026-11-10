@@ -32,7 +32,7 @@ extension MCPServer {
                         + "draft, review decision, checks, unresolved threads, new comments and whether they wait on the user. "
                         + "Read-only; the GitHub view in the app refreshes the cache.",
                     properties: ["kind": ["type": "string", "enum": kinds,
-                                          "description": "created (default), review_requested, assigned or mentioned."],
+                                          "description": "created (default), review_requested, assigned, mentioned or reviewed."],
                                  "state": ["type": "string", "enum": states, "description": "open (default), merged, closed or all."],
                                  "limit": limitSchema("pull requests", 20)]) { args in
                 let kindName = args["kind"] as? String ?? GitHubKind.created.rawValue

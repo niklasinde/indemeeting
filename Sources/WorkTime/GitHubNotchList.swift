@@ -1,41 +1,53 @@
 import SwiftUI
 
-/// The notch bar's GitHub list: the reviews asked of me and the first few created pull requests, with status tabs, a Mergeable
-/// filter and an inline merge.
+enum NotchGitHubList: String, CaseIterable, Identifiable {
+    case created, reviewing
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+/// The notch bar's GitHub list: my created pull requests with the reviews asked of me above them, or the ones I am reviewing,
+/// with status tabs, a Mergeable filter and an inline merge.
 struct WaitingPullRequests: View {
     let onOpen: () -> Void
     let onHold: (Bool) -> Void
     @ObservedObject private var model = GitHubModel.shared
     @ObservedObject private var actions = GitHubActionsModel.shared
+    @AppStorage(GitHubModel.notchListKey) private var list = NotchGitHubList.created
     @AppStorage(GitHubModel.notchMergeableKey) private var mergeable = false
     @AppStorage(GitHubModel.notchStatusKey) private var status = GitHubStatusTab.all
+    @AppStorage(GitHubModel.notchReviewStatusKey) private var reviewStatus = GitHubStatusTab.all
     @State private var draft: GitHubActionDraft?
     @State private var result: (url: String, text: String, isError: Bool)?
 
     var body: some View {
-        let all = model.prs[.created] ?? []
-        let created = model.enabled ? GitHubLogic.filter(all, GitHubLogic.Filter(status: status), mergeable: mergeable) : []
-        let prs = GitHubLogic.waitingFirst(created, status: status)
-        let reviews = model.enabled && status == .all && !mergeable ? GitHubLogic.reviewQueue(model.prs[.reviewRequested] ?? []) : []
-        if model.enabled && !all.isEmpty {
+        let all = model.enabled ? model.prs[.created] ?? [] : []
+        let fetched = model.enabled ? model.prs : [:]
+        let createdCounts = GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable)
+        let reviewingCounts = GitHubLogic.reviewingCounts(fetched)
+        let totals: [NotchGitHubList: Int] = [.created: createdCounts[.all, default: 0], .reviewing: reviewingCounts[.all, default: 0]]
+        if !all.isEmpty || totals[.reviewing, default: 0] > 0 {
             VStack(alignment: .leading, spacing: 2) {
-                if !reviews.isEmpty {
-                    heading("\(reviews.count) waiting for my review")
-                    ForEach(reviews.prefix(Self.reviewLimit)) { row($0, showsAuthor: true) }
-                    Spacer().frame(height: 8)
+                switch list {
+                case .created:
+                    let reviews = status == .all && !mergeable ? GitHubLogic.reviewQueue(fetched[.reviewRequested] ?? []) : []
+                    if !reviews.isEmpty {
+                        heading("\(reviews.count) waiting for my review")
+                        ForEach(reviews.prefix(Self.reviewLimit)) { row($0, showsAuthor: true) }
+                        Spacer().frame(height: 8)
+                    }
+                    header(totals: totals)
+                    tabs(selection: $status, counts: createdCounts)
+                    let created = GitHubLogic.filter(all, GitHubLogic.Filter(status: status), mergeable: mergeable)
+                    ForEach(GitHubLogic.waitingFirst(created, status: status)) { row($0, showsAuthor: false) }
+                case .reviewing:
+                    header(totals: totals)
+                    tabs(selection: $reviewStatus, counts: reviewingCounts)
+                    ForEach(GitHubLogic.reviewing(fetched, status: reviewStatus).prefix(GitHubLogic.notchLimit)) {
+                        row($0, showsAuthor: true, status: GitHubLogic.reviewStatus($0))
+                    }
                 }
-                HStack {
-                    heading("\(created.count) \(mergeable ? "mergeable" : status == .all ? "created" : status.title.lowercased())")
-                    Spacer()
-                    MergeablePill(isOn: $mergeable)
-                }
-                .font(.caption.weight(.semibold))
-                .padding(.trailing, 8)
-                GitHubStatusTabs(selection: $status, counts: GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable))
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 2)
-                ForEach(prs) { row($0, showsAuthor: false) }
             }
             .padding(.horizontal, 16)
         }
@@ -43,16 +55,45 @@ struct WaitingPullRequests: View {
 
     static let reviewLimit = 3
 
+    private var mark: some View { BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12) }
+
     private func heading(_ text: String) -> some View {
-        Label { Text(text) } icon: { BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12) }
+        Label { Text(text) } icon: { mark }
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 8)
     }
 
-    private func row(_ pr: GitHubPR, showsAuthor: Bool) -> some View {
+    private func header(totals: [NotchGitHubList: Int]) -> some View {
+        HStack(spacing: 4) {
+            mark.foregroundStyle(.secondary).padding(.trailing, 4)
+            ForEach(NotchGitHubList.allCases) { option in
+                Button { list = option } label: {
+                    HStack(spacing: 4) {
+                        Text(option.title)
+                        Text("\(totals[option, default: 0])").foregroundStyle(.tertiary).monospacedDigit()
+                    }
+                }
+                .buttonStyle(NotchChipStyle(selected: list == option))
+            }
+            Spacer()
+            if list == .created { MergeablePill(isOn: $mergeable) }
+        }
+        .font(.caption.weight(.semibold))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 2)
+    }
+
+    private func tabs(selection: Binding<GitHubStatusTab>, counts: [GitHubStatusTab: Int]) -> some View {
+        GitHubStatusTabs(selection: selection, counts: counts)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 2)
+    }
+
+    private func row(_ pr: GitHubPR, showsAuthor: Bool, status: GitHubStatus? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, open: { open(pr) }) {
+            PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, status: status, open: { open(pr) }) {
                 if GitHubLogic.isMergeable(pr) && draft?.pr.url != pr.url {
                     Button { begin(pr) } label: {
                         Image(systemName: "arrow.triangle.merge").frame(width: 22, height: 22).contentShape(Rectangle())
@@ -137,12 +178,13 @@ struct PullRequestSummaryRow<Accessory: View>: View {
     let pr: GitHubPR
     var showsAuthor = false
     var titleLines = 1
+    var status: GitHubStatus?
     var open: (() -> Void)?
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
         HStack(spacing: 8) {
-            PRStatusDot(pr: pr)
+            PRStatusDot(pr: pr, status: status)
             if let open {
                 Button(action: open) { labels }.buttonStyle(.plain)
             } else {

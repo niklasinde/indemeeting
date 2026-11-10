@@ -239,7 +239,7 @@ struct PhoneEndpoints {
         let enabled = features().githubEnabled
         let prs = enabled ? try store.githubPRs() : [:]
         return .json(PhoneGitHub(enabled: enabled, refreshedAt: enabled ? try store.githubFetched() : nil,
-                                 prs: Dictionary(uniqueKeysWithValues: GitHubKind.allCases.map { kind in
+                                 prs: Dictionary(uniqueKeysWithValues: GitHubKind.pageKinds.map { kind in
                                      (kind.rawValue, (prs[kind] ?? []).map(Self.pullRequest))
                                  }), error: error))
     }

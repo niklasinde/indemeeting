@@ -11,6 +11,8 @@ final class GitHubModel: ObservableObject {
     static let mergeableKey = "githubMergeableList"
     static let notchMergeableKey = "githubNotchMergeable"
     static let notchStatusKey = "githubNotchStatus"
+    static let notchListKey = "githubNotchList"
+    static let notchReviewStatusKey = "githubNotchReviewStatus"
     static let intervals = [1, 5, 10, 15, 30, 60]
 
     @Published private(set) var enabled = UserDefaults.standard.bool(forKey: enabledKey)

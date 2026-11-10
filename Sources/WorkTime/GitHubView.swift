@@ -156,7 +156,7 @@ struct GitHubView: View {
             }
             if model.showsList {
                 FlowLayout(spacing: 2) {
-                    ForEach(GitHubKind.allCases) { kind in
+                    ForEach(GitHubKind.pageKinds) { kind in
                         Button(kind.tabTitle) { model.kind = kind }
                             .buttonStyle(PillButtonStyle(selected: model.kind == kind))
                     }
@@ -416,9 +416,10 @@ struct GitHubStatusTabs: View {
 
 struct PRStatusDot: View {
     let pr: GitHubPR
+    var status: GitHubStatus?
 
     var body: some View {
-        if let status = GitHubLogic.status(pr) {
+        if let status = status ?? GitHubLogic.status(pr) {
             Circle().fill(status.color).frame(width: 7, height: 7).help(status.rawValue)
         }
     }

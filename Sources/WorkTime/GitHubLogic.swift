@@ -5,6 +5,10 @@ enum GitHubKind: String, CaseIterable, Identifiable {
     case reviewRequested = "review_requested"
     case assigned
     case mentioned
+    case reviewed
+
+    /// The tabs of the GitHub page. Reviewed is fetched for the notch bar's Reviewing list only.
+    static let pageKinds: [GitHubKind] = [.created, .reviewRequested, .assigned, .mentioned]
 
     var id: String { rawValue }
 
@@ -14,6 +18,7 @@ enum GitHubKind: String, CaseIterable, Identifiable {
         case .reviewRequested: return "Review requested"
         case .assigned: return "Assigned"
         case .mentioned: return "Mentioned"
+        case .reviewed: return "Reviewed"
         }
     }
 
@@ -25,6 +30,7 @@ enum GitHubKind: String, CaseIterable, Identifiable {
         case .reviewRequested: return "review-requested:@me"
         case .assigned: return "assignee:@me"
         case .mentioned: return "mentions:@me"
+        case .reviewed: return "reviewed-by:@me -author:@me"
         }
     }
 }
@@ -402,6 +408,33 @@ enum GitHubLogic {
     static func reviewQueue(_ prs: [GitHubPR], _ filter: Filter = Filter(), limit: Int? = nil) -> [GitHubPR] {
         let open = Self.filter(prs, Filter(repo: filter.repo, query: filter.query))
         return limit.map { Array(open.prefix($0)) } ?? open
+    }
+
+    // MARK: Reviewing
+
+    static let reviewingTabs: [GitHubStatusTab] = [.all, .myTurn, .waiting, .approved]
+
+    /// Open pull requests by others that ask for my review or that I reviewed, each once, those waiting on me first, then by last update.
+    static func reviewing(_ prs: [GitHubKind: [GitHubPR]], status tab: GitHubStatusTab = .all) -> [GitHubPR] {
+        var seen = Set<String>()
+        let open = ((prs[.reviewRequested] ?? []) + (prs[.reviewed] ?? [])).filter { pr in
+            pr.state == .open && pr.author != pr.activity?.me && seen.insert(pr.url).inserted
+        }
+        let shown = sorted(open, by: .updated).filter { pr in tab.status.map { reviewStatus(pr) == $0 } ?? true }
+        return shown.filter { reviewStatus($0) == .myTurn } + shown.filter { reviewStatus($0) != .myTurn }
+    }
+
+    static func reviewingCounts(_ prs: [GitHubKind: [GitHubPR]]) -> [GitHubStatusTab: Int] {
+        Dictionary(uniqueKeysWithValues: reviewingTabs.map { ($0, reviewing(prs, status: $0).count) })
+    }
+
+    /// Where someone else's pull request stands in my review: my turn when a review is asked of me or the author pushed or
+    /// replied since my last one, approved when my latest review approves, otherwise waiting on the author.
+    static func reviewStatus(_ pr: GitHubPR) -> GitHubStatus {
+        guard let activity = pr.activity else { return .myTurn }
+        if signals(pr).waitingOnMe { return .myTurn }
+        let latest = activity.reviews.filter { $0.actor.login == activity.me }.max { $0.date < $1.date }
+        return latest?.state == "APPROVED" ? .approved : .waiting
     }
 
     // MARK: Status

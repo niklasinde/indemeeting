@@ -89,6 +89,14 @@ enum GitHubPreview {
             model.showSample(prs: [:], fetched: nil)
             await shot("empty", appearances: [.aqua])
             model.showSample(prs: samples, directory: directory)
+            for list in NotchGitHubList.allCases {
+                UserDefaults.standard.set(list.rawValue, forKey: GitHubModel.notchListKey)
+                for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                    await render(WaitingPullRequests(onOpen: {}, onHold: { _ in }).frame(width: 520), appearance: appearance,
+                                 to: output.appendingPathComponent("notch-\(list.rawValue)-\(appearance == .aqua ? "light" : "dark").png"))
+                }
+            }
+            UserDefaults.standard.removeObject(forKey: GitHubModel.notchListKey)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 await renderSettings(model, appearance: appearance, to: output.appendingPathComponent("settings-\(appearance == .aqua ? "light" : "dark").png"))
             }
@@ -520,6 +528,12 @@ enum GitHubPreview {
                    activity: activity(threads: 2, open: [said(person("niklas"), 8_000)], requested: ["niklas"])),
                 pr(1746, "acme/finq.api", "FIX(QDLY-7998): align receiver address placement with the print-house templates", ago: 90_000, checks: .failed, review: .required, add: 444, del: 38, author: "johan",
                    activity: activity(threads: 1, open: [said(person("johan"), 90_000)], reviews: [GitHubActivity.Review(actor: person("niklas"), state: "COMMENTED", date: now.addingTimeInterval(-200_000))], commit: 80_000)),
+            ],
+            .reviewed: [
+                pr(2682, "acme/finq.api", "QDLY-8801: Book the reminder fee on the invoice's own ledger", ago: 4_000, review: .required, add: 96, del: 12, author: "magnus",
+                   activity: activity(threads: 3, reviews: [GitHubActivity.Review(actor: person("niklas"), state: "APPROVED", date: now.addingTimeInterval(-5_000))], commit: 30_000)),
+                pr(1034, "acme/finq.admin-ui", "QDLY-8790: Show the debtor's payment plan in the case view", ago: 20_000, review: .changesRequested, add: 340, del: 61, author: "katia",
+                   activity: activity(threads: 5, open: [said(person("niklas"), 25_000)], reviews: [GitHubActivity.Review(actor: person("niklas"), state: "CHANGES_REQUESTED", date: now.addingTimeInterval(-25_000))], commit: 60_000)),
             ],
         ]
     }
