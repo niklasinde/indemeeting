@@ -58,6 +58,7 @@ final class NotchBar: ObservableObject {
     @Published private(set) var list = NotchPanelID.gitHub
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
+    @Published private(set) var listCap: CGFloat = 420
     @Published private(set) var hasNotch = false
     let screen: NSScreen
     private lazy var panel = makePanel()
@@ -127,7 +128,10 @@ final class NotchBar: ObservableObject {
     func hover(_ inside: Bool) {
         pendingCollapse?.cancel()
         guard !inside, expanded, openedByHover, !typing, !held else { return }
-        let work = DispatchWorkItem { [weak self] in self?.collapse() }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+            self.collapse()
+        }
         pendingCollapse = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
@@ -181,6 +185,7 @@ final class NotchBar: ObservableObject {
         guard let content = panel.contentView else { return }
         let metrics = Self.metrics(of: screen)
         barHeight = metrics.barHeight
+        listCap = NotchLayout.listCap(visibleHeight: screen.visibleFrame.height)
         hasNotch = metrics.notchWidth != nil
         notchWidth = metrics.notchWidth ?? 200
         DispatchQueue.main.async {
@@ -208,6 +213,7 @@ final class NotchBar: ObservableObject {
         panel.onCancel = { [weak self] in self?.collapse() }
         panel.onKey = { [weak self] in self?.key($0) ?? false }
         panel.onClick = { [weak self] in self?.clicked() }
+        panel.onScroll = { [weak self] in self?.pendingCollapse?.cancel() }
         let host = NSHostingView(rootView: AskPanelView(panel: self))
         host.sizingOptions = .intrinsicContentSize
         panel.contentView = host
@@ -220,6 +226,7 @@ final class NotchBar: ObservableObject {
         self.hasNotch = hasNotch
         notchWidth = hasNotch ? 188 : 200
         barHeight = 32
+        listCap = NotchLayout.listCap(visibleHeight: screen.visibleFrame.height)
         expanded = list != nil
         revealed = list != nil
         openedByHover = true
@@ -233,8 +240,10 @@ private final class KeyablePanel: NSPanel {
     var onCancel: () -> Void = {}
     var onKey: (Character) -> Bool = { _ in false }
     var onClick: () -> Void = {}
+    var onScroll: () -> Void = {}
     override var canBecomeKey: Bool { true }
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .scrollWheel { onScroll() }
         if event.type == .leftMouseDown || event.type == .rightMouseDown {
             if !isKeyWindow { makeKey() }
             onClick()
@@ -311,6 +320,7 @@ private struct AskPanelView: View {
             }
         }
         .environment(\.colorScheme, .dark)
+        .environment(\.notchListCap, panel.listCap)
         .fixedSize()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
@@ -337,6 +347,25 @@ private struct AskPanelView: View {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var notchListCap: CGFloat = 420
+}
+
+/// The rows of a notch list, as tall as they are up to the space left on screen, then scrolling. Headers and chips go above it.
+struct NotchScroll<Content: View>: View {
+    @Environment(\.notchListCap) private var cap
+    @ViewBuilder let content: Content
+    @State private var height: CGFloat = 0
+
+    var body: some View {
+        ScrollView(.vertical) {
+            content.onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+        }
+        .scrollIndicators(.automatic)
+        .frame(height: min(height, cap))
+    }
+}
+
 private struct NotchBadge: View {
     let count: Int
 
@@ -345,6 +374,7 @@ private struct NotchBadge: View {
             .font(.system(size: 8, weight: .bold))
             .monospacedDigit()
             .foregroundStyle(.white)
+            .fixedSize()
             .padding(.horizontal, 3)
             .frame(minWidth: 11, minHeight: 11)
             .background(Capsule().fill(Color.red))
@@ -387,21 +417,8 @@ private struct AssignedTickets: View {
                 if let error = model.error, model.tickets.isEmpty {
                     Text(error.message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
                 }
-                ForEach(model.tickets.prefix(6)) { ticket in
-                    HStack(spacing: 0) {
-                        Button { open(ticket) } label: {
-                            HStack(spacing: 8) {
-                                Text(ticket.key).foregroundStyle(.secondary).fixedSize()
-                                Text(ticket.summary).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
-                                Text(ticket.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
-                            }
-                            .padding(.vertical, 5)
-                            .padding(.horizontal, 8)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        if let pr = claude.pullRequest(for: ticket.key) { OpenInClaudeCodeButton(pr: pr).padding(.trailing, 8) }
-                    }
+                NotchScroll {
+                    VStack(alignment: .leading, spacing: 2) { ForEach(model.tickets, content: row) }
                 }
             } else {
                 Button(action: setUp) {
@@ -415,6 +432,23 @@ private struct AssignedTickets: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
+    }
+
+    private func row(_ ticket: JiraTicket) -> some View {
+        HStack(spacing: 0) {
+            Button { open(ticket) } label: {
+                HStack(spacing: 8) {
+                    Text(ticket.key).foregroundStyle(.secondary).fixedSize()
+                    Text(ticket.summary).lineLimit(1).truncationMode(.tail).frame(maxWidth: .infinity, alignment: .leading)
+                    Text(ticket.status).font(.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
+                }
+                .padding(.vertical, 5)
+                .padding(.horizontal, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if let pr = claude.pullRequest(for: ticket.key) { OpenInClaudeCodeButton(pr: pr).padding(.trailing, 8) }
+        }
     }
 
     private var header: String {

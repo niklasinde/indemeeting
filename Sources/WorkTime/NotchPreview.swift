@@ -41,6 +41,24 @@ enum NotchPreview {
             await notch("slack-not-set-up", setup: swapped, list: .slack)
             slack.showSample(messages: [], error: .missingScope("search:read"))
             await notch("slack-missing-scope", setup: swapped, list: .slack)
+            let many = (0..<30).map { index in
+                SlackMessage(kind: index.isMultiple(of: 3) ? .direct : .mention, teamID: "T0ACME", channelID: "C\(index)", place: "#channel-\(index)",
+                             author: "Anna Berg", text: "Message number \(index + 1) in a long list that scrolls",
+                             ts: String(format: "%.6f", Date().timeIntervalSince1970 - Double(index) * 1800), permalink: nil, unread: 1)
+            }
+            slack.showSample(messages: many, badge: 10)
+            await notch("slack-many-scrolls", setup: swapped, list: .slack)
+            let start = Date()
+            TodoModel.shared.showSample(
+                todos: ["Book the dentist", "Renew the parking permit", "Send the invoice to Acme"].enumerated().map {
+                    TodoItem(id: "r\($0.offset)", text: $0.element)
+                },
+                meeting: (0..<40).map { index in
+                    MeetingTodo(id: Int64(index), meeting: Int64(index / 3), date: start.addingTimeInterval(-Double(index / 3) * 86400),
+                                title: "Weekly sync \(40 / 3 - index / 3)", owner: ["Anna", "Bo", "Niklas"][index % 3],
+                                task: "Action item \(index + 1) from the meeting, long enough to fill the row")
+                })
+            await notch("todo-many-meeting-items", setup: standard, list: .todo)
             slack.showSample(messages: messages, badge: 3)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 let suffix = appearance == .aqua ? "light" : "dark"

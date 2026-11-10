@@ -25,7 +25,7 @@ enum SlackNotchFilter: String, CaseIterable, Identifiable {
 
 /// The notch bar's Slack list: mentions of me from the last week and DMs waiting on me, newest first.
 struct SlackNotchList: View {
-    static let limit = 8
+    static let limit = 40
     let onOpen: () -> Void
     @ObservedObject private var model = SlackModel.shared
     @AppStorage(SlackNotchFilter.storageKey) private var filter = SlackNotchFilter.all
@@ -47,7 +47,9 @@ struct SlackNotchList: View {
                     Text(filter == .mentions ? "No mentions this week." : "Nothing waiting on you.")
                         .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.vertical, 4)
                 }
-                ForEach(rows.prefix(Self.limit)) { row($0) }
+                NotchScroll {
+                    VStack(alignment: .leading, spacing: 2) { ForEach(rows.prefix(Self.limit), content: row) }
+                }
             } else {
                 Button(action: setUp) {
                     Label { Text("Set up Slack in Settings") } icon: { mark }

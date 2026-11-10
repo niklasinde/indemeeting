@@ -31,21 +31,29 @@ struct WaitingPullRequests: View {
             VStack(alignment: .leading, spacing: 2) {
                 switch list {
                 case .created:
-                    let reviews = status == .all && !mergeable ? GitHubLogic.reviewQueue(fetched[.reviewRequested] ?? []) : []
-                    if !reviews.isEmpty {
-                        heading("\(reviews.count) waiting for my review")
-                        ForEach(reviews.prefix(Self.reviewLimit)) { row($0, showsAuthor: true) }
-                        Spacer().frame(height: 8)
-                    }
                     header(totals: totals)
                     tabs(selection: $status, counts: createdCounts)
+                    let reviews = status == .all && !mergeable ? GitHubLogic.reviewQueue(fetched[.reviewRequested] ?? []) : []
                     let created = GitHubLogic.filter(all, GitHubLogic.Filter(status: status), mergeable: mergeable)
-                    ForEach(GitHubLogic.waitingFirst(created, status: status)) { row($0, showsAuthor: false) }
+                    NotchScroll {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if !reviews.isEmpty {
+                                heading("\(reviews.count) waiting for my review")
+                                ForEach(reviews.prefix(Self.reviewLimit)) { row($0, showsAuthor: true) }
+                                Spacer().frame(height: 8)
+                            }
+                            ForEach(GitHubLogic.waitingFirst(created, status: status)) { row($0, showsAuthor: false) }
+                        }
+                    }
                 case .reviewing:
                     header(totals: totals)
                     tabs(selection: $reviewStatus, counts: reviewingCounts)
-                    ForEach(GitHubLogic.reviewing(fetched, status: reviewStatus).prefix(GitHubLogic.notchLimit)) {
-                        row($0, showsAuthor: true, status: GitHubLogic.reviewStatus($0))
+                    NotchScroll {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(GitHubLogic.reviewing(fetched, status: reviewStatus).prefix(GitHubLogic.notchLimit)) {
+                                row($0, showsAuthor: true, status: GitHubLogic.reviewStatus($0))
+                            }
+                        }
                     }
                 }
             }
@@ -53,7 +61,7 @@ struct WaitingPullRequests: View {
         }
     }
 
-    static let reviewLimit = 3
+    static let reviewLimit = 10
 
     private var mark: some View { BrandMark.gitHub.scaledToFit().frame(width: 12, height: 12) }
 

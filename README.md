@@ -707,7 +707,9 @@ and moves it up or down. The shown icons split in that order: the first half on 
 an odd one out in the middle (below the notch on a notched screen). Turning GitHub off and Slack on therefore puts Slack where
 GitHub was. The default is Jira, Reminders and GitHub, with Slack off. Panels that are off fetch nothing (GitHub still refreshes
 for the GitHub page). The order and the panels turned on are kept in UserDefaults (`notchPanelOrder`, `notchPanelsEnabled`); an
-id the app no longer knows is dropped, and a new panel joins at the end with its default state.
+id the app no longer knows is dropped, and a new panel joins at the end with its default state. Each list scrolls under its
+chips once it would run past the bottom of the screen, also in a bar opened by hover; it then shows up to 50 reminders and 50
+meeting action items, 30 pull requests, 20 Jira tickets and 40 Slack messages.
 
 **Slack** shows mentions of you from the last 7 days (`search.messages` for `<@you>`, newest first) and DMs and group DMs with
 unread messages (`conversations.list` for `im,mpim`, then `conversations.info` for the 12 most recent for `unread_count_display`

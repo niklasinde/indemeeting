@@ -85,6 +85,17 @@ final class TodoModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.2)) { todos.removeAll { $0.id == id } }
         try? reminders?.delete(id)
     }
+
+    #if DEBUG
+    /// Shows made-up items without Reminders or a database, for the previews.
+    func showSample(todos: [TodoItem], meeting: [MeetingTodo]) {
+        self.todos = todos
+        self.meeting = meeting
+        access = .granted
+        lists = [TodoList(id: "inbox", title: "Reminders", source: "iCloud")]
+        list = "inbox"
+    }
+    #endif
 }
 
 enum TodoRow {
@@ -114,6 +125,16 @@ struct TodoNotchList: View {
             }
             .padding(.horizontal, 8)
             .padding(.bottom, 6)
+            NotchScroll { rows }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .onAppear { model.open() }
+        .onDisappear { end(keep: true) }
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 0) {
             ForEach(model.todos.prefix(TodoLogic.todoLimit)) { todo in
                 row(.todo(todo.id), text: todo.text, detail: nil)
                     .contextMenu { Button("Delete", role: .destructive) { model.delete(todo.id) } }
@@ -137,10 +158,6 @@ struct TodoNotchList: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .onAppear { model.open() }
-        .onDisappear { end(keep: true) }
     }
 
     private var separator: some View {

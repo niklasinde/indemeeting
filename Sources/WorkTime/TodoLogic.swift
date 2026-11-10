@@ -43,8 +43,8 @@ protocol TodoStore: AnyObject {
 
 enum TodoLogic {
     static let meetingDays = 14
-    static let todoLimit = 8
-    static let meetingLimit = 5
+    static let todoLimit = 50
+    static let meetingLimit = 50
     static let allLists = "all"
     static let listKey = "todoListID"
 

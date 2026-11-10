@@ -45,6 +45,12 @@ let notchLayoutTests: [(name: String, run: () throws -> Void)] = [
         }
     }),
 
+    ("a list scrolls once it would run past the bottom of the screen, and never gets shorter than the minimum", {
+        check(NotchLayout.listCap(visibleHeight: 944) == 684, "a 1512 x 982 display under its menu bar")
+        check(NotchLayout.listCap(visibleHeight: 1079) == 819, "a 1728 x 1117 display")
+        check(NotchLayout.listCap(visibleHeight: 300) == NotchLayout.minimumListHeight, "a very short screen")
+    }),
+
     ("a screen without a notch centres the bar on the screen", {
         let screen = CGRect(x: -2560, y: -200, width: 2560, height: 1440)
         let notch = NotchLayout.notch(screen: screen, left: nil, right: nil)

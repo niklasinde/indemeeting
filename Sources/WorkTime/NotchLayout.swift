@@ -11,6 +11,15 @@ enum NotchLayout {
         return ((start + end) / 2, end - start)
     }
 
+    /// How tall a list in the open bar may grow before it scrolls: the screen below the menu bar, less the Ask field and the
+    /// panel's chips above the list.
+    static let fixedHeight: CGFloat = 260
+    static let minimumListHeight: CGFloat = 160
+
+    static func listCap(visibleHeight: CGFloat) -> CGFloat {
+        max(minimumListHeight, visibleHeight - fixedHeight)
+    }
+
     /// The panel hangs from the top of the screen, centred on the notch.
     static func panelFrame(screen: CGRect, left: CGRect?, right: CGRect?, size: CGSize) -> CGRect {
         let centre = notch(screen: screen, left: left, right: right).centre

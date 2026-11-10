@@ -389,7 +389,7 @@ enum GitHubLogic {
         })
     }
 
-    static let notchLimit = 6
+    static let notchLimit = 30
 
     /// Open, not a draft, approved or needing no review, checks passing or absent, and no conflict or branch rule in the way.
     static func isMergeable(_ pr: GitHubPR) -> Bool {
