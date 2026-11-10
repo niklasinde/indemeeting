@@ -5,6 +5,7 @@ enum SettingsAnchor: Hashable {
     case whisper
     case speakers
     case jira
+    case slack
 }
 
 /// Which model does each step, whether it comes with macOS or is downloaded, and whether it is ready.

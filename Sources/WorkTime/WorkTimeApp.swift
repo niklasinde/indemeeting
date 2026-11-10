@@ -13,6 +13,9 @@ enum Main {
         if let output = SessionsPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { SessionsPreview.run(to: output) }
         }
+        if let output = NotchPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { NotchPreview.run(to: output) }
+        }
         if let output = PhonePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PhonePreview.run(to: output) }
         }
@@ -206,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         GitHubModel.shared.store = store
         GitHubModel.shared.start()
         JiraModel.shared.start()
+        SlackModel.shared.start()
         TodoModel.shared.start(store: store, reminders: RemindersStore())
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }

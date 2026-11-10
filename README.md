@@ -700,6 +700,24 @@ threads of one pull request look like (no UI uses it).
 all pages of its comments and prints the parsed structure and the cost.
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
 
+## Notch bar panels
+
+The icons along the notch bar are panels: Jira, Reminders, GitHub and Slack. Settings > Activity > Notch bar turns each on or off
+and moves it up or down. The shown icons split in that order: the first half on the left wing, the second half on the right wing,
+an odd one out in the middle (below the notch on a notched screen). Turning GitHub off and Slack on therefore puts Slack where
+GitHub was. The default is Jira, Reminders and GitHub, with Slack off. Panels that are off fetch nothing (GitHub still refreshes
+for the GitHub page). The order and the panels turned on are kept in UserDefaults (`notchPanelOrder`, `notchPanelsEnabled`); an
+id the app no longer knows is dropped, and a new panel joins at the end with its default state.
+
+**Slack** shows mentions of you from the last 7 days (`search.messages` for `<@you>`, newest first) and DMs and group DMs with
+unread messages (`conversations.list` for `im,mpim`, then `conversations.info` for the 12 most recent for `unread_count_display`
+or `last_read`, and `conversations.history` for the latest message only where it is needed). When Slack gives no read state, it
+lists the DMs from the last 24 hours instead and says so. It needs a user token (`xoxp-`) from your own Slack app with the scopes
+listed in Settings; the token is kept in the app's secrets file like the Jira token. Rows open the message in the Slack app
+(`slack://channel?team=&id=&message=`), or on the web without it. Rate limits back off for Slack's Retry-After.
+
+In a debug build `--render-notch <folder>` saves previews of the bar in several panel setups, the Slack list and its settings.
+
 ## iPhone access
 
 Off by default. Settings > iPhone lets an iPhone app read this Mac's meetings, activity and GitHub pull requests, and ask the

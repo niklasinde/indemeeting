@@ -176,22 +176,23 @@ enum JiraLogic {
     }
 }
 
-/// The API token, in the store and nowhere else.
-struct JiraTokenStore {
-    static let account = "api-token"
-    static let live = JiraTokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"))
+/// An API token in the app's secrets file and nowhere else.
+struct TokenStore {
+    static let jira = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"), account: "api-token")
+    static let slack = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.slack"), account: "user-token")
 
     let secrets: PhoneSecretStore
+    let account: String
 
     func token() -> String? {
-        secrets.key(for: Self.account).flatMap { String(data: $0, encoding: .utf8) }
+        secrets.key(for: account).flatMap { String(data: $0, encoding: .utf8) }
     }
 
     func save(_ token: String) throws {
-        try secrets.save(Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8), for: Self.account)
+        try secrets.save(Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8), for: account)
     }
 
     func remove() {
-        secrets.delete(Self.account)
+        secrets.delete(account)
     }
 }

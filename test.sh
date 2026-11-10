@@ -46,12 +46,15 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/GitHubSelection.swift \
     Sources/WorkTime/GitHubLayout.swift \
     Sources/WorkTime/NotchLayout.swift \
+    Sources/WorkTime/NotchPanels.swift \
     Sources/WorkTime/GitHubClaude.swift \
     Sources/WorkTime/GitHubActions.swift \
     Sources/WorkTime/GitHubLink.swift \
     Sources/WorkTime/GitHubClient.swift \
     Sources/WorkTime/JiraLogic.swift \
     Sources/WorkTime/JiraClient.swift \
+    Sources/WorkTime/SlackLogic.swift \
+    Sources/WorkTime/SlackClient.swift \
     Sources/WorkTime/ClaudeProcess.swift \
     Sources/WorkTime/EmbeddedTerminal.swift \
     Sources/WorkTime/ClaudeTranscripts.swift \
@@ -83,6 +86,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/GitHubSelectionTests.swift \
     Tests/WorkTimeTests/GitHubLayoutTests.swift \
     Tests/WorkTimeTests/NotchLayoutTests.swift \
+    Tests/WorkTimeTests/NotchPanelTests.swift \
     Tests/WorkTimeTests/GitHubActivityTests.swift \
     Tests/WorkTimeTests/GitHubCommentsTests.swift \
     Tests/WorkTimeTests/GitHubDiffTests.swift \
@@ -93,6 +97,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/MCPGitHubTests.swift \
     Tests/WorkTimeTests/GitHubLinkTests.swift \
     Tests/WorkTimeTests/JiraTests.swift \
+    Tests/WorkTimeTests/SlackTests.swift \
     Tests/WorkTimeTests/EmbeddedTerminalTests.swift \
     Tests/WorkTimeTests/ClaudeResumeTests.swift \
     Tests/WorkTimeTests/PhoneTests.swift \

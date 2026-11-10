@@ -1,6 +1,6 @@
 import Foundation
 
-/// The open Jira tickets assigned to the user, fetched periodically while Jira is set up and turned on.
+/// The open Jira tickets assigned to the user, fetched periodically while Jira is set up, turned on and shown in the notch bar.
 @MainActor
 final class JiraModel: ObservableObject {
     static let shared = JiraModel()
@@ -14,9 +14,10 @@ final class JiraModel: ObservableObject {
     @Published private(set) var error: JiraError?
     @Published private(set) var fetched: Date?
 
-    let tokens = JiraTokenStore.live
+    let tokens = TokenStore.jira
     private var loop: Task<Void, Never>?
     private var refreshing = false
+    private var shown = false
 
     var configured: Bool { site != nil && email != nil && hasToken }
     var ready: Bool { enabled && configured }
@@ -26,7 +27,7 @@ final class JiraModel: ObservableObject {
         hasToken = tokens.token() != nil
         loop?.cancel()
         loop = nil
-        guard ready else { return }
+        guard ready, shown else { return }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
@@ -34,6 +35,12 @@ final class JiraModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: UInt64(self.interval) * 60 * 1_000_000_000)
             }
         }
+    }
+
+    func setShown(_ on: Bool) {
+        guard on != shown else { return }
+        shown = on
+        start()
     }
 
     func setEnabled(_ on: Bool) {
@@ -66,7 +73,7 @@ final class JiraModel: ObservableObject {
     }
 
     func refresh() async {
-        guard ready, !refreshing, let client = client() else { return }
+        guard ready, shown, !refreshing, let client = client() else { return }
         refreshing = true
         defer { refreshing = false }
         do {

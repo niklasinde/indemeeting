@@ -136,11 +136,11 @@ let jiraTests: [(name: String, run: () throws -> Void)] = [
 
     ("the token store saves a trimmed token and removes it, with an in-memory store", {
         let secrets = MemorySecretStore()
-        let tokens = JiraTokenStore(secrets: secrets)
+        let tokens = TokenStore(secrets: secrets, account: TokenStore.jira.account)
         check(tokens.token() == nil, "nothing saved yet")
         try tokens.save("  \(fakeToken)\n")
         check(tokens.token() == fakeToken, "trimmed token")
-        check(secrets.key(for: JiraTokenStore.account) == Data(fakeToken.utf8), "stored under the api-token account")
+        check(secrets.key(for: TokenStore.jira.account) == Data(fakeToken.utf8), "stored under the api-token account")
         tokens.remove()
         check(tokens.token() == nil, "removed")
     }),

@@ -7,21 +7,6 @@ final class AskPanel {
     static let shared = AskPanel()
     static let shownKey = "showAskBar"
 
-    enum List {
-        case gitHub
-        case jira
-        case todo
-
-        static func hotkey(_ key: Character) -> List? {
-            switch key {
-            case "g": .gitHub
-            case "j": .jira
-            case "t": .todo
-            default: nil
-            }
-        }
-    }
-
     private var bars: [NotchBar] = []
     private var lists: AnyCancellable?
 
@@ -37,7 +22,9 @@ final class AskPanel {
         center.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
         }
-        lists = GitHubModel.shared.objectWillChange.merge(with: JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange).sink { _ in
+        let models = [GitHubModel.shared.objectWillChange, JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange,
+                      SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange]
+        lists = Publishers.MergeMany(models).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
         rebuild()
@@ -56,6 +43,7 @@ final class AskPanel {
     }
 
     private func refresh() {
+        NotchPanelsModel.shared.reload()
         let shown = UserDefaults.standard.bool(forKey: Self.shownKey)
         bars.forEach { $0.show(shown) }
     }
@@ -67,7 +55,7 @@ final class NotchBar: ObservableObject {
     static let closing = Animation.easeIn(duration: 0.15)
     @Published private(set) var expanded = false
     @Published private(set) var revealed = false
-    @Published private(set) var list = AskPanel.List.gitHub
+    @Published private(set) var list = NotchPanelID.gitHub
     @Published private(set) var barHeight: CGFloat = NSStatusBar.system.thickness
     @Published private(set) var notchWidth: CGFloat = 0
     @Published private(set) var hasNotch = false
@@ -90,8 +78,13 @@ final class NotchBar: ObservableObject {
         }
     }
 
-    func expand(_ list: AskPanel.List? = nil, byHover: Bool = false) {
-        if let list { self.list = list }
+    func expand(_ list: NotchPanelID? = nil, byHover: Bool = false) {
+        let shown = NotchPanelsModel.shared.shown
+        if let list {
+            self.list = list
+        } else if !shown.contains(self.list), let first = shown.first {
+            self.list = first
+        }
         if expanded && revealed {
             if !byHover { openedByHover = false }
             return
@@ -144,10 +137,10 @@ final class NotchBar: ObservableObject {
         if typing { pendingCollapse?.cancel() }
     }
 
-    /// While no field has the keyboard, g, j and t switch the list, and in the GitHub list a letter switches the status tab.
+    /// While no field has the keyboard, a panel's letter (g, j, t, s) switches the list, and in the GitHub list a letter switches the status tab.
     func key(_ key: Character) -> Bool {
         guard expanded else { return false }
-        if let list = AskPanel.List.hotkey(key) {
+        if let list = NotchPanelID.hotkey(key), NotchPanelsModel.shared.shown.contains(list) {
             self.list = list
             return true
         }
@@ -220,6 +213,20 @@ final class NotchBar: ObservableObject {
         panel.contentView = host
         return panel
     }
+
+    #if DEBUG
+    /// The bar's view in a given state, for the previews; the panel itself stays hidden.
+    func sample(list: NotchPanelID?, hasNotch: Bool) -> AnyView {
+        self.hasNotch = hasNotch
+        notchWidth = hasNotch ? 188 : 200
+        barHeight = 32
+        expanded = list != nil
+        revealed = list != nil
+        openedByHover = true
+        if let list { self.list = list }
+        return AnyView(AskPanelView(panel: self))
+    }
+    #endif
 }
 
 private final class KeyablePanel: NSPanel {
@@ -245,22 +252,29 @@ private final class KeyablePanel: NSPanel {
 
 private struct AskPanelView: View {
     static let wing: CGFloat = 34
-    static var checklist: some View { Image(systemName: "checklist").resizable().foregroundStyle(.white) }
     @ObservedObject var panel: NotchBar
+    @ObservedObject private var panels = NotchPanelsModel.shared
+    @ObservedObject private var slack = SlackModel.shared
 
     var body: some View {
-        let collapsedWidth = panel.notchWidth + 2 * Self.wing
+        let shown = panels.shown
+        let wings = NotchWings.split(shown)
+        let wingWidth = NotchWings.width(shown, icon: Self.wing)
+        let collapsedWidth = panel.notchWidth + 2 * wingWidth
         ZStack(alignment: .top) {
             if panel.expanded {
                 VStack(spacing: 12) {
-                    if panel.hasNotch {
-                        mark(Self.checklist, list: .todo, height: 22).padding(.bottom, -8)
+                    if panel.hasNotch && !wings.middle.isEmpty {
+                        marks(wings.middle, height: 22).padding(.bottom, -8)
                     }
                     AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover)
-                    switch panel.list {
-                    case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
-                    case .jira: AssignedTickets(onOpen: panel.collapse)
-                    case .todo: TodoNotchList(onHold: panel.hold, onType: panel.type)
+                    if shown.contains(panel.list) {
+                        switch panel.list {
+                        case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
+                        case .jira: AssignedTickets(onOpen: panel.collapse)
+                        case .todo: TodoNotchList(onHold: panel.hold, onType: panel.type)
+                        case .slack: SlackNotchList(onOpen: panel.collapse)
+                        }
                     }
                 }
                     .frame(width: 560)
@@ -274,13 +288,13 @@ private struct AskPanelView: View {
                     .background(HoverArea(onHover: panel.hover))
             }
             HStack(spacing: 0) {
-                mark(BrandMark.jira, list: .jira)
+                marks(wings.left).frame(width: wingWidth, alignment: .leading)
                 Spacer()
-                if !panel.hasNotch {
-                    mark(Self.checklist, list: .todo)
+                if !panel.hasNotch && !wings.middle.isEmpty {
+                    marks(wings.middle)
                     Spacer()
                 }
-                mark(BrandMark.gitHub.foregroundStyle(.white), list: .gitHub)
+                marks(wings.right).frame(width: wingWidth, alignment: .trailing)
             }
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
@@ -301,15 +315,39 @@ private struct AskPanelView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
-    private func mark(_ image: some View, list: AskPanel.List, height: CGFloat? = nil) -> some View {
-        image.scaledToFit()
+    private func marks(_ ids: [NotchPanelID], height: CGFloat? = nil) -> some View {
+        HStack(spacing: 0) {
+            ForEach(ids) { mark($0, height: height) }
+        }
+    }
+
+    private func mark(_ list: NotchPanelID, height: CGFloat? = nil) -> some View {
+        list.icon.scaledToFit()
+            .foregroundStyle(.white)
             .frame(width: 17, height: 17)
+            .overlay(alignment: .topTrailing) {
+                if list == .slack && slack.badge > 0 { NotchBadge(count: slack.badge).offset(x: 7, y: -5) }
+            }
             .opacity(!panel.expanded || panel.list == list ? 1 : 0.45)
             .animation(.easeOut(duration: 0.12), value: panel.list)
             .frame(width: Self.wing, height: height ?? panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand(list) }
             .background(HoverArea { if $0 { panel.expand(list, byHover: true) } })
+    }
+}
+
+private struct NotchBadge: View {
+    let count: Int
+
+    var body: some View {
+        Text(count > 9 ? "9+" : "\(count)")
+            .font(.system(size: 8, weight: .bold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 3)
+            .frame(minWidth: 11, minHeight: 11)
+            .background(Capsule().fill(Color.red))
     }
 }
 
@@ -406,6 +444,14 @@ enum BrandMark {
     static let gitHub = image("""
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
         """, template: true)
+    static let slack = image("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+        <path fill="#E01E5A" d="M5.042 15.165a2.528 2.528 0 0 1-2.52 2.523A2.528 2.528 0 0 1 0 15.165a2.527 2.527 0 0 1 2.522-2.52h2.52v2.52zM6.313 15.165a2.527 2.527 0 0 1 2.521-2.52 2.527 2.527 0 0 1 2.521 2.52v6.313A2.528 2.528 0 0 1 8.834 24a2.528 2.528 0 0 1-2.521-2.522v-6.313z"/>
+        <path fill="#36C5F0" d="M8.834 5.042a2.528 2.528 0 0 1-2.521-2.52A2.528 2.528 0 0 1 8.834 0a2.528 2.528 0 0 1 2.521 2.522v2.52H8.834zM8.834 6.313a2.528 2.528 0 0 1 2.521 2.521 2.528 2.528 0 0 1-2.521 2.521H2.522A2.528 2.528 0 0 1 0 8.834a2.528 2.528 0 0 1 2.522-2.521h6.312z"/>
+        <path fill="#2EB67D" d="M18.956 8.834a2.528 2.528 0 0 1 2.522-2.521A2.528 2.528 0 0 1 24 8.834a2.528 2.528 0 0 1-2.522 2.521h-2.522V8.834zM17.688 8.834a2.528 2.528 0 0 1-2.523 2.521 2.527 2.527 0 0 1-2.52-2.521V2.522A2.527 2.527 0 0 1 15.165 0a2.528 2.528 0 0 1 2.523 2.522v6.312z"/>
+        <path fill="#ECB22E" d="M15.165 18.956a2.528 2.528 0 0 1 2.523 2.522A2.528 2.528 0 0 1 15.165 24a2.527 2.527 0 0 1-2.52-2.522v-2.522h2.52zM15.165 17.688a2.527 2.527 0 0 1-2.52-2.523 2.526 2.526 0 0 1 2.52-2.52h6.313A2.527 2.527 0 0 1 24 15.165a2.528 2.528 0 0 1-2.522 2.523h-6.313z"/>
+        </svg>
+        """, template: false)
 
     private static func image(_ svg: String, template: Bool) -> Image {
         let image = NSImage(data: Data(svg.utf8)) ?? NSImage()
