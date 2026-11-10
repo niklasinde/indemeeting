@@ -219,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindow.shared.whisper.fetchVADIfNeeded()
         recorder.live.languages = { [store] in MeetingPipeline.languages(for: $0, store: store) }
         OnboardingWindow.shared.showIfSetupNeeded()
+        processor.resumeUnfinished()
         processor.summariseWhenModelReady()
         audioCleaner.start()
         tracker.start()

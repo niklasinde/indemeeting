@@ -516,6 +516,29 @@ enum ProcessingLogic {
         case resummarise = "--resummarise"
     }
 
+    enum Resume: Equatable {
+        case process(String)
+        case summarise(String)
+    }
+
+    static let resumeWindow: TimeInterval = 7 * 24 * 3600
+
+    /// Meetings of the last week left unprocessed when the app quit, oldest first. Failed meetings and those without a
+    /// summary for a known reason stay as they are, and so do those still recording or waiting for a part to be appended.
+    static func unfinished(_ meetings: [Meeting], files: Set<String>, now: Date) -> [Resume] {
+        meetings
+            .filter { meeting in
+                let base = (meeting.audioFile as NSString).deletingPathExtension
+                return meeting.status == .none && !meeting.summarised && meeting.audioDeletedAt == nil
+                    && now.timeIntervalSince(meeting.created) <= resumeWindow
+                    && files.contains(meeting.audioFile)
+                    && !files.contains(RecordingLogic.partialURL(for: URL(fileURLWithPath: meeting.audioFile)).lastPathComponent)
+                    && !files.contains { $0.hasPrefix(base + RecordingLogic.partMarker) }
+            }
+            .sorted { $0.created < $1.created }
+            .map { $0.transcribed ? .summarise($0.audioFile) : .process($0.audioFile) }
+    }
+
     static func processArguments(_ arguments: [String]) -> (audio: URL, language: MeetingLanguage?, mode: ProcessMode)? {
         guard let index = arguments.firstIndex(where: { ProcessMode(rawValue: $0) != nil }), index + 1 < arguments.count,
               let mode = ProcessMode(rawValue: arguments[index]) else { return nil }

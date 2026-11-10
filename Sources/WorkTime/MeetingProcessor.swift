@@ -206,6 +206,18 @@ final class MeetingProcessor: ObservableObject {
         enqueue(audio) { [store] in try await MeetingPipeline.recogniseSpeakers(audio, store: store, progress: $0) }
     }
 
+    /// Queues the meetings left unprocessed when the app last quit.
+    func resumeUnfinished() {
+        let files = Set((try? FileManager.default.contentsOfDirectory(atPath: AppPaths.recordings.path)) ?? [])
+        let unfinished = ProcessingLogic.unfinished((try? store.meetings()) ?? [], files: files, now: Date())
+        for job in unfinished {
+            switch job {
+            case .process(let name): process(AppPaths.recordings.appendingPathComponent(name))
+            case .summarise(let name): summarise(AppPaths.recordings.appendingPathComponent(name))
+            }
+        }
+    }
+
     /// While Apple Intelligence is off or downloading, waits for it and then summarises every meeting left without a summary.
     func summariseWhenModelReady() {
         guard modelWatch == nil, Summarizer.isWaitingForModel, (try? store.awaitingSummary())?.isEmpty == false else { return }
@@ -218,7 +230,7 @@ final class MeetingProcessor: ObservableObject {
 
     private func summariseAwaiting() {
         let audio = ((try? store.awaitingSummary()) ?? []).map { AppPaths.recordings.appendingPathComponent($0.audioFile) }
-            .filter { $0 != processing }
+            .filter { !busyFiles.contains($0.lastPathComponent) }
         guard let newest = audio.first else { return }
         notifier?.postProcessed(title: "Apple Intelligence is ready",
                                 body: "Summarising \(audio.count) meeting\(audio.count == 1 ? "" : "s")", meeting: newest)

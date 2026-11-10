@@ -884,6 +884,33 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingStage.recognisingSpeakers(progress: 0.5).text(for: "a.m4a") == "Recognising speakers in a.m4a\u{2026} 50%",
               "recognising")
     }),
+    ("meetings left unprocessed resume oldest first, leaving failed, recording and old ones alone", {
+        let now = Date(timeIntervalSince1970: 30 * 24 * 3600)
+        func meeting(_ file: String, hoursAgo: Double, status: ProcessingStatus = .none, transcribed: Bool = false,
+                     summarised: Bool = false, deleted: Date? = nil) -> Meeting {
+            Meeting(id: 1, audioFile: file, created: now.addingTimeInterval(-hoursAgo * 3600), notes: "", status: status,
+                    transcribed: transcribed, summarised: summarised, audioDeletedAt: deleted)
+        }
+        let meetings = [
+            meeting("new.m4a", hoursAgo: 1),
+            meeting("transcribed.m4a", hoursAgo: 5, transcribed: true),
+            meeting("old.m4a", hoursAgo: 8 * 24),
+            meeting("failed.m4a", hoursAgo: 2, status: .failed),
+            meeting("unavailable.m4a", hoursAgo: 2, status: .unavailable, transcribed: true),
+            meeting("done.m4a", hoursAgo: 2, status: .summarised, transcribed: true, summarised: true),
+            meeting("deleted.m4a", hoursAgo: 2, deleted: now),
+            meeting("missing.m4a", hoursAgo: 2),
+            meeting("recording.m4a", hoursAgo: 2),
+            meeting("continued.m4a", hoursAgo: 2),
+        ]
+        let files: Set<String> = ["new.m4a", "new.stem-mic.m4a", "transcribed.m4a", "old.m4a", "failed.m4a", "unavailable.m4a",
+                                  "done.m4a", "deleted.m4a", "recording.m4a", "recording.recording.m4a", "continued.m4a",
+                                  "continued.part-1700000000.m4a"]
+        check(ProcessingLogic.unfinished(meetings, files: files, now: now) == [.summarise("transcribed.m4a"), .process("new.m4a")],
+              "\(ProcessingLogic.unfinished(meetings, files: files, now: now))")
+        check(ProcessingLogic.unfinished([meeting("week.m4a", hoursAgo: 7 * 24)], files: ["week.m4a"], now: now) == [.process("week.m4a")],
+              "a week old still resumes")
+    }),
     ("recording names parse back to their minute", {
         let zone = TimeZone(identifier: "Europe/Stockholm")!
         var calendar = Calendar(identifier: .gregorian)
