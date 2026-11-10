@@ -52,22 +52,18 @@ final class AgentModel: ObservableObject {
     @Published private(set) var sessionID: String?
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
-    @Published private(set) var hasKey = false
     @Published var folder: String
     @Published var draft = ""
 
-    private let key: () -> String?
+    private let tokens: TokenStore
     private var client: AgentClient?
 
-    init(folder: String? = nil, key: @escaping () -> String? = { ClaudeAPIKeyStore.live.key() }) {
-        self.key = key
+    init(folder: String? = nil, tokens: TokenStore = .claudeOAuth) {
+        self.tokens = tokens
         self.folder = folder ?? UserDefaults.standard.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory()
-        hasKey = key() != nil
-        NotificationCenter.default.addObserver(forName: ClaudeAPIKeyStore.didChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.stopClient()
-                self?.hasKey = self?.key() != nil
-            }
+        guard let didChange = tokens.didChange else { return }
+        NotificationCenter.default.addObserver(forName: didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stopClient() }
         }
     }
 
@@ -155,10 +151,6 @@ final class AgentModel: ObservableObject {
 
     private func runningClient() -> AgentClient? {
         if let client, client.isRunning { return client }
-        guard let key = key() else {
-            problem = "Add your Anthropic API key in Settings, under Claude API. The agent uses the same key."
-            return nil
-        }
         let environment = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser
         let nvm = (try? FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(".nvm/versions/node").path)) ?? []
@@ -172,16 +164,14 @@ final class AgentModel: ObservableObject {
             problem = "The agent sidecar is not built. Run `npm ci && npm run build` in the agent folder of the WorkTime checkout."
             return nil
         }
-        var childEnvironment = environment
-        childEnvironment["PATH"] = [node.deletingLastPathComponent().path, environment["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"]
-            .compactMap { $0 }.joined(separator: ":")
-        childEnvironment["ANTHROPIC_API_KEY"] = key
-        childEnvironment["WORKTIME_MCP_COMMAND"] = Bundle.main.executablePath
+        let token = tokens.token()
+        let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path, token: token,
+                                                           mcpCommand: Bundle.main.executablePath)
         do {
             let client = try AgentClient(node: node, script: script, environment: childEnvironment, onLine: { [weak self] line in
                 Task { @MainActor [weak self] in self?.receive(line) }
             }, onExit: { [weak self] status, errors in
-                Task { @MainActor [weak self] in self?.exited(status: status, errors: ClaudeAPIRedaction.redact(errors, key: key)) }
+                Task { @MainActor [weak self] in self?.exited(status: status, errors: SecretRedaction.redact(errors, key: token)) }
             })
             self.client = client
             return client
@@ -201,6 +191,7 @@ final class AgentModel: ObservableObject {
         client = nil
         guard busy else { return }
         busy = false
+        if AgentLogic.needsSignIn(errors) { return AgentLogic.appendSignIn(to: &items) }
         let tail = errors.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
         items.append(AgentItem(id: "error-\(items.count)", kind: .error("The agent stopped (exit \(status)). \(tail)")))
     }

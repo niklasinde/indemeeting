@@ -62,6 +62,7 @@ struct ModelOverview: View {
                 Divider().padding(.leading, 14)
                 step("Activity categories", "Apple Intelligence", .builtIn, detail: "The same model, for content tagging", state: categoryState)
             }
+            ClaudeSignInSettingsSection().padding(.top, 12)
         }
     }
 

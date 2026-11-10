@@ -22,7 +22,7 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
               == .permissionRequest(id: "3", tool: "Bash", summary: "ls -la \u{2026}", detail: AgentLogic.pretty(["command": "ls -la\nrm x"])),
               "bash shows its first line")
         check(AgentEvent.decode(#"{"type":"result","sessionId":"s1","isError":false,"text":"ok","costUSD":0.5,"turns":2}"#, cwd: cwd)
-              == .result(sessionID: "s1", isError: false, text: "ok", cost: 0.5, turns: 2), "result")
+              == .result(sessionID: "s1", isError: false, text: "ok", turns: 2), "result")
         check(AgentEvent.decode("not json", cwd: cwd) == nil, "garbage is ignored")
         check(AgentEvent.decode(#"{"type":"mystery"}"#, cwd: cwd) == nil, "unknown types are ignored")
     }),
@@ -57,11 +57,49 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered")
         AgentLogic.answer(permission.id, allow: true, in: &items)
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered only once")
-        check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", cost: 0.123, turns: 1), to: &items) == "s2", "result session")
-        check(items.last?.kind == .status("Done \u{00B7} 1 turn \u{00B7} $0.12"), "status \(String(describing: items.last))")
-        AgentLogic.apply(.result(sessionID: nil, isError: true, text: "Invalid API key", cost: 0, turns: 1), to: &items)
-        check(items.last?.kind == .error("Invalid API key"), "error result")
+        check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 1), to: &items) == "s2", "result session")
+        check(items.last?.kind == .status("Done \u{00B7} 1 turn"), "status \(String(describing: items.last))")
+        AgentLogic.apply(.result(sessionID: nil, isError: true, text: "Context window exceeded", turns: 1), to: &items)
+        check(items.last?.kind == .error("Context window exceeded"), "error result")
         check(Set(items.map(\.id)).count == items.count, "ids are unique")
+    }),
+
+    ("agent: an auth failure from the sidecar asks for a sign-in once", {
+        check(AgentEvent.decode(#"{"type":"error","message":"Not logged in · Please run /login","auth":true}"#, cwd: cwd) == .signIn, "auth flag")
+        check(AgentEvent.decode(#"{"type":"error","message":"Invalid API key · Please run /login"}"#, cwd: cwd) == .signIn, "auth text")
+        check(AgentEvent.decode(#"{"type":"error","message":"The agent is still working."}"#, cwd: cwd) == .error("The agent is still working."), "other")
+        check(AgentLogic.needsSignIn("OAuth token has expired. Please obtain a new token"), "expired setup token")
+        check(!AgentLogic.needsSignIn("Rate limit reached"), "rate limit is not a sign-in")
+        var items: [AgentItem] = []
+        AgentLogic.apply(.signIn, to: &items)
+        AgentLogic.apply(.result(sessionID: "s", isError: true, text: "Not logged in · Please run /login", turns: 1), to: &items)
+        check(items.map(\.kind) == [.signIn], "one sign-in item \(items)")
+        check(AgentLogic.signInMessage.contains("claude setup-token") && AgentLogic.signInMessage.contains("/login"), "message")
+    }),
+
+    ("agent: the sidecar never gets an API key, and gets the setup token when one is saved", {
+        let base = ["PATH": "/usr/bin", "ANTHROPIC_API_KEY": "sk-ant-api03-x", "ANTHROPIC_AUTH_TOKEN": "y", "HOME": "/Users/me"]
+        let plain = AgentLogic.childEnvironment(base, nodeFolder: "/opt/node/bin", token: nil, mcpCommand: "/App/WorkTime")
+        check(plain["ANTHROPIC_API_KEY"] == nil && plain["ANTHROPIC_AUTH_TOKEN"] == nil, "keys removed")
+        check(plain["CLAUDE_CODE_OAUTH_TOKEN"] == nil && plain["HOME"] == "/Users/me", "falls back to the Claude Code sign-in")
+        check(plain["PATH"]?.hasPrefix("/opt/node/bin:/usr/bin:") == true && plain["WORKTIME_MCP_COMMAND"] == "/App/WorkTime", "path and mcp")
+        let signed = AgentLogic.childEnvironment(base, nodeFolder: "/n", token: "sk-ant-oat01-abc", mcpCommand: nil)
+        check(signed["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-abc" && signed["ANTHROPIC_API_KEY"] == nil, "setup token")
+        check(AgentLogic.isSetupToken("sk-ant-oat01-abc") && !AgentLogic.isSetupToken("sk-ant-api03-abc"), "setup token shape")
+        let redacted = SecretRedaction.redact("401 for sk-ant-oat01-SECRET-part", key: nil)
+        check(!redacted.contains("SECRET"), "setup tokens are redacted: \(redacted)")
+    }),
+
+    ("agent: saving or removing the setup token announces it so the sidecar restarts", {
+        let name = Notification.Name("AgentTestTokenDidChange")
+        let tokens = TokenStore(secrets: MemorySecretStore(), account: "t", didChange: name)
+        var posts = 0
+        let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in posts += 1 }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        try tokens.save(" sk-ant-oat01-abc\n")
+        check(tokens.token() == "sk-ant-oat01-abc" && posts == 1, "saved trimmed")
+        tokens.remove()
+        check(tokens.token() == nil && posts == 2, "removed")
     }),
 
     ("agent: node is looked for on the PATH, Homebrew, then the newest nvm", {

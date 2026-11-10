@@ -10,6 +10,8 @@ const model = process.env.WORKTIME_AGENT_MODEL ?? "claude-opus-5-5";
 const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
 const readOnly = (tool: string) => ["Read", "Grep", "Glob"].includes(tool) || tool.startsWith("mcp__worktime__");
 const resultLimit = 4000;
+const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].includes(key)));
 
 const pending = new Map<string, (result: PermissionResult) => void>();
 let running: { query: Query; abort: AbortController } | undefined;
@@ -37,6 +39,9 @@ function forward(message: any) {
       if (message.subtype === "init") send({ type: "session", sessionId: message.session_id });
       break;
     case "assistant":
+      if (authErrors.includes(message.error)) {
+        return send({ type: "error", message: resultText(message.message?.content) || message.error, auth: true });
+      }
       for (const block of message.message?.content ?? []) {
         if (block.type === "text" && block.text) send({ type: "text", text: block.text });
         if (block.type === "tool_use") send({ type: "tool_use", id: block.id, tool: block.name, input: block.input ?? {} });
@@ -53,7 +58,7 @@ function forward(message: any) {
     case "result":
       send({
         type: "result", sessionId: message.session_id, isError: message.is_error === true || message.subtype !== "success",
-        text: message.result ?? (message.errors ?? []).join("\n"), costUSD: message.total_cost_usd, turns: message.num_turns,
+        text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns,
       });
       break;
   }
@@ -76,6 +81,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       tools,
       permissionMode: "default",
       settingSources: ["project"],
+      env,
       mcpServers: mcpServers(),
       abortController: abort,
       canUseTool: (tool, toolInput) => new Promise<PermissionResult>((resolve) => {
@@ -128,7 +134,6 @@ function handle(line: string) {
   }
 }
 
-if (!process.env.ANTHROPIC_API_KEY) send({ type: "error", message: "ANTHROPIC_API_KEY is not set." });
 send({ type: "ready", model });
 createInterface({ input: process.stdin }).on("line", (line) => line.trim() && handle(line)).on("close", () => {
   running?.abort.abort();

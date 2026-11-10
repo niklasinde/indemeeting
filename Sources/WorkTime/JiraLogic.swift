@@ -180,9 +180,12 @@ enum JiraLogic {
 struct TokenStore {
     static let jira = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"), account: "api-token")
     static let slack = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.slack"), account: "user-token")
+    static let claudeOAuth = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.claude-oauth"), account: "setup-token",
+                                        didChange: Notification.Name("ClaudeOAuthTokenDidChange"))
 
     let secrets: PhoneSecretStore
     let account: String
+    var didChange: Notification.Name? = nil
 
     func token() -> String? {
         secrets.key(for: account).flatMap { String(data: $0, encoding: .utf8) }
@@ -190,9 +193,11 @@ struct TokenStore {
 
     func save(_ token: String) throws {
         try secrets.save(Data(token.trimmingCharacters(in: .whitespacesAndNewlines).utf8), for: account)
+        didChange.map { NotificationCenter.default.post(name: $0, object: nil) }
     }
 
     func remove() {
         secrets.delete(account)
+        didChange.map { NotificationCenter.default.post(name: $0, object: nil) }
     }
 }

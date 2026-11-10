@@ -15,7 +15,7 @@ enum AgentPreview {
         app.setActivationPolicy(.accessory)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
-        let model = AgentModel(folder: repo, key: { "preview" })
+        let model = AgentModel(folder: repo, tokens: TokenStore(secrets: MemorySecretStore(), account: "preview"))
         let files = ["Sources/WorkTime/AgentLogic.swift", "Sources/WorkTime/AgentClient.swift", "Sources/WorkTime/AgentView.swift",
                      "Sources/WorkTime/ChatLogic.swift", "agent/src/main.ts"]
 
@@ -28,6 +28,11 @@ enum AgentPreview {
                 model.preview([], files: files)
                 model.draft = "Explain how @agent"
                 await save(model, appearance: appearance, to: output.appendingPathComponent("agent-mention-\(name).png"))
+                var signIn = [AgentItem(id: "user-0", kind: .user("Reply with just OK"))]
+                AgentLogic.apply(.signIn, to: &signIn)
+                model.preview(signIn, files: files)
+                model.draft = ""
+                await save(model, appearance: appearance, to: output.appendingPathComponent("agent-signin-\(name).png"))
             }
             exit(0)
         }
@@ -57,7 +62,7 @@ enum AgentPreview {
             .text("The window answers them in `Sources/WorkTime/AgentClient.swift:120`, and the transcript marks the prompt answered in "
                   + "[AgentLogic.answer](Sources/WorkTime/AgentLogic.swift#L115).\n\n- The sidecar waits in `canUseTool` (agent/src/main.ts:93).\n"
                   + "- Deny sends `allow: false`, which the SDK turns into a refusal."),
-            .result(sessionID: "preview-session", isError: false, text: "", cost: 0.04, turns: 3),
+            .result(sessionID: "preview-session", isError: false, text: "", turns: 3),
         ]
         answer.forEach { AgentLogic.apply($0, to: &items) }
         items.append(AgentItem(id: "user-\(items.count)", kind: .user("Run the tests")))

@@ -8,8 +8,9 @@ enum AgentEvent: Equatable {
     case toolUse(id: String, tool: String, summary: String, detail: String)
     case toolResult(id: String, content: String, isError: Bool)
     case permissionRequest(id: String, tool: String, summary: String, detail: String)
-    case result(sessionID: String?, isError: Bool, text: String, cost: Double?, turns: Int?)
+    case result(sessionID: String?, isError: Bool, text: String, turns: Int?)
     case error(String)
+    case signIn
     case idle
 
     static func decode(_ line: String, cwd: String) -> AgentEvent? {
@@ -31,8 +32,8 @@ enum AgentEvent: Equatable {
                                       summary: AgentLogic.summary(tool: string("tool"), input: input, cwd: cwd), detail: AgentLogic.pretty(input))
         case "result":
             return .result(sessionID: object["sessionId"] as? String, isError: object["isError"] as? Bool ?? false, text: string("text"),
-                           cost: object["costUSD"] as? Double, turns: object["turns"] as? Int)
-        case "error": return .error(string("message"))
+                           turns: object["turns"] as? Int)
+        case "error": return object["auth"] as? Bool == true || AgentLogic.needsSignIn(string("message")) ? .signIn : .error(string("message"))
         case "idle": return .idle
         default: return nil
         }
@@ -67,6 +68,7 @@ struct AgentItem: Identifiable, Equatable {
         case permission(tool: String, summary: String, detail: String, allowed: Bool?)
         case status(String)
         case error(String)
+        case signIn
     }
 
     let id: String
@@ -95,17 +97,26 @@ enum AgentLogic {
             items[index].kind = .tool(name: name, summary: summary, detail: detail, result: content, isError: isError)
         case .permissionRequest(let id, let tool, let summary, let detail):
             items.append(AgentItem(id: "permission-\(id)-\(items.count)", kind: .permission(tool: tool, summary: summary, detail: detail, allowed: nil)))
-        case .result(let sessionID, let isError, let text, let cost, let turns):
-            if isError {
+        case .result(let sessionID, let isError, let text, let turns):
+            if isError, needsSignIn(text) {
+                appendSignIn(to: &items)
+            } else if isError {
                 items.append(AgentItem(id: "error-\(items.count)", kind: .error(text.isEmpty ? "The agent stopped with an error." : text)))
             } else {
-                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(cost: cost, turns: turns))))
+                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns))))
             }
             return sessionID
         case .error(let message):
             items.append(AgentItem(id: "error-\(items.count)", kind: .error(message)))
+        case .signIn:
+            appendSignIn(to: &items)
         }
         return nil
+    }
+
+    static func appendSignIn(to items: inout [AgentItem]) {
+        guard items.last?.kind != .signIn else { return }
+        items.append(AgentItem(id: "signin-\(items.count)", kind: .signIn))
     }
 
     /// Marks a permission prompt answered so its buttons go away.
@@ -121,11 +132,38 @@ enum AgentLogic {
         return parts.count == 3 && parts[0] == "permission" ? String(parts[1]) : nil
     }
 
-    static func resultLine(cost: Double?, turns: Int?) -> String {
-        var parts = ["Done"]
-        if let turns { parts.append("\(turns) turn\(turns == 1 ? "" : "s")") }
-        if let cost, cost > 0 { parts.append(String(format: "$%.2f", cost)) }
-        return parts.joined(separator: " \u{00B7} ")
+    static func resultLine(turns: Int?) -> String {
+        turns.map { "Done \u{00B7} \($0) turn\($0 == 1 ? "" : "s")" } ?? "Done"
+    }
+
+    // MARK: Sign-in
+
+    static let signInMessage = "Sign in to Claude: run `claude setup-token` and paste the token in Settings \u{2192} Models, "
+        + "or run `claude` and /login once."
+
+    private static let signInPatterns = ["not logged in", "/login", "invalid api key", "authentication_failed", "authentication_error",
+                                         "oauth token", "oauth_org_not_allowed", "invalid bearer token"]
+
+    /// What `claude setup-token` prints: a long-lived OAuth token for the Pro or Max plan.
+    static func isSetupToken(_ token: String) -> Bool {
+        token.hasPrefix("sk-ant-oat") && !token.contains(where: \.isWhitespace)
+    }
+
+    /// Whether a sidecar error or failed result means Claude Code has no usable subscription sign-in.
+    static func needsSignIn(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        return signInPatterns.contains { lowered.contains($0) }
+    }
+
+    /// The sidecar's environment: the app's, with `node` first on the PATH, never an API key, and the setup token when one is saved.
+    static func childEnvironment(_ base: [String: String], nodeFolder: String, token: String?, mcpCommand: String?) -> [String: String] {
+        var environment = base
+        environment["ANTHROPIC_API_KEY"] = nil
+        environment["ANTHROPIC_AUTH_TOKEN"] = nil
+        environment["PATH"] = [nodeFolder, base["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"].compactMap { $0 }.joined(separator: ":")
+        if let token { environment["CLAUDE_CODE_OAUTH_TOKEN"] = token }
+        environment["WORKTIME_MCP_COMMAND"] = mcpCommand
+        return environment
     }
 
     // MARK: Tool inputs

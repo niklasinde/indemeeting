@@ -532,7 +532,8 @@ a fake key against a loopback stub. It refuses any other host.
 
 ## Agent (proof of concept)
 
-A coding agent in its own window, built on the Claude Agent SDK and run with the Claude API key. Open it from **Agent…** in the
+A coding agent in its own window, built on the Claude Agent SDK and run on your Claude Pro or Max plan, never on API credits.
+Open it from **Agent…** in the
 menu bar menu or the **Agent** row in the main window's sidebar.
 
 - **Sidecar.** `agent/` is a small TypeScript program (`agent/src/main.ts`) around `query()` from `@anthropic-ai/claude-agent-sdk`
@@ -545,8 +546,15 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   sidecar is not copied into the app bundle (its SDK carries a native binary that would need signing); the app finds it at
   `$WORKTIME_AGENT_DIR/dist/main.js`, then `Contents/Resources/agent/dist/main.js`, then `agent/dist/main.js` in the checkout it
   was built from. `node` is looked for on the PATH, in `/opt/homebrew/bin`, `/usr/local/bin` and the newest `~/.nvm` version.
-- **Auth.** The key saved under Settings > Models > Claude API is passed to the sidecar as `ANTHROPIC_API_KEY` in its
-  environment only. It is not logged; the sidecar's stderr is redacted before it is shown.
+- **Auth.** The Claude API key is not used: `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the sidecar's
+  environment (by the app and again by the sidecar), so an exported key cannot take over. Sign-in comes from your Claude
+  subscription, in this order: a long-lived token from `claude setup-token`, pasted under Settings > Models > Claude sign-in,
+  kept in the app's secrets file like the Jira and Slack tokens and passed as `CLAUDE_CODE_OAUTH_TOKEN`; otherwise the Claude
+  Code sign-in already on this Mac (`claude` then `/login`), which the SDK's bundled Claude Code reads from the Keychain item
+  `Claude Code-credentials` or `~/.claude/.credentials.json` itself (`settingSources` only picks settings files, not auth). The
+  app never reads those credentials. If neither works, the window says how to sign in, with an Open Settings button. Saving or
+  removing the token restarts the sidecar. The token is never logged; the sidecar's stderr is redacted before it is shown.
+  The SDK's cost estimate is not shown, since a plan is not charged per token.
 - **Context.** The sidecar registers WorkTime's own read-only MCP server (`WorkTime --mcp`) as `worktime`, so the agent can read
   meetings and activity.
 - **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.

@@ -40,12 +40,8 @@ struct AgentView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            if model.hasKey {
-                transcript
-                composer
-            } else {
-                missingKey
-            }
+            transcript
+            composer
         }
         .frame(minWidth: 600, minHeight: 440)
         .environment(\.openURL, OpenURLAction { model.open($0) })
@@ -68,18 +64,6 @@ struct AgentView: View {
         .padding(.horizontal, RecordingDetail.gutter)
         .padding(.top, 20)
         .padding(.bottom, 12)
-    }
-
-    private var missingKey: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("No API key yet").font(.body.weight(.medium))
-            Text("The agent uses the Anthropic API key of the Claude API chat. Add it in Settings \u{2192} Models, under Claude API.")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 440, alignment: .leading)
-            Button("Open Settings") { SettingsWindow.shared.show(tab: .models) }.padding(.top, 4)
-        }
-        .padding(RecordingDetail.gutter)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var transcript: some View {
@@ -190,6 +174,13 @@ private struct AgentItemRow: View {
             Text(text).font(.caption).foregroundStyle(.secondary)
         case .error(let text):
             Label(text, systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+        case .signIn:
+            VStack(alignment: .leading, spacing: 8) {
+                Label(LocalizedStringKey(AgentLogic.signInMessage), systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.callout)
+                    .textSelection(.enabled)
+                Button("Open Settings") { SettingsWindow.shared.show(tab: .models) }
+            }
         }
     }
 }
@@ -268,5 +259,54 @@ private struct AgentCode: View {
         .frame(maxHeight: 220)
         .fixedSize(horizontal: false, vertical: true)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
+    }
+}
+
+/// The setup token the Agent window signs in to Claude with, on the Settings Models page.
+struct ClaudeSignInSettingsSection: View {
+    var tokens = TokenStore.claudeOAuth
+    @State private var saved = false
+    @State private var entry = ""
+    @State private var problem: String?
+
+    var body: some View {
+        SettingsSection("Claude sign-in", footer: "Run claude setup-token in Terminal and paste the token. Uses your Pro/Max plan limits, "
+                        + "not API credits. Without a token the Agent window uses the Claude Code sign-in on this Mac.") {
+            SettingsRow("Setup token", detail: saved ? "Saved \u{2014} used by the Agent window" : "No token saved") {
+                if saved { Button("Remove", action: remove) }
+            }
+            HStack(spacing: 8) {
+                SecureField("Setup token", text: $entry, prompt: Text("sk-ant-oat\u{2026}"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 260)
+                    .onSubmit(save)
+                Button("Save", action: save).disabled(typed.isEmpty)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.red).padding(.horizontal, 14).padding(.bottom, 10)
+            }
+        }
+        .onAppear { saved = tokens.token() != nil }
+    }
+
+    private var typed: String { entry.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    private func save() {
+        guard AgentLogic.isSetupToken(typed) else { return problem = "A setup token starts with sk-ant-oat." }
+        do {
+            try tokens.save(typed)
+            entry = ""
+            problem = nil
+            saved = true
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    private func remove() {
+        tokens.remove()
+        saved = false
     }
 }

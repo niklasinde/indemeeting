@@ -286,7 +286,7 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("redaction removes the key and any key-shaped text", {
-        let text = ClaudeAPIRedaction.redact("auth failed for sk-ant-api03-OTHER-VALUE and \(fakeKey)", key: fakeKey)
+        let text = SecretRedaction.redact("auth failed for sk-ant-api03-OTHER-VALUE and \(fakeKey)", key: fakeKey)
         check(!text.contains("OTHER-VALUE") && !text.contains("0123456789"), "key-shaped text removed: \(text)")
         check(text.contains("sk-ant-\u{2026}"), "marker kept")
     }),
@@ -377,7 +377,7 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("the Claude API chat is reachable only from the app window: the MCP server and the phone API never mention it", {
-        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "WorkTimeApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift", "AgentClient.swift"]
+        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "WorkTimeApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift"]
         for file in try sourceFiles() {
             let name = file.lastPathComponent
             guard !name.hasPrefix("ClaudeAPI") else { continue }

@@ -51,7 +51,7 @@ enum ClaudeAPIKey {
     }
 }
 
-enum ClaudeAPIRedaction {
+enum SecretRedaction {
     static func redact(_ text: String, key: String?) -> String {
         var result = text
         if let key, !key.isEmpty { result = result.replacingOccurrences(of: key, with: "sk-ant-\u{2026}") }
@@ -273,9 +273,9 @@ enum ClaudeAPIError: Error, Equatable {
     /// The same error with any key-shaped text in its message replaced.
     func redacting(_ key: String?) -> ClaudeAPIError {
         switch self {
-        case .badRequest(let text): .badRequest(ClaudeAPIRedaction.redact(text, key: key))
-        case .server(let text): .server(ClaudeAPIRedaction.redact(text, key: key))
-        case .network(let text): .network(ClaudeAPIRedaction.redact(text, key: key))
+        case .badRequest(let text): .badRequest(SecretRedaction.redact(text, key: key))
+        case .server(let text): .server(SecretRedaction.redact(text, key: key))
+        case .network(let text): .network(SecretRedaction.redact(text, key: key))
         default: self
         }
     }
