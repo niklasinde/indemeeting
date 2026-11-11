@@ -23,6 +23,7 @@ enum AgentPreview {
 
         app.activate(ignoringOtherApps: true)
         Task { @MainActor in
+            await wide(to: output)
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 model.preview(sample(), files: files)
                 model.draft = ""
@@ -124,6 +125,72 @@ enum AgentPreview {
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
     }
+
+    /// A reply with a wide table, a long code line and a long paragraph in narrow panes, a table that fits by wrapping, Chrome
+    /// switched on and not connected, and a long transcript opened and then replaced, which both show its end.
+    @MainActor
+    private static func wide(to output: URL) async {
+        let model = AgentModel(folder: repo)
+        model.chrome = true
+        var items = [AgentItem(id: "user-0", kind: .user("Compare the agent permission modes"))]
+        AgentLogic.apply(.text(wideReply), to: &items)
+        AgentLogic.apply(.toolUse(id: "c1", tool: "mcp__claude-in-chrome__tabs_context_mcp", summary: "", detail: ""), to: &items)
+        AgentLogic.apply(.toolResult(id: "c1", content: offline, isError: true, auto: true), to: &items)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            model.preview(items, chromeProblem: offline)
+            await save(AgentView(model: model), size: NSSize(width: 460, height: 900), appearance: appearance,
+                       to: output.appendingPathComponent("agent-wide-\(name).png"))
+            await save(AgentPanel(model: model, gutter: 16), size: NSSize(width: 340, height: 900), appearance: appearance,
+                       to: output.appendingPathComponent("agent-wide-dock-\(name).png"))
+        }
+        model.preview(Array(items.prefix(2)))
+        await save(AgentView(model: model), size: NSSize(width: 980, height: 900), appearance: .aqua,
+                   to: output.appendingPathComponent("agent-wide-roomy-light.png"))
+        await save(AnswerText(text: wideReply).padding(14).frame(width: 380, alignment: .topLeading), size: NSSize(width: 380, height: 900),
+                   appearance: .aqua, to: output.appendingPathComponent("answer-text-narrow-light.png"))
+
+        let long = (0..<6).flatMap { round in sample().map { AgentItem(id: "\(round)-\($0.id)", kind: $0.kind) } }
+            + [AgentItem(id: "text-last", kind: .text("**The last message**: the transcript opens here, at its end."))]
+        model.chrome = false
+        model.preview(long)
+        await save(AgentView(model: model), appearance: .aqua, to: output.appendingPathComponent("agent-scroll-opened-light.png"))
+        let window = NSWindow(contentViewController: NSHostingController(rootView: AgentView(model: model)))
+        window.setContentSize(NSSize(width: 820, height: 640))
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderBack(nil)
+        model.preview(Array(items.prefix(2)))
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        model.preview(long.reversed().map { $0 })
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        PreviewRenderer.save(window, to: output.appendingPathComponent("agent-scroll-replaced-light.png"))
+        window.orderOut(nil)
+    }
+
+    private static let offline = "Browser extension is not connected. Please ensure the Claude browser extension is installed and running."
+
+    private static let wideReply = """
+        Here is how the modes compare:
+        | Mode | Edits | Commands | Claude in Chrome | Notes |
+        |------|-------|----------|------------------|-------|
+        | Ask | asks | asks unless read-only or allowed by a saved rule | reads run, actions ask | The default for every new agent and every pull request agent opened from the GitHub page |
+        | Auto | classifier | classifier, asks when unsure | reads run, actions ask | Send to agent always asks |
+        | Accept edits | allowed | asks | reads run, actions ask | `Edit` and `Write` inside the folder |
+        | Plan | refused | read-only only | reads run, actions ask | Nothing is changed |
+
+        | Key | Value |
+        |---|---|
+        | Folder | `~/git/inde/worktime` |
+        | Model | Sonnet, picked by Auto for a short question |
+
+        The sidecar applies the read-only list and the saved rules before the mode decides, which is why a command like `git log --oneline -20 -- Sources/WorkTime/AgentView.swift` never asks even in Ask mode, while anything that writes is always shown on a permission card first.
+
+        ```
+        node agent/dist/main.js --a-very-long-flag-name=with-a-value-that-goes-on-and-on --another-flag=/Users/me/git/inde/worktime/.claude/worktrees/agent-1234567890abcdef/agent/dist/main.js
+        short line
+        ```
+
+        - A bullet that is long enough to need wrapping in the narrow pane beside a pull request, so it shows that lists wrap too.
+        """
 
     /// Permission cards offering Always allow (one with a warning, one for send_to_agent without it), a call allowed by a
     /// rule, and the Agent page of Settings listing saved rules.

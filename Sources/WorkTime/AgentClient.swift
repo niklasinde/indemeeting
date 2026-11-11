@@ -91,6 +91,20 @@ final class AgentModel: ObservableObject {
             if busy { client?.send(.mode(permissionMode)) }
         }
     }
+    /// Whether this agent's sessions get the Claude in Chrome tools, saved per agent; the next prompt starts with the change.
+    @Published var chrome = false {
+        didSet {
+            guard oldValue != chrome else { return }
+            var enabled = Self.defaults.dictionary(forKey: AgentLogic.chromeKey) ?? [:]
+            enabled[historyKey] = chrome ? true : nil
+            Self.defaults.set(enabled, forKey: AgentLogic.chromeKey)
+            if !chrome { chromeProblem = nil }
+        }
+    }
+    /// Why the Chrome tools failed last, usually the extension not being connected; cleared when one works.
+    @Published private(set) var chromeProblem: String?
+    /// Bumped when the transcript is replaced rather than added to: another session, a restored one, a new one.
+    @Published private(set) var transcriptRevision = 0
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
     @Published var folder: String
@@ -149,9 +163,10 @@ final class AgentModel: ObservableObject {
         AgentLogic.mentionQuery(draft).map { AgentLogic.fuzzyMatches($0, in: files) } ?? []
     }
 
-    func preview(_ items: [AgentItem], files: [String] = [], busy: Bool = false, seen: Bool = true) {
+    func preview(_ items: [AgentItem], files: [String] = [], busy: Bool = false, seen: Bool = true, chromeProblem: String? = nil) {
         restoring = nil
-        self.items = items
+        self.chromeProblem = chromeProblem
+        replaceItems(items)
         self.files = files
         self.busy = busy
         resultSeen = seen
@@ -183,9 +198,14 @@ final class AgentModel: ObservableObject {
         sessionID = nil
         lastModel = nil
         restoring = nil
-        items = []
+        replaceItems([])
         queued = []
         problem = nil
+    }
+
+    private func replaceItems(_ new: [AgentItem]) {
+        items = new
+        transcriptRevision += 1
     }
 
     /// Continues an earlier session: its folder, and its transcript read back from Claude Code's file.
@@ -228,7 +248,7 @@ final class AgentModel: ObservableObject {
     private func restore() {
         guard let id = sessionID else { return }
         restoring = id
-        items = [AgentItem(id: "status-0", kind: .status("Loading the earlier session\u{2026}"))]
+        replaceItems([AgentItem(id: "status-0", kind: .status("Loading the earlier session\u{2026}"))])
         let folder = folder
         Task.detached {
             let text = AgentTranscript.url(sessionID: id, cwd: folder).flatMap { try? String(contentsOf: $0, encoding: .utf8) }
@@ -241,8 +261,8 @@ final class AgentModel: ObservableObject {
     private func restored(_ id: String, items restored: [AgentItem]?, title: String?) {
         guard restoring == id, sessionID == id, !busy else { return }
         restoring = nil
-        items = restored.flatMap { $0.isEmpty ? nil : $0 }
-            ?? [AgentItem(id: "status-0", kind: .status("Continuing the earlier session; its transcript was not found"))]
+        replaceItems(restored.flatMap { $0.isEmpty ? nil : $0 }
+            ?? [AgentItem(id: "status-0", kind: .status("Continuing the earlier session; its transcript was not found"))])
         updated = history.first { $0.id == id }?.lastUsed ?? updated
         guard let title, history.first(where: { $0.id == id })?.title == AgentSessions.untitled else { return }
         history = AgentSessionStore.update(historyKey) { list in
@@ -279,7 +299,7 @@ final class AgentModel: ObservableObject {
         problem = nil
         history = AgentSessionStore.list(for: historyKey)
         restoring = nil
-        items = []
+        replaceItems([])
         sessionID = agentKey.flatMap { Self.savedSessions[$0] }
         restore()
         loadMode()
@@ -288,6 +308,8 @@ final class AgentModel: ObservableObject {
 
     private func loadMode() {
         permissionMode = AgentPermissionMode.stored(Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey), key: historyKey)
+        chrome = AgentLogic.chromeEnabled(Self.defaults.dictionary(forKey: AgentLogic.chromeKey), key: historyKey)
+        chromeProblem = nil
     }
 
     /// The current session of each pull request's and topic's agent, by its key.
@@ -346,7 +368,7 @@ final class AgentModel: ObservableObject {
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
                                 appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : topic.map(TopicAgents.systemPrompt),
-                                mode: permissionMode))
+                                mode: permissionMode, chrome: chrome))
         }
         return true
     }
@@ -442,6 +464,7 @@ final class AgentModel: ObservableObject {
 
     private func receive(_ line: String) {
         guard let event = AgentEvent.decode(line, cwd: folder) else { return }
+        if case .chrome(let problem) = event { return chromeProblem = chrome ? problem : nil }
         if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { sessionID = session }
         if case .idle = event { finishTurn() }
     }

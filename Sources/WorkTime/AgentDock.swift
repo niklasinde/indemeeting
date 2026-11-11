@@ -115,9 +115,10 @@ struct AgentDockPane: View {
                 .help("The agent works in \(folder)")
             Spacer(minLength: 4)
             AgentSessionsButton(model: model).labelStyle(.iconOnly)
+            AgentChromeToggle(model: model).labelStyle(.iconOnly)
             AgentPermissionPicker(model: model)
             AgentModelPicker(model: model)
-            AgentNewSessionButton(model: model).buttonStyle(.bordered)
+            AgentNewSessionButton(model: model).buttonStyle(.bordered).labelStyle(.titleOnly)
             Divider().frame(height: 14)
             DockPlacementMenu()
             Button { PRAgents.shared.hide(key) } label: { Image(systemName: "chevron.down") }

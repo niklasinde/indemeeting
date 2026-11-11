@@ -167,8 +167,22 @@ let githubDetailTests: [(name: String, run: () throws -> Void)] = [
         check(ChatLogic.blocks("- not a task [ ] here") == [.bullet(level: 0, text: "not a task [ ] here")], "bullet")
     }),
 
-    ("a table is aligned as plain text under a rule", {
-        check(GitHubLogic.alignedTable([["Name", "N"], ["a", "10"]]) == "Name  N \n\u{2500}\u{2500}\u{2500}\u{2500}  \u{2500}\u{2500}\na     10", GitHubLogic.alignedTable([["Name", "N"], ["a", "10"]]))
+    ("markdown tables: a header under a paragraph, ragged rows, escaped pipes and the text after", {
+        let text = "Compared:\n| Name | Note |\n|:--|--:|\n| a | x \\| y |\n| b |\n| c | 1 | extra |\nAfter the table"
+        let blocks = ChatLogic.blocks(text)
+        check(blocks == [
+            .paragraph("Compared:"), .table([["Name", "Note", ""], ["a", "x | y", ""], ["b", "", ""], ["c", "1", "extra"]]), .paragraph("After the table"),
+        ], "\(blocks)")
+        check(ChatLogic.blocks("a\n| not | a table |") == [.paragraph("a\n| not | a table |")], "no separator, no table under a paragraph")
+        check(ChatLogic.blocks("| only |\n| - |") == [.table([["only"]])], "a one-column table")
+    }),
+
+    ("table columns: natural widths when they fit, the widest capped first, minimums kept", {
+        check(ChatLogic.columnWidths(natural: [40, 300], minimum: [80, 80], available: 400) == [40, 300], "fits")
+        let capped = ChatLogic.columnWidths(natural: [40, 300, 500], minimum: [80, 80, 80], available: 440)
+        check(capped[0] == 40 && abs(capped[1] - 200) < 0.01 && abs(capped[2] - 200) < 0.01, "widest capped at one width \(capped)")
+        check(ChatLogic.columnWidths(natural: [400, 400, 400], minimum: [100, 100, 100], available: 200) == [100, 100, 100], "minimums overflow")
+        check(ChatLogic.columnWidths(natural: [], minimum: [], available: 100) == [], "empty")
     }),
 
     ("the detail is cached per pull request and cleared with the cache", {

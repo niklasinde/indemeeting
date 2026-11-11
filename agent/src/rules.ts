@@ -1,4 +1,5 @@
 import { dirname, resolve, sep } from "node:path";
+import { isChromeTool } from "./chrome.js";
 import { builtInAllowed, commandParts } from "./readonly.js";
 
 export type Rule = { kind: "bash" | "edits" | "tool"; value: string };
@@ -31,7 +32,7 @@ function isInside(path: string, folder: string): boolean {
 /// What Always allow would save for a call: one prefix rule per Bash command that is not read-only, the project folder
 /// (or the file's folder outside it) for edits, the tool itself otherwise. Empty when nothing can be offered.
 export function suggestRules(tool: string, input: Record<string, unknown>, cwd: string): Rule[] {
-  if (alwaysAsk.has(tool)) return [];
+  if (alwaysAsk.has(tool) || isChromeTool(tool)) return [];
   if (tool === "Bash") {
     const parts = typeof input.command === "string" ? commandParts(input.command) : undefined;
     const prefixes = parts?.map((p) => prefixRule(p.words));
@@ -54,7 +55,7 @@ function startsWith(words: string[], prefix: string): boolean {
 /// The rules that allow a call, joined for the transcript; undefined unless every part that is not read-only matches one.
 /// Parts are the simple commands of the parsed line, so a rule never reaches across `;`, `&&` or `|`.
 export function matchRules(rules: Rule[], tool: string, input: Record<string, unknown>, cwd: string): string | undefined {
-  if (alwaysAsk.has(tool)) return undefined;
+  if (alwaysAsk.has(tool) || isChromeTool(tool)) return undefined;
   if (tool === "Bash") {
     const parts = typeof input.command === "string" ? commandParts(input.command) : undefined;
     if (!parts?.length) return undefined;

@@ -1,19 +1,22 @@
 import { createInterface } from "node:readline";
 import { query, type HookCallback, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { chromeResultStatus, chromeServerStatus, isChromeTool } from "./chrome.js";
+import { sessionOptions, type PromptOptions } from "./options.js";
 import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
 import { parseRules, suggestRules, type Rule } from "./rules.js";
 
 type Input =
-  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string; appendSystemPrompt?: string; permissionMode?: string }
+  | ({ type: "prompt"; text: string; model?: string; permissionMode?: string } & PromptOptions)
   | { type: "permission"; id: string; allow: boolean }
   | { type: "mode"; mode: string }
   | { type: "interrupt" }
   | { type: "rules"; rules: unknown };
 
 const model = process.env.WORKTIME_AGENT_MODEL ?? "claude-opus-5-5";
-const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
 /// Tool calls allowed without asking, with the rule that allowed them when it was one of the user's.
 const autoAllowed = new Map<string, string | undefined>();
+/// Claude in Chrome calls waiting for their result, which tells whether the extension is connected.
+const chromeCalls = new Set<string>();
 let rules: Rule[] = [];
 const resultLimit = 4000;
 const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
@@ -80,7 +83,11 @@ function resultText(content: unknown): string {
 function forward(message: any, model: string) {
   switch (message.type) {
     case "system":
-      if (message.subtype === "init") send({ type: "session", sessionId: message.session_id });
+      if (message.subtype === "init") {
+        send({ type: "session", sessionId: message.session_id });
+        const chrome = chromeServerStatus(message.mcp_servers);
+        if (chrome && !chrome.connected) send({ type: "chrome", ...chrome });
+      }
       break;
     case "assistant":
       if (authErrors.includes(message.error)) {
@@ -88,7 +95,10 @@ function forward(message: any, model: string) {
       }
       for (const block of message.message?.content ?? []) {
         if (block.type === "text" && block.text) send({ type: "text", text: block.text });
-        if (block.type === "tool_use") send({ type: "tool_use", id: block.id, tool: block.name, input: block.input ?? {} });
+        if (block.type === "tool_use") {
+          send({ type: "tool_use", id: block.id, tool: block.name, input: block.input ?? {} });
+          if (isChromeTool(block.name)) chromeCalls.add(block.id);
+        }
       }
       break;
     case "user":
@@ -100,6 +110,8 @@ function forward(message: any, model: string) {
             type: "tool_result", id: block.tool_use_id, content: resultText(block.content), isError: block.is_error === true,
             auto: autoAllowed.delete(block.tool_use_id), rule,
           });
+          const chrome = chromeCalls.delete(block.tool_use_id) ? chromeResultStatus(block.is_error === true, resultText(block.content)) : undefined;
+          if (chrome) send({ type: "chrome", ...chrome });
         }
       }
       break;
@@ -125,13 +137,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
   const current = query({
     prompt: input.text,
     options: {
-      model: promptModel,
-      cwd: input.cwd,
-      resume: input.sessionId,
-      tools,
-      ...(input.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.appendSystemPrompt } } : {}),
-      permissionMode: mode,
-      settingSources: ["project"],
+      ...sessionOptions(input, promptModel, mode),
       env,
       mcpServers: mcpServers(),
       abortController: abort,
@@ -156,6 +162,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
     denyPending("The prompt ended.");
     autoAllowed.clear();
     hookAllowed.clear();
+    chromeCalls.clear();
     running = undefined;
     send({ type: "idle" });
   }

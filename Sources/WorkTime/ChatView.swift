@@ -415,20 +415,15 @@ struct AnswerText: View {
                     }
                     .padding(.leading, CGFloat(level) * 18)
                 case .code(let text):
-                    Text(text)
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
+                    HorizontalOverflow {
+                        Text(text)
+                            .font(.system(.callout, design: .monospaced))
+                            .textSelection(.enabled)
+                            .padding(10)
+                    }
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
                 case .table(let rows):
-                    Text(GitHubLogic.alignedTable(rows))
-                        .font(.system(.callout, design: .monospaced))
-                        .textSelection(.enabled)
-                        .fixedSize()
-                        .padding(10)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.04)))
+                    MarkdownTable(rows: rows)
                 case .image(let alt, let url):
                     Button { URL(string: url).map { NSWorkspace.shared.open($0) } } label: {
                         Label("Image: \(alt.isEmpty ? "untitled" : alt)", systemImage: "photo")
@@ -439,6 +434,106 @@ struct AnswerText: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Wide content scrolls sideways inside the column instead of widening it; the scroller shows while the pointer is over it.
+struct HorizontalOverflow<Content: View>: View {
+    @ViewBuilder var content: Content
+    @State private var hovering = false
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            content.fixedSize(horizontal: true, vertical: false)
+        }
+        .scrollIndicators(hovering ? .visible : .hidden)
+        .scrollIndicatorsFlash(trigger: hovering)
+        .onHover { hovering = $0 }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A Markdown table with a header row and cells that wrap to the pane; one too wide even with its columns narrowed scrolls sideways.
+struct MarkdownTable: View {
+    let rows: [[String]]
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            table(minimumColumn: 110)
+            HorizontalOverflow { table(minimumColumn: 240) }
+        }
+    }
+
+    private func table(minimumColumn: CGFloat) -> some View {
+        MarkdownTableLayout(columns: rows.first?.count ?? 0, minimum: minimumColumn) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                    Text(AttributedString.inlineMarkdown(cell))
+                        .fontWeight(index == 0 ? .semibold : nil)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(index == 0 ? Color.primary.opacity(0.06) : .clear)
+                        .overlay(alignment: .bottom) {
+                            if index < rows.count - 1 { Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1) }
+                        }
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.12)))
+    }
+}
+
+/// Lays the cells out row by row in columns sized by `ChatLogic.columnWidths`. Its ideal width is the narrowest the columns go,
+/// so `ViewThatFits` scrolls the table only when even that is too wide.
+struct MarkdownTableLayout: Layout {
+    let columns: Int
+    let minimum: CGFloat
+
+    struct Cache {
+        var natural: [Double]
+        var floor: [Double]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        var natural = Array(repeating: 0.0, count: columns)
+        for (index, cell) in subviews.enumerated() where columns > 0 {
+            natural[index % columns] = max(natural[index % columns], cell.sizeThatFits(.unspecified).width)
+        }
+        return Cache(natural: natural, floor: natural.map { min($0, minimum) })
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        let widths = widths(proposal.width, cache: cache)
+        return CGSize(width: widths.reduce(0, +), height: heights(widths, subviews: subviews).reduce(0, +))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let widths = widths(bounds.width, cache: cache)
+        var y = bounds.minY
+        for (row, height) in heights(widths, subviews: subviews).enumerated() {
+            var x = bounds.minX
+            for column in 0..<columns where row * columns + column < subviews.count {
+                subviews[row * columns + column].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: widths[column], height: height))
+                x += widths[column]
+            }
+            y += height
+        }
+    }
+
+    private func widths(_ available: CGFloat?, cache: Cache) -> [CGFloat] {
+        guard let available, available.isFinite else { return cache.floor.map { CGFloat($0) } }
+        return ChatLogic.columnWidths(natural: cache.natural, minimum: cache.floor, available: available).map { CGFloat($0) }
+    }
+
+    private func heights(_ widths: [CGFloat], subviews: Subviews) -> [CGFloat] {
+        guard columns > 0 else { return [] }
+        return stride(from: 0, to: subviews.count, by: columns).map { start in
+            (start..<min(start + columns, subviews.count))
+                .map { subviews[$0].sizeThatFits(ProposedViewSize(width: widths[$0 - start], height: nil)).height }.max() ?? 0
+        }
     }
 }
 

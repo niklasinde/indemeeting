@@ -121,6 +121,18 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentRequest.interrupt.line == #"{"type":"interrupt"}"# + "\n", "interrupt")
     }),
 
+    ("agent: Claude in Chrome is off unless saved for the agent, sent with the prompt, and its connection decoded", {
+        check(!AgentLogic.chromeEnabled(nil, key: "a") && !AgentLogic.chromeEnabled(["b": true], key: "a"), "off by default")
+        check(AgentLogic.chromeEnabled(["a": true], key: "a"), "saved per agent")
+        check(AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil, chrome: true).line.contains(#""chrome":true"#), "sent when on")
+        check(!AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil).line.contains("chrome"), "left out when off")
+        check(AgentEvent.decode(#"{"type":"chrome","connected":true}"#, cwd: "/") == .chrome(problem: nil), "connected")
+        check(AgentEvent.decode(#"{"type":"chrome","connected":false,"message":"Browser extension is not connected."}"#, cwd: "/")
+              == .chrome(problem: "Browser extension is not connected."), "not connected")
+        var items: [AgentItem] = []
+        check(AgentLogic.apply(.chrome(problem: "x"), to: &items) == nil && items.isEmpty, "not a transcript item")
+    }),
+
     ("agent: always-allow rules decode from the sidecar, are stored and shown with warnings", {
         let fetch = AgentRule(kind: .bash, value: "git fetch"), test = AgentRule(kind: .bash, value: "npm test")
         let line = #"{"type":"permission_request","id":"5","tool":"Bash","input":{"command":"git fetch && npm test"},"#

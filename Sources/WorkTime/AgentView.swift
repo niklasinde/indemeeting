@@ -217,7 +217,7 @@ struct AgentView: View {
             } else if let topic = model.topic {
                 AgentTopicHeader(topic: topic)
             } else {
-                Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium))
+                Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium)).fixedSize()
                 Button { model.chooseFolder() } label: {
                     Label((model.folder as NSString).abbreviatingWithTildeInPath, systemImage: "folder").lineLimit(1).truncationMode(.head)
                 }
@@ -225,18 +225,42 @@ struct AgentView: View {
                 .help("The folder the agent works in")
             }
             Spacer()
-            if isMain {
-                Button { model.catchUp() } label: { Label("Catch up", systemImage: "sparkles") }
-                    .disabled(model.busy)
-                    .help(AgentLogic.catchUpPrompt)
+            ViewThatFits(in: .horizontal) {
+                controls(compact: false)
+                controls(compact: true)
             }
-            AgentSessionsButton(model: model)
-            AgentPermissionPicker(model: model)
-            AgentModelPicker(model: model)
-            AgentNewSessionButton(model: model)
         }
         .padding(.horizontal, RecordingDetail.gutter)
         .padding(.vertical, 12)
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+
+    /// Icons only when the pane is too narrow for their titles, so the header never widens the transcript under it.
+    private func controls(compact: Bool) -> some View {
+        HStack(spacing: 10) {
+            Group {
+                if isMain {
+                    Button { model.catchUp() } label: { Label("Catch up", systemImage: "sparkles") }
+                        .disabled(model.busy)
+                        .help(AgentLogic.catchUpPrompt)
+                }
+                AgentSessionsButton(model: model)
+                AgentChromeToggle(model: model)
+                AgentPermissionPicker(model: model)
+            }
+            .labelStyle(CompactLabelStyle(compact: compact))
+            AgentModelPicker(model: model)
+            AgentNewSessionButton(model: model).labelStyle(CompactLabelStyle(compact: compact))
+        }
+    }
+
+    private struct CompactLabelStyle: LabelStyle {
+        let compact: Bool
+
+        func makeBody(configuration: Configuration) -> some View {
+            if compact { Label(configuration).labelStyle(.iconOnly) } else { Label(configuration) }
+        }
     }
 }
 
@@ -360,11 +384,28 @@ struct AgentPermissionPicker: View {
     }
 }
 
+/// Gives this agent the Claude in Chrome tools from the next prompt on; their actions always ask, whatever the mode.
+struct AgentChromeToggle: View {
+    @ObservedObject var model: AgentModel
+
+    var body: some View {
+        Toggle(isOn: $model.chrome) {
+            Label("Chrome", systemImage: model.chrome && model.chromeProblem != nil ? "exclamationmark.triangle" : "globe")
+        }
+        .toggleStyle(.button)
+        .help(model.chromeProblem.map { "Claude in Chrome is not working: \($0)" }
+              ?? (model.chrome ? "Claude in Chrome is on: the agent can use your Chrome through the extension. Reading tabs and pages "
+                  + "runs without asking; navigating, clicking and typing always ask." : "Let the agent use Chrome through the Claude in Chrome extension"))
+    }
+}
+
 struct AgentNewSessionButton: View {
     @ObservedObject var model: AgentModel
 
     var body: some View {
-        Button("New Session") { model.newSession() }.disabled(model.items.isEmpty && model.sessionID == nil)
+        Button { model.newSession() } label: { Label("New Session", systemImage: "square.and.pencil") }
+            .disabled(model.items.isEmpty && model.sessionID == nil)
+            .help("New Session")
     }
 }
 
@@ -373,6 +414,8 @@ struct AgentPanel: View {
     @ObservedObject var model: AgentModel
     var gutter = RecordingDetail.gutter
     @State private var height: CGFloat = 26
+    @State private var atBottom = true
+    @State private var newBelow = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -415,6 +458,12 @@ struct AgentPanel: View {
                     if let problem = model.problem {
                         Label(problem, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
                     }
+                    if model.chrome, let problem = model.chromeProblem {
+                        Label("Claude in Chrome is not connected: \(problem)", systemImage: "globe")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .textSelection(.enabled)
+                    }
                     Color.clear.frame(height: 1).id("end")
                 }
                 .frame(maxWidth: 760, alignment: .leading)
@@ -422,8 +471,38 @@ struct AgentPanel: View {
                 .padding(.horizontal, gutter)
                 .padding(.vertical, 14)
             }
-            .onChange(of: model.items) { proxy.scrollTo("end") }
+            .defaultScrollAnchor(.bottom, for: .initialOffset)
+            .onScrollGeometryChange(for: Bool.self) { $0.contentOffset.y + $0.containerSize.height >= $0.contentSize.height - 40 } action: { _, bottom in
+                atBottom = bottom
+                if bottom { newBelow = false }
+            }
+            .onChange(of: model.items) {
+                let sent = if case .user = model.items.last?.kind { true } else { false }
+                if atBottom || sent { proxy.scrollTo("end", anchor: .bottom) } else { newBelow = true }
+            }
+            .overlay(alignment: .bottom) {
+                if newBelow {
+                    Button { proxy.scrollTo("end", anchor: .bottom) } label: { Label("Jump to latest", systemImage: "arrow.down") }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .clipShape(Capsule())
+                        .padding(.bottom, 10)
+                }
+            }
+            .id(identity)
+            .onChange(of: identity) {
+                atBottom = true
+                newBelow = false
+            }
         }
+    }
+
+    /// A new scroll view, which starts at the bottom, for each agent and each replaced transcript.
+    private var identity: TranscriptIdentity { TranscriptIdentity(model: ObjectIdentifier(model), revision: model.transcriptRevision) }
+
+    private struct TranscriptIdentity: Hashable {
+        let model: ObjectIdentifier
+        let revision: Int
     }
 
     private var composer: some View {
@@ -619,7 +698,7 @@ struct AgentSettingsSection: View {
 
     @ViewBuilder private var sections: some View {
         SettingsSection("Always allowed", footer: "Saved with Always allow on a permission prompt and used by every agent. A command is "
-                        + "allowed when each part that is not read-only starts with one of these; send to agent is always asked.") {
+                        + "allowed when each part that is not read-only starts with one of these; send to agent and Claude in Chrome\u{2019}s actions are always asked.") {
             if store.rules.isEmpty {
                 SettingsRow("Nothing yet", detail: "Choose Always allow when an agent asks to run something") {}
             }

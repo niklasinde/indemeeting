@@ -11,6 +11,8 @@ enum AgentEvent: Equatable {
     case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?, mode: AgentPermissionMode? = nil)
     case error(String)
     case signIn
+    /// Whether the Claude in Chrome tools work: nil once one has, the error text when the extension is not reachable.
+    case chrome(problem: String?)
     case idle
 
     static func decode(_ line: String, cwd: String) -> AgentEvent? {
@@ -39,6 +41,7 @@ enum AgentEvent: Equatable {
                            mode: (object["permissionMode"] as? String).flatMap(AgentPermissionMode.init(rawValue:)))
         case "error": return object["auth"] as? Bool == true || AgentLogic.needsSignIn(string("message")) ? .signIn : .error(string("message"))
         case "idle": return .idle
+        case "chrome": return .chrome(problem: object["connected"] as? Bool == true ? nil : string("message").isEmpty ? "Not connected" : string("message"))
         default: return nil
         }
     }
@@ -99,7 +102,8 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
 
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
-    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask)
+    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask,
+                chrome: Bool = false)
     case permission(id: String, allow: Bool)
     case mode(AgentPermissionMode)
     case rules([AgentRule])
@@ -108,8 +112,9 @@ enum AgentRequest {
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode):
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome):
             object = ["type": "prompt", "text": text, "cwd": cwd, "permissionMode": mode.rawValue]
+            if chrome { object["chrome"] = true }
             if let sessionID { object["sessionId"] = sessionID }
             if let model { object["model"] = model }
             if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
@@ -142,6 +147,12 @@ struct AgentItem: Identifiable, Equatable {
 
 enum AgentLogic {
     static let folderKey = "agentFolder"
+    static let chromeKey = "agentChrome"
+
+    /// Whether an agent has Claude in Chrome switched on, by its history key; off unless saved.
+    static func chromeEnabled(_ saved: [String: Any]?, key: String) -> Bool {
+        saved?[key] as? Bool ?? false
+    }
     static let summaryLimit = 100
 
     // MARK: Transcript
@@ -151,7 +162,7 @@ enum AgentLogic {
     @discardableResult
     static func apply(_ event: AgentEvent, to items: inout [AgentItem], auto: Bool = false) -> String? {
         switch event {
-        case .ready, .idle: return nil
+        case .ready, .idle, .chrome: return nil
         case .session(let id): return id
         case .text(let text):
             items.append(AgentItem(id: "text-\(items.count)", kind: .text(text)))

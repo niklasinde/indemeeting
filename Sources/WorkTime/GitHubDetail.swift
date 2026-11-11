@@ -402,22 +402,6 @@ extension GitHubLogic {
 }
 
 extension GitHubLogic {
-    /// A Markdown table as plain text with the columns padded to the widest cell, the first row separated by a rule.
-    static func alignedTable(_ rows: [[String]]) -> String {
-        let columns = rows.map(\.count).max() ?? 0
-        let widths = (0..<columns).map { column in rows.map { column < $0.count ? $0[column].count : 0 }.max() ?? 0 }
-        let lines = rows.map { row in
-            (0..<columns).map { column in
-                let cell = column < row.count ? row[column] : ""
-                return cell + String(repeating: " ", count: widths[column] - cell.count)
-            }.joined(separator: "  ")
-        }
-        guard lines.count > 1 else { return lines.joined(separator: "\n") }
-        return ([lines[0], widths.map { String(repeating: "\u{2500}", count: $0) }.joined(separator: "  ")] + lines.dropFirst()).joined(separator: "\n")
-    }
-}
-
-extension GitHubLogic {
     static func stateText(_ detail: GitHubPRDetail) -> String {
         detail.isDraft && detail.state == .open ? "Draft" : detail.state.rawValue.capitalized
     }

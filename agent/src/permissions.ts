@@ -1,3 +1,4 @@
+import { isChromeRead, isChromeTool } from "./chrome.js";
 import { builtInAllowed, isAutoAllowedTool, isReadOnlyCommand } from "./readonly.js";
 import { matchRules, type Rule } from "./rules.js";
 
@@ -13,7 +14,9 @@ export function parseMode(value: unknown): Mode {
 /// saved rule (`rule` names it; undefined for a read-only command, absent for an allowed tool), or left to the mode.
 export type Decision = { kind: "ask" } | { kind: "allow"; rule?: string; readOnly?: boolean } | { kind: "defer" };
 
+/// Claude in Chrome acts in the user's own browser, so only its reads run without asking, in every mode and whatever the rules.
 export function preToolDecision(tool: string, input: Record<string, unknown>, cwd: string, rules: Rule[], mode: Mode): Decision {
+  if (isChromeTool(tool)) return isChromeRead(tool, input) ? { kind: "allow", readOnly: true } : { kind: "ask" };
   if (builtInAllowed.alwaysAsk.includes(tool)) return { kind: "ask" };
   if (isAutoAllowedTool(tool)) return { kind: "allow" };
   if (tool === "Bash" && typeof input.command === "string" && isReadOnlyCommand(input.command)) return { kind: "allow", readOnly: true };

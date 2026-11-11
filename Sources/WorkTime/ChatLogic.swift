@@ -523,11 +523,12 @@ extension ChatLogic {
         var table: [[String]] = []
         func flush() {
             if !paragraph.isEmpty { blocks.append(.paragraph(paragraph.joined(separator: "\n"))) }
-            if !table.isEmpty { blocks.append(.table(table)) }
+            if !table.isEmpty { blocks.append(.table(evened(table))) }
             paragraph = []
             table = []
         }
-        for raw in markdown.components(separatedBy: "\n") {
+        let lines = markdown.components(separatedBy: "\n")
+        for (index, raw) in lines.enumerated() {
             let indent = raw.prefix { $0 == " " }.count
             let line = raw.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("```") || line.hasPrefix("~~~") {
@@ -542,7 +543,8 @@ extension ChatLogic {
                 code?.append(raw)
             } else if line.isEmpty {
                 flush()
-            } else if line.hasPrefix("|"), line.count > 1, paragraph.isEmpty {
+            } else if line.hasPrefix("|"), line.count > 1, paragraph.isEmpty || startsTable(lines.dropFirst(index + 1).first) {
+                if table.isEmpty { flush() }
                 if let cells = tableCells(line) { table.append(cells) } else if table.isEmpty { paragraph.append(line) }
             } else if line.hasPrefix("#"), let heading = marked(line, after: { $0 == "#" }) {
                 flush()
@@ -563,6 +565,7 @@ extension ChatLogic {
                 flush()
                 blocks.append(.numbered(String(digits), text: rest))
             } else {
+                if !table.isEmpty { flush() }
                 paragraph.append(line)
             }
         }
@@ -571,10 +574,41 @@ extension ChatLogic {
         return blocks
     }
 
-    /// The cells of a table row; nil for the `---|---` separator, which is dropped.
+    /// The cells of a table row, with `\|` kept as a pipe in its cell; nil for the `---|---` separator, which is dropped.
     private static func tableCells(_ line: String) -> [String]? {
-        let cells = line.trimmingCharacters(in: CharacterSet(charactersIn: "|")).components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-        return cells.allSatisfy { $0.allSatisfy { "-: ".contains($0) } } ? nil : cells
+        let escaped = "\u{0}"
+        var row = line.replacingOccurrences(of: "\\|", with: escaped)
+        if row.hasPrefix("|") { row.removeFirst() }
+        if row.hasSuffix("|") { row.removeLast() }
+        let cells = row.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: escaped, with: "|") }
+        return cells.allSatisfy { $0.allSatisfy { "-: ".contains($0) } } && cells.contains { $0.contains("-") } ? nil : cells
+    }
+
+    /// A header row right under a paragraph line starts a table when the separator follows it.
+    private static func startsTable(_ next: String?) -> Bool {
+        guard let next = next?.trimmingCharacters(in: .whitespaces), next.hasPrefix("|") else { return false }
+        return tableCells(next) == nil
+    }
+
+    /// Rows padded with empty cells to the widest row, so every column lines up.
+    private static func evened(_ rows: [[String]]) -> [[String]] {
+        let width = rows.map(\.count).max() ?? 0
+        return rows.map { $0 + Array(repeating: "", count: width - $0.count) }
+    }
+
+    /// Column widths that fit `available`: the natural widths when they fit, otherwise the widest columns capped at one width
+    /// and never below their minimum, so short columns keep theirs. Wider than `available` only when the minimums are.
+    static func columnWidths(natural: [Double], minimum: [Double], available: Double) -> [Double] {
+        let floors = zip(natural, minimum).map { Swift.min($0, $1) }
+        func widths(cap: Double) -> [Double] { zip(natural, floors).map { Swift.max($1, Swift.min($0, cap)) } }
+        if natural.reduce(0, +) <= available { return natural }
+        if floors.reduce(0, +) >= available { return floors }
+        var low = 0.0, high = natural.max() ?? 0
+        for _ in 0..<40 {
+            let cap = (low + high) / 2
+            if widths(cap: cap).reduce(0, +) > available { high = cap } else { low = cap }
+        }
+        return widths(cap: low)
     }
 
     private static func image(_ line: String) -> Block? {
