@@ -67,18 +67,16 @@ extension EmbeddedTerminal.Activity {
     }
 }
 
-/// The page with its terminal or its agent, one at a time: beside it in a wide window, and below it otherwise, where the pane is the
-/// bottom part of the column and shows how to start one while none is open. A handle resizes it.
+/// The page with its terminal or its agent, one at a time: beside it, or below it where the pane is the bottom part of the column
+/// and shows how to start one while none is open. A handle resizes it.
 struct TerminalSplit<Page: View>: View {
     let page: GitHubDetailModel?
-    let width: Double
-    /// The terminal is a bottom half under the whole content, whatever the width.
-    var stacked = false
+    let placement: DockPlacement.Placement
     @ViewBuilder let content: Page
     @ObservedObject private var model = EmbeddedTerminalModel.shared
     @ObservedObject private var agents = PRAgents.shared
-    @AppStorage(EmbeddedTerminal.rightSizeKey) private var rightSize = EmbeddedTerminal.defaultRight
-    @AppStorage(EmbeddedTerminal.belowSizeKey) private var belowSize = EmbeddedTerminal.defaultBelow
+    @AppStorage(DockPlacement.rightSizeKey) private var rightSize = DockPlacement.defaultRight
+    @AppStorage(DockPlacement.belowSizeKey) private var belowSize = DockPlacement.defaultBelow
     @State private var dragStart: Double?
 
     var body: some View {
@@ -87,25 +85,24 @@ struct TerminalSplit<Page: View>: View {
 
     private func docked(_ page: GitHubDetailModel) -> some View {
         let key = page.pr.url
-        let placement = stacked ? EmbeddedTerminal.Placement.below : EmbeddedTerminal.placement(width: width)
         let agent = agents.isShown(key) ? agents.model(for: key) : nil
         return GeometryReader { proxy in
             if placement == .right, let agent {
-                let length = EmbeddedTerminal.paneLength(rightSize, placement: .right, available: proxy.size.width)
+                let length = DockPlacement.paneLength(rightSize, placement: .right, available: proxy.size.width)
                 HStack(spacing: 0) {
                     content.frame(maxWidth: .infinity, maxHeight: .infinity)
                     handle(horizontal: true, current: length)
                     AgentDockPane(key: key, model: agent, page: page).id(key).frame(width: length)
                 }
             } else if placement == .right, model.isShown(key), let session = model.session(for: key) {
-                let length = EmbeddedTerminal.paneLength(rightSize, placement: .right, available: proxy.size.width)
+                let length = DockPlacement.paneLength(rightSize, placement: .right, available: proxy.size.width)
                 HStack(spacing: 0) {
                     content.frame(maxWidth: .infinity, maxHeight: .infinity)
                     handle(horizontal: true, current: length)
                     TerminalPane(session: session, model: model).id(key).frame(width: length)
                 }
-            } else if placement == .below {
-                let length = EmbeddedTerminal.paneLength(belowSize, placement: .below, available: proxy.size.height)
+            } else if placement != .right {
+                let length = DockPlacement.paneLength(belowSize, placement: placement, available: proxy.size.height)
                 VStack(spacing: 0) {
                     content.frame(maxWidth: .infinity, maxHeight: .infinity)
                     handle(horizontal: false, current: length)
@@ -222,6 +219,7 @@ struct TerminalPane: View {
             headerButton("stop.fill", "Stop Claude: Ctrl-C first, then end it if it stays") { session.stop() }
                 .disabled(!session.isRunning)
             Divider().frame(height: 14)
+            DockPlacementMenu()
             headerButton("chevron.down", "Hide the terminal; Claude keeps running") { model.setShown(session.key, false) }
             headerButton("xmark", "Close the terminal and end Claude") { model.close(session.key) }
         }
@@ -285,9 +283,7 @@ struct TerminalPane: View {
 
 struct TerminalSplit<Page: View>: View {
     let page: GitHubDetailModel?
-    let width: Double
-    /// The terminal is a bottom half under the whole content, whatever the width.
-    var stacked = false
+    let placement: DockPlacement.Placement
     @ViewBuilder let content: Page
 
     var body: some View { content }

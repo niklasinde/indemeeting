@@ -45,7 +45,8 @@ enum AgentPreview {
 
     private static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
 
-    /// The pull request page with the agent in the terminal's place: beside the page in a wide window, below it otherwise.
+    /// The pull request page with the agent in the terminal's place, for each placement, then with the review prompt and a long
+    /// draft waiting in the composer.
     @MainActor
     static func embedded(window: NSWindow, model: GitHubModel, directory: TicketDirectory, output: URL) async {
         let pr = GitHubPreview.samples[.created]![1]
@@ -56,21 +57,36 @@ enum AgentPreview {
         agent.preview(sample())
         agent.draft = ""
         PRAgents.shared.showSample(pr.url, model: agent)
-        for (name, size) in [("right", NSSize(width: 1960, height: 860)), ("below", NSSize(width: 1240, height: 860)),
-                             ("stacked", NSSize(width: 1440, height: 960))] {
+        let defaults = UserDefaults.standard
+        let stored = defaults.string(forKey: DockPlacement.choiceKey)
+        @MainActor func shot(_ name: String, _ size: NSSize, appearances: [NSAppearance.Name] = [.aqua, .darkAqua]) async {
             window.setContentSize(size)
-            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            for appearance in appearances {
                 window.appearance = NSAppearance(named: appearance)
                 try? await Task.sleep(nanoseconds: 1_200_000_000)
                 PreviewRenderer.save(window, to: output.appendingPathComponent("agent-embed-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
             }
         }
+        for (name, size) in [("automatic-1530", NSSize(width: 1530, height: 1000)), ("automatic-1240", NSSize(width: 1240, height: 860)),
+                             ("automatic-1440-tall", NSSize(width: 1440, height: 960))] {
+            defaults.set(DockPlacement.Choice.automatic.rawValue, forKey: DockPlacement.choiceKey)
+            await shot(name, size)
+        }
+        for choice in [DockPlacement.Choice.right, .below, .bottom] {
+            defaults.set(choice.rawValue, forKey: DockPlacement.choiceKey)
+            await shot(choice.rawValue, NSSize(width: 1530, height: 1000))
+        }
+        defaults.set(DockPlacement.Choice.automatic.rawValue, forKey: DockPlacement.choiceKey)
         agent.preview([])
         agent.open(pr: GitHubLink.Target(repo: pr.repo, number: pr.number), checkout: URL(fileURLWithPath: repo))
-        window.appearance = NSAppearance(named: .aqua)
-        window.setContentSize(NSSize(width: 1960, height: 860))
-        try? await Task.sleep(nanoseconds: 1_200_000_000)
-        PreviewRenderer.save(window, to: output.appendingPathComponent("agent-embed-new-light.png"))
+        await shot("new", NSSize(width: 1530, height: 1000), appearances: [.aqua])
+        agent.draft = (1...10).map { "Line \($0) of a long prompt that keeps going so it wraps in the narrow pane beside the page." }
+            .joined(separator: "\n")
+        await shot("long-draft", NSSize(width: 1530, height: 1000), appearances: [.aqua])
+        defaults.set(DockPlacement.Choice.below.rawValue, forKey: DockPlacement.choiceKey)
+        agent.open(pr: GitHubLink.Target(repo: pr.repo, number: pr.number), checkout: URL(fileURLWithPath: repo))
+        await shot("new-below", NSSize(width: 1530, height: 1000), appearances: [.aqua])
+        if let stored { defaults.set(stored, forKey: DockPlacement.choiceKey) } else { defaults.removeObject(forKey: DockPlacement.choiceKey) }
     }
 
     @MainActor

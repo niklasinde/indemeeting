@@ -1,22 +1,20 @@
 import Foundation
 
 /// The widths of the GitHub view: the list, the page column, the page toolbar and when the row titles are one line. Pure, so
-/// the breakpoints are tested without a window; the terminal's side and height are in EmbeddedTerminal.
+/// the breakpoints are tested without a window; the terminal's side and size are in DockPlacement.
 enum GitHubLayout {
     /// Below `narrowBelow` the list is narrow, so the page column gets the room; wider windows keep the full range.
     static let listWidths = 240.0...560.0
     static let narrowListWidths = 240.0...280.0
     static let narrowBelow = 1200.0
     static let defaultListWidth = 420.0
-    static let splitterWidth = EmbeddedTerminal.handleLength
+    static let splitterWidth = DockPlacement.handleLength
     /// The narrowest the page column gets beside the list.
     static let pageMinimum = 480.0
     /// Below this the list and the page take turns instead of sitting side by side.
     static let compactBelow = narrowListWidths.lowerBound + splitterWidth + pageMinimum
     /// Below this list width each row's title is one line.
     static let singleLineRowsBelow = 300.0
-    /// From this window height the Claude session is a bottom half across the whole window, and the list and page the top half.
-    static let stackedFromHeight = 900.0
     /// The widest the page column gets. The file, check and commit lists use all of it.
     static let pageWidth = 1000.0
     /// Prose (header, description, reviews, comments) stops at this width once the column is wide, which keeps lines near 100
@@ -39,8 +37,6 @@ enum GitHubLayout {
     }
 
     static func singleLineRows(listWidth: Double) -> Bool { listWidth < singleLineRowsBelow }
-
-    static func stacksTerminal(width: Double, height: Double) -> Bool { width >= compactBelow && height >= stackedFromHeight }
 
     /// The cap on prose in a page column of `column` points: nil (no cap) while the column is narrow.
     static func proseWidth(column: Double) -> Double? { column >= proseCapFrom ? readingWidth : nil }

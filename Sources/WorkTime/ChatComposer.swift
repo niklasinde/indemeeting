@@ -1,12 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// A growing text field where Return sends and Shift+Return starts a new line.
+/// A text field that grows with its text up to `maxLines`, then scrolls. Return sends and Shift+Return starts a new line.
 struct ChatComposer: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     let placeholder: String
+    var maxLines = 6
     let send: () -> Void
+
+    static let inset = NSSize(width: 0, height: 4)
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -19,12 +22,18 @@ struct ChatComposer: NSViewRepresentable {
         textView.font = .systemFont(ofSize: NSFont.systemFontSize + 1)
         textView.drawsBackground = false
         textView.isVerticallyResizable = true
-        textView.textContainerInset = NSSize(width: 0, height: 4)
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.minSize = .zero
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
+        textView.textContainerInset = Self.inset
         textView.textContainer?.widthTracksTextView = true
-        let scroll = NSScrollView()
+        let scroll = ComposerScrollView()
         scroll.documentView = textView
         scroll.drawsBackground = false
-        scroll.hasVerticalScroller = false
+        scroll.hasVerticalScroller = true
+        scroll.autohidesScrollers = true
+        scroll.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.updateHeight() }
         context.coordinator.textView = textView
         DispatchQueue.main.async { textView.window?.makeFirstResponder(textView) }
         return scroll
@@ -33,8 +42,9 @@ struct ChatComposer: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
-        if textView.string != text { textView.string = text }
-        context.coordinator.updateHeight()
+        let replaced = textView.string != text
+        if replaced { textView.string = text }
+        context.coordinator.updateHeight(reveal: replaced ? .top : nil)
     }
 
     @MainActor
@@ -46,7 +56,7 @@ struct ChatComposer: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             parent.text = textView?.string ?? ""
-            updateHeight()
+            updateHeight(reveal: .caret)
         }
 
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
@@ -59,13 +69,44 @@ struct ChatComposer: NSViewRepresentable {
             return true
         }
 
-        func updateHeight() {
-            guard let textView, let container = textView.textContainer, let layout = textView.layoutManager else { return }
+        enum Reveal { case top, caret }
+
+        /// The text's height at the field's current width, between one line and `maxLines`. Text put in from outside, like a
+        /// pre-filled prompt, is shown from its first line; typing keeps the caret in view.
+        func updateHeight(reveal target: Reveal? = nil) {
+            guard let textView, let container = textView.textContainer, let layout = textView.layoutManager,
+                  let font = textView.font, textView.bounds.width > 0 else { return }
             layout.ensureLayout(for: container)
-            let height = min(max(layout.usedRect(for: container).height + 8, 26), 140)
-            guard abs(parent.height - height) > 0.5 else { return }
-            DispatchQueue.main.async { self.parent.height = height }
+            let line = layout.defaultLineHeight(for: font)
+            let padding = ChatComposer.inset.height * 2
+            let height = ceil(min(max(layout.usedRect(for: container).height, line), line * CGFloat(parent.maxLines)) + padding)
+            let reveal = {
+                switch target {
+                case .top: textView.scroll(.zero)
+                case .caret: textView.scrollRangeToVisible(textView.selectedRange())
+                case nil: break
+                }
+            }
+            guard abs(parent.height - height) > 0.5 else { return reveal() }
+            DispatchQueue.main.async {
+                self.parent.height = height
+                reveal()
+            }
         }
+    }
+}
+
+/// Tells the composer when its width changes, since the wrapped text's height depends on it.
+private final class ComposerScrollView: NSScrollView {
+    var onWidthChange: (() -> Void)?
+    private var lastWidth: CGFloat = 0
+
+    override func tile() {
+        super.tile()
+        guard abs(contentSize.width - lastWidth) > 0.5 else { return }
+        lastWidth = contentSize.width
+        documentView?.frame.size.width = contentSize.width
+        onWidthChange?()
     }
 }
 

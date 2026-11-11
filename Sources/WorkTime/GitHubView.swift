@@ -5,6 +5,7 @@ struct GitHubView: View {
     @ObservedObject var model: GitHubModel
     @AppStorage("githubListWidth") private var listWidth = GitHubLayout.defaultListWidth
     @AppStorage(GitHubModel.mergeableKey) private var mergeable = false
+    @AppStorage(DockPlacement.choiceKey) private var dockChoice = DockPlacement.Choice.automatic
     @State private var showsDetail = false
     @State private var dragStart: Double?
     @FocusState private var focus: Pane?
@@ -19,14 +20,16 @@ struct GitHubView: View {
                 listPane(width: proxy.size.width, list: proxy.size.width)
             } else if proxy.size.width < GitHubLayout.compactBelow {
                 if showsDetail, model.page != nil {
-                    detailPane(back: { showsDetail = false }, total: proxy.size.width, column: proxy.size.width)
+                    let placement = DockPlacement.placement(dockChoice, detailWidth: proxy.size.width, windowHeight: proxy.size.height, canSpan: false)
+                    detailPane(back: { showsDetail = false }, placement: placement, column: proxy.size.width)
                 } else {
                     listPane(width: proxy.size.width, list: proxy.size.width)
                 }
-            } else if GitHubLayout.stacksTerminal(width: proxy.size.width, height: proxy.size.height) {
-                stacked(width: proxy.size.width)
             } else {
-                split(width: proxy.size.width)
+                let list = GitHubLayout.listWidth(listWidth, in: proxy.size.width)
+                let detail = proxy.size.width - list - GitHubLayout.splitterWidth
+                let placement = DockPlacement.placement(dockChoice, detailWidth: detail, windowHeight: proxy.size.height, canSpan: true)
+                if placement == .bottom { stacked(width: proxy.size.width) } else { split(width: proxy.size.width, placement: placement) }
             }
         }
         .background { openShortcut }
@@ -44,19 +47,19 @@ struct GitHubView: View {
         .onChange(of: model.selectedURL) { if model.selectedURL == nil { showsDetail = false } }
     }
 
-    private func split(width: CGFloat) -> some View {
+    private func split(width: CGFloat, placement: DockPlacement.Placement) -> some View {
         let list = GitHubLayout.listWidth(listWidth, in: width)
         return HStack(spacing: 0) {
             listPane(width: width, list: list).frame(width: list)
             splitter(current: list, total: width)
-            detailPane(back: nil, total: width, column: width - list - GitHubLayout.splitterWidth)
+            detailPane(back: nil, placement: placement, column: width - list - GitHubLayout.splitterWidth)
         }
     }
 
-    /// Tall windows: the list and the page on the top half, the Claude session across the whole width below them.
+    /// The list and the page on the top, the Claude session across the whole width below them.
     private func stacked(width: Double) -> some View {
         let list = GitHubLayout.listWidth(listWidth, in: width)
-        return TerminalSplit(page: model.page, width: width, stacked: true) {
+        return TerminalSplit(page: model.page, placement: .bottom) {
             HStack(spacing: 0) {
                 listPane(width: width, list: list).frame(width: list)
                 splitter(current: list, total: width)
@@ -105,8 +108,8 @@ struct GitHubView: View {
         }
     }
 
-    private func detailPane(back: (() -> Void)?, total: Double, column: Double) -> some View {
-        TerminalSplit(page: model.page, width: total) { pageView(back: back, column: column) }
+    private func detailPane(back: (() -> Void)?, placement: DockPlacement.Placement, column: Double) -> some View {
+        TerminalSplit(page: model.page, placement: placement) { pageView(back: back, column: column) }
     }
 
     private func pageView(back: (() -> Void)?, column: Double) -> some View {

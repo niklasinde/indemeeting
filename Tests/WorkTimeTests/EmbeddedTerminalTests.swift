@@ -95,13 +95,13 @@ let embeddedTerminalTests: [(name: String, run: () throws -> Void)] = [
         check(EmbeddedTerminal.lang(current: nil, locale: Locale(identifier: "en_SE"), exists: { _ in false }) == "en_US.UTF-8", "falls back to a locale that exists")
     }),
 
-    ("the pane goes right in a wide window and below otherwise, and stays inside its limits", {
-        check(EmbeddedTerminal.placement(width: 1500) == .right && EmbeddedTerminal.placement(width: 1920) == .right, "wide")
-        check(EmbeddedTerminal.placement(width: 1499) == .below && EmbeddedTerminal.placement(width: 700) == .below, "narrow")
-        check(EmbeddedTerminal.paneLength(100, placement: .right, available: 1000) == 480, "minimum width")
-        check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 1000) == 519, "leaves the page its width and the handle")
-        check(EmbeddedTerminal.paneLength(320, placement: .below, available: 760) == 320, "kept")
-        check(EmbeddedTerminal.paneLength(600, placement: .below, available: 500) == 299, "leaves the page its height and the handle")
+    ("the pane stays inside its limits and the font size clamps", {
+        check(DockPlacement.paneLength(100, placement: .right, available: 1000) == 360, "minimum width")
+        check(DockPlacement.paneLength(2000, placement: .right, available: 1000) == 519, "leaves the page its width and the handle")
+        check(DockPlacement.paneLength(2000, placement: .right, available: 2400) == 900, "stops at its widest")
+        check(DockPlacement.paneLength(320, placement: .below, available: 760) == 320, "kept")
+        check(DockPlacement.paneLength(0, placement: .bottom, available: 1000) == 500, "zero is half the height")
+        check(DockPlacement.paneLength(600, placement: .below, available: 500) == 299, "leaves the page its height and the handle")
         check(EmbeddedTerminal.fontSize(nil) == 13 && EmbeddedTerminal.fontSize(3) == 9 && EmbeddedTerminal.fontSize(99) == 24, "font size clamps")
     }),
 

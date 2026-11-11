@@ -45,6 +45,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/GitHubStore.swift \
     Sources/WorkTime/GitHubSelection.swift \
     Sources/WorkTime/GitHubLayout.swift \
+    Sources/WorkTime/DockPlacementLogic.swift \
     Sources/WorkTime/NotchLayout.swift \
     Sources/WorkTime/NotchPanels.swift \
     Sources/WorkTime/GitHubClaude.swift \

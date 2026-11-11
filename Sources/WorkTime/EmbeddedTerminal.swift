@@ -1,13 +1,11 @@
 import Foundation
 
-/// The pure parts of the embedded Claude terminal: the login-shell command, the environment, where the pane goes, the font, the colours,
+/// The pure parts of the embedded Claude terminal: the login-shell command, the environment, the font, the colours,
 /// the status dot and the notices. Tested; the SwiftTerm view and the processes live in EmbeddedTerminalModel.swift.
 enum EmbeddedTerminal {
     static let fontSizeKey = "embeddedTerminalFontSize"
     static let confirmQuitKey = "embeddedTerminalConfirmQuit"
     static let noteHiddenKey = "embeddedTerminalNoteHidden"
-    static let rightSizeKey = "embeddedTerminalRightWidth"
-    static let belowSizeKey = "embeddedTerminalBelowHeight"
 
     static let shell = "/bin/zsh"
 
@@ -48,34 +46,6 @@ enum EmbeddedTerminal {
             if exists(candidate) { return candidate }
         }
         return "en_US.UTF-8"
-    }
-
-    // MARK: Layout
-
-    enum Placement: Equatable { case right, below }
-
-    static let rightFromWidth = 1500.0
-    static let rightRange = 480.0...720.0
-    static let belowRange = 220.0...1000.0
-    static let minimumPageWidth = 480.0
-    static let minimumPageHeight = 200.0
-    /// The handle between the page and the terminal, which takes a point of the room too.
-    static let handleLength = 1.0
-    static let defaultRight = 560.0
-    /// Zero means half the window's height, which is the default bottom half.
-    static let defaultBelow = 0.0
-
-    static func placement(width: Double) -> Placement { width >= rightFromWidth ? .right : .below }
-
-    /// The pane's width or height, kept inside its range and leaving room for the page it sits next to. A stored height of zero
-    /// is half the available height.
-    static func paneLength(_ stored: Double, placement: Placement, available: Double) -> Double {
-        switch placement {
-        case .right: return min(max(stored, rightRange.lowerBound), min(rightRange.upperBound, available - minimumPageWidth - handleLength))
-        case .below:
-            let wanted = stored > 0 ? stored : available / 2
-            return min(max(wanted, belowRange.lowerBound), min(belowRange.upperBound, available - minimumPageHeight - handleLength))
-        }
     }
 
     // MARK: Font

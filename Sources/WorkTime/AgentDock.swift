@@ -88,6 +88,7 @@ struct AgentDockPane: View {
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).buttonStyle(.bordered)
             Divider().frame(height: 14)
+            DockPlacementMenu()
             Button { PRAgents.shared.hide(key) } label: { Image(systemName: "chevron.down") }
                 .help("Hide the agent; its transcript is kept")
             Button { PRAgents.shared.close(key) } label: { Image(systemName: "xmark") }
@@ -97,5 +98,26 @@ struct AgentDockPane: View {
         .controlSize(.small)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+    }
+}
+
+/// Where the pane goes: picked in the Agent's and the terminal's header and shared by both.
+struct DockPlacementMenu: View {
+    @AppStorage(DockPlacement.choiceKey) private var choice = DockPlacement.Choice.automatic
+
+    var body: some View {
+        Menu {
+            Picker("Placement", selection: $choice) {
+                ForEach(DockPlacement.Choice.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Image(systemName: choice.symbol)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Placement: \(choice.title)")
     }
 }

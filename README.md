@@ -568,7 +568,7 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   the page. The chevron hides the pane, the cross stops the agent and drops its transcript.
 
 `WorkTime --render-agent <folder>` (debug builds) saves PNGs of the window with a made-up transcript;
-`WorkTime --render-github <folder> --agent-embed` the pull request page with the agent beside and below it.
+`WorkTime --render-github <folder> --agent-embed` the pull request page with the agent in each placement and a long draft in the composer.
 
 ## GitHub
 

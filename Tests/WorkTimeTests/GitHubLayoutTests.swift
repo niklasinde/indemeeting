@@ -27,8 +27,8 @@ let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
                 let rest = total - list - GitHubLayout.splitterWidth
                 check(rest >= GitHubLayout.pageMinimum, "page keeps its minimum at \(total)")
                 check(list + GitHubLayout.splitterWidth + rest <= total, "columns fit at \(total)")
-                if EmbeddedTerminal.placement(width: total) == .right {
-                    let terminal = EmbeddedTerminal.paneLength(EmbeddedTerminal.defaultRight, placement: .right, available: rest)
+                if DockPlacement.placement(.automatic, detailWidth: rest, windowHeight: 800, canSpan: true) == .right {
+                    let terminal = DockPlacement.paneLength(DockPlacement.defaultRight, placement: .right, available: rest)
                     let page = rest - terminal - 1
                     check(page >= GitHubLayout.pageMinimum, "with the terminal open the page keeps its minimum at \(total)")
                     check(list + 1 + page + 1 + terminal == total, "the three columns add up at \(total)")
@@ -39,10 +39,30 @@ let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLayout.listWidth(GitHubLayout.defaultListWidth, in: 721) == 240, "721 is the first side by side width")
     }),
 
-    ("wide windows put the terminal beside the page, from the same breakpoint as before", {
-        check(EmbeddedTerminal.placement(width: EmbeddedTerminal.rightFromWidth) == .right, "1500 is right")
-        check(EmbeddedTerminal.placement(width: EmbeddedTerminal.rightFromWidth - 1) == .below, "1499 is below")
-        check(GitHubLayout.compactBelow < EmbeddedTerminal.rightFromWidth, "the list and page turn before the terminal moves")
+    ("Automatic puts the pane beside the page when the detail area has room, then across the bottom of tall windows", {
+        func automatic(window: Double, height: Double = 800) -> DockPlacement.Placement {
+            let detail = window - GitHubLayout.listWidth(GitHubLayout.defaultListWidth, in: window) - GitHubLayout.splitterWidth
+            return DockPlacement.placement(.automatic, detailWidth: detail, windowHeight: height, canSpan: true)
+        }
+        check(automatic(window: 1375, height: 1000) == .right, "a tall 1530 window less the app sidebar is right")
+        check(automatic(window: 1500) == .right, "a 1500 view with the 420 list is right")
+        check(automatic(window: 1300) == .below, "1300 is below")
+        check(automatic(window: 1300, height: 960) == .bottom, "a tall 1300 view spans the bottom")
+        check(DockPlacement.autoRightFrom == 901, "the page keeps 500 next to a 400 pane")
+        check(DockPlacement.placement(.automatic, detailWidth: 901, windowHeight: 1000, canSpan: false) == .right, "the breakpoint is right")
+        check(DockPlacement.placement(.automatic, detailWidth: 900, windowHeight: 1000, canSpan: false) == .below, "without the list, bottom is below")
+    }),
+
+    ("a picked placement is kept while it fits", {
+        func place(_ choice: DockPlacement.Choice, _ detail: Double, canSpan: Bool = true) -> DockPlacement.Placement {
+            DockPlacement.placement(choice, detailWidth: detail, windowHeight: 700, canSpan: canSpan)
+        }
+        check(place(.right, 900) == .right, "right in a 900 detail area")
+        check(place(.right, DockPlacement.rightFitsFrom) == .right && place(.right, DockPlacement.rightFitsFrom - 1) == .below,
+              "right falls back to below when the page and the pane do not fit")
+        check(place(.below, 2400) == .below, "below in a wide window")
+        check(place(.bottom, 2400) == .bottom && place(.bottom, 700, canSpan: false) == .below, "the bottom needs the list beside the page")
+        check(DockPlacement.Choice(rawValue: "right") == .right && DockPlacement.Choice.allCases.count == 4, "stored by name")
     }),
 
     ("the three columns at the widths that matter, with the page never wider than its column", {
@@ -50,17 +70,17 @@ let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
         func columns(_ total: Double) -> (list: Double, terminal: Double, page: Double) {
             let list = GitHubLayout.listWidth(GitHubLayout.defaultListWidth, in: total)
             let rest = total - list - 1
-            let terminal = EmbeddedTerminal.paneLength(EmbeddedTerminal.defaultRight, placement: .right, available: rest)
+            let terminal = DockPlacement.paneLength(DockPlacement.defaultRight, placement: .right, available: rest)
             return (list, terminal, rest - terminal - 1)
         }
         let at1500 = columns(1500), at1728 = columns(1728), at2048 = columns(2048), at2560 = columns(2560)
-        check(at1500.list == 420 && at1500.terminal == 560 && at1500.page == 518, "1500: list 420, terminal 560, page 518")
-        check(at1728.page == 746, "1728: the page gets the rest")
-        check(at2048.terminal == 560 && min(at2048.page, GitHubLayout.pageWidth) == 1000, "2048: the page column is capped")
-        check(at2560.terminal == 560 && min(at2560.page, GitHubLayout.pageWidth) == 1000, "2560: the page column is capped")
+        check(at1500.list == 420 && at1500.terminal == 480 && at1500.page == 598, "1500: list 420, pane 480, page 598")
+        check(at1728.page == 826, "1728: the page gets the rest")
+        check(at2048.terminal == 480 && min(at2048.page, GitHubLayout.pageWidth) == 1000, "2048: the page column is capped")
+        check(at2560.terminal == 480 && min(at2560.page, GitHubLayout.pageWidth) == 1000, "2560: the page column is capped")
         check(at2560.list + at2560.terminal + at2560.page + 2 == 2560, "the columns add up to the window")
-        check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 2140) == 720, "the terminal stops at its widest")
-        check(EmbeddedTerminal.paneLength(2000, placement: .right, available: 1000) == 519, "the terminal leaves the page its minimum and the handle")
+        check(DockPlacement.paneLength(2000, placement: .right, available: 2140) == 900, "the pane stops at its widest")
+        check(DockPlacement.paneLength(2000, placement: .right, available: 1000) == 519, "the pane leaves the page its minimum and the handle")
     }),
 
     ("the reading width keeps prose near 100 characters and inside the page column", {
