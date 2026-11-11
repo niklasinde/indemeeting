@@ -278,6 +278,55 @@ let githubActivityTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.reviewing([:]).isEmpty, "nothing fetched")
     }),
 
+    ("the Reviewing tab adds the watched pull requests apart, filters by my review status and puts my turn first", {
+        let asked = pr(1, author: "elin", updated: 1, activity: GitHubActivity(me: "me", requested: ["me"]))
+        let approved = pr(2, author: "sara", updated: 5, activity: GitHubActivity(me: "me", reviews: [review(person("me"), "APPROVED", 3)], lastCommit: at(1)))
+        let sent = pr(3, author: "johan", updated: 9, activity: GitHubActivity(me: "me"))
+        let pushed = pr(4, author: "johan", updated: 2, activity: GitHubActivity(me: "me", reviews: [review(person("me"), "COMMENTED", 1)], lastCommit: at(2)))
+        let mine = pr(5, author: "me", updated: 9)
+        let prs: [GitHubKind: [GitHubPR]] = [.reviewRequested: [asked], .reviewed: [approved, asked]]
+        let rows = GitHubLogic.reviewingRows(prs, watched: [sent, approved, pushed, mine])
+        check(rows.reviewing.map(\.number) == [1, 2], "requested and reviewed once each")
+        check(rows.watching.map(\.number) == [3, 4], "watched, less those already listed and my own \(rows.watching.map(\.number))")
+        let shown = GitHubLogic.filter(rows.watching, GitHubLogic.Filter(), reviewer: true)
+        check(shown.map(\.number) == [4, 3], "my turn first, then newest \(shown.map(\.number))")
+        let all = rows.reviewing + rows.watching
+        let counts = GitHubLogic.statusCounts(all, GitHubLogic.Filter(), reviewer: true)
+        check(counts[.all] == 4 && counts[.myTurn] == 2 && counts[.waiting] == 1 && counts[.approved] == 1 && counts[.draft] == 0, "reviewer counts \(counts)")
+        check(GitHubLogic.filter(all, GitHubLogic.Filter(status: .approved), reviewer: true).map(\.number) == [2], "approved tab")
+        check(GitHubLogic.filter(all, GitHubLogic.Filter(status: .approved)).map(\.number).isEmpty, "the author's status is another thing")
+        check(GitHubLogic.status(pr(6, author: "elin", state: .merged), reviewer: true) == nil, "no review status once merged")
+    }),
+
+    ("a watched pull request is kept at the front, capped, and dropped a few days after it is merged or closed", {
+        let urls = (1...GitHubLogic.watchLimit).map { "https://github.com/acme/api/pull/\($0)" }
+        let added = GitHubLogic.watching("https://github.com/acme/api/pull/99", in: urls)
+        check(added.count == GitHubLogic.watchLimit && added.first == "https://github.com/acme/api/pull/99" && !added.contains(urls.last!), "front and capped")
+        check(GitHubLogic.watching(urls[3], in: urls).first == urls[3] && GitHubLogic.watching(urls[3], in: urls).count == urls.count, "moved, not doubled")
+        let now = at(200)
+        var merged = pr(1, author: "elin", state: .merged)
+        merged.updated = now.addingTimeInterval(-GitHubLogic.watchGrace - 60)
+        var closed = pr(2, author: "elin", state: .closed)
+        closed.updated = now.addingTimeInterval(-3600)
+        let kept = GitHubLogic.keptWatches(Array(urls.prefix(3)), fetched: [merged, closed, pr(3, author: "elin")], now: now)
+        check(kept == [urls[1], urls[2]], "merged long ago dropped, closed today kept \(kept)")
+        check(GitHubLogic.keptWatches(urls, fetched: [], now: now) == urls, "unfetched ones stay")
+    }),
+
+    ("the watched pull requests are cached apart from the tabs", {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("githubwatched-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite"))
+        try store.saveGitHubPRs([.created: [pr(1)]])
+        try store.saveGitHubWatchedPRs([pr(2, author: "elin"), pr(3, author: "sara")])
+        check(try store.githubWatchedPRs().map(\.number) == [2, 3], "watched read back in order")
+        check(try store.githubPRs().keys.sorted { $0.rawValue < $1.rawValue } == [.created] && (try store.githubPRs()[.created]?.map(\.number)) == [1],
+              "the tabs and the needs-attention list do not see them")
+        try store.saveGitHubWatchedPRs([pr(3, author: "sara")])
+        check(try store.githubWatchedPRs().map(\.number) == [3], "replaced")
+    }),
+
     ("the review queue lists the open requests in the filter's repository and search", {
         let other = GitHubPR(url: "https://github.com/acme/web/pull/2", number: 2, title: "Web", repo: "acme/web", updated: at(2), author: "elin")
         let rows = [pr(1, author: "elin", updated: 1), other, pr(3, author: "elin", state: .closed)]

@@ -68,6 +68,11 @@ enum GitHubPreview {
             model.kind = .reviewRequested
             model.filter.sort = .needsAttention
             await shot("review-requested", appearances: [.aqua])
+            model.showSample(prs: samples, directory: directory, watched: watchedSamples)
+            model.kind = .reviewed
+            await shot("reviewing")
+            model.filter.status = .myTurn
+            await shot("reviewing-my-turn", appearances: [.aqua])
             model.filter = GitHubLogic.Filter()
             model.kind = .created
             model.filter.state = .all
@@ -496,6 +501,19 @@ enum GitHubPreview {
             detail("merged", 2385, "QDLY-8782: Define API models explicitly", state: .merged, review: .approved, body: "Short description.", checks: [check("lint", .passed, 40), check("tests", .passed, 300)], reviewers: [.init(name: "johan", state: .approved)]),
             detail("checks-failing", 2460, "QDLY-8785: Recall cases at the authority", review: .changesRequested, body: long, checks: [check("tests", .failed, 280), check("lint", .failed, 12), check("build", .passed, 60), check("e2e", .cancelled, 30)], reviewers: reviewers),
             detail("many-files", 872, "QDLY-8690: Rating conversion table as a grid of tiers", review: .approved, body: body, checks: [check("lint", .passed, 40)], files: 100, fileTotal: 240, commits: 100),
+        ]
+    }
+
+    /// Pull requests a colleague sent a link to, opened with Open PR.
+    static var watchedSamples: [GitHubPR] {
+        let now = Date()
+        return [
+            GitHubPR(url: "https://github.com/acme/finq.client-ui/pull/318", number: 318, title: "QDLY-8811: Let the client download the ledger as CSV",
+                     repo: "acme/finq.client-ui", updated: now.addingTimeInterval(-7_200), review: .required, checks: .running, author: "jakob",
+                     additions: 210, deletions: 14, activity: GitHubActivity(me: "niklas", lastCommit: now.addingTimeInterval(-7_200))),
+            GitHubPR(url: "https://github.com/acme/finq.api/pull/2671", number: 2671, title: "QDLY-8799: Retry the bank file upload on a timeout",
+                     repo: "acme/finq.api", updated: now.addingTimeInterval(-50_000), review: .approved, author: "sara", additions: 58, deletions: 9,
+                     activity: GitHubActivity(me: "niklas", lastCommit: now.addingTimeInterval(-60_000))),
         ]
     }
 

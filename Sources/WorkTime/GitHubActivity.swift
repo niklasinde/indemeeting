@@ -105,8 +105,8 @@ enum GitHubStatusTab: String, CaseIterable, Identifiable {
 
     static func tab(for key: Character) -> GitHubStatusTab? { allCases.first { $0.key == Character(key.lowercased()) } }
 
-    func includes(_ pr: GitHubPR) -> Bool {
-        let current = GitHubLogic.status(pr)
+    func includes(_ pr: GitHubPR, reviewer: Bool = false) -> Bool {
+        let current = GitHubLogic.status(pr, reviewer: reviewer)
         return status.map { current == $0 } ?? (current != .onHold)
     }
 }

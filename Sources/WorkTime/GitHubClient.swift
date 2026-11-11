@@ -74,6 +74,14 @@ enum GitHubClient {
         return fetch
     }
 
+    /// The watched pull requests in one query, or nil when it fails.
+    nonisolated static func fetchWatched(cli: URL?, urls: [String]) -> [GitHubPR]? {
+        let targets = urls.compactMap(GitHubLink.pullRequest(at:))
+        guard !targets.isEmpty else { return [] }
+        guard let cli, let output = run(cli, GitHubLogic.watchedArguments(targets)) else { return nil }
+        return try? GitHubLogic.parseWatched(output.stdout)
+    }
+
     /// One pull request in full, with the response it was parsed from so it can be cached.
     nonisolated static func fetchDetail(cli: URL?, repo: String, number: Int) -> Result<(detail: GitHubPRDetail, json: Data), GitHubError> {
         guard let cli, let output = run(cli, GitHubLogic.detailArguments(repo: repo, number: number)) else { return .failure(.cliMissing) }

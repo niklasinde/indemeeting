@@ -13,10 +13,14 @@ final class GitHubModel: ObservableObject {
     static let notchStatusKey = "githubNotchStatus"
     static let notchListKey = "githubNotchList"
     static let notchReviewStatusKey = "githubNotchReviewStatus"
+    static let watchedKey = "githubWatchedPRs"
     static let intervals = [1, 5, 10, 15, 30, 60]
 
     @Published private(set) var enabled = UserDefaults.standard.bool(forKey: enabledKey)
     @Published private(set) var prs: [GitHubKind: [GitHubPR]] = [:]
+    /// Pull requests opened from a pasted link, kept on the Reviewing tab until a few days after they are merged or closed.
+    @Published private(set) var watchedURLs = UserDefaults.standard.stringArray(forKey: watchedKey) ?? []
+    @Published private(set) var watchedPRs: [GitHubPR] = []
     @Published private(set) var directory = TicketDirectory()
     @Published private(set) var error: GitHubError?
     @Published private(set) var refreshing = false
@@ -48,20 +52,29 @@ final class GitHubModel: ObservableObject {
         return intervals.contains(stored) ? stored : 5
     }
 
-    var visible: [GitHubPR] {
-        GitHubLogic.filter(prs[kind] ?? [], filter, mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
+    var reviewer: Bool { kind == .reviewed }
+    private var mergeableOnly: Bool { UserDefaults.standard.bool(forKey: Self.mergeableKey) }
+    private var reviewingRows: (reviewing: [GitHubPR], watching: [GitHubPR]) {
+        reviewer ? GitHubLogic.reviewingRows(prs, watched: watchedPRs) : (prs[kind] ?? [], [])
     }
+    private var rows: [GitHubPR] { reviewingRows.reviewing + reviewingRows.watching }
+
+    /// The rows of the tab; on Reviewing the watched ones come last.
+    var visible: [GitHubPR] {
+        GitHubLogic.filter(reviewingRows.reviewing, filter, mergeable: mergeableOnly, reviewer: reviewer) + watching
+    }
+    var watching: [GitHubPR] { GitHubLogic.filter(reviewingRows.watching, filter, mergeable: mergeableOnly, reviewer: true) }
     var statusCounts: [GitHubStatusTab: Int] {
-        GitHubLogic.statusCounts(prs[kind] ?? [], filter, mergeable: UserDefaults.standard.bool(forKey: Self.mergeableKey))
+        GitHubLogic.statusCounts(rows, filter, mergeable: mergeableOnly, reviewer: reviewer)
     }
     /// Above my own pull requests on the All tab: the ones asking for my review.
     var reviewQueue: [GitHubPR] {
-        guard kind == .created, filter.status == .all, filter.state == .open, !UserDefaults.standard.bool(forKey: Self.mergeableKey) else { return [] }
+        guard kind == .created, filter.status == .all, filter.state == .open, !mergeableOnly else { return [] }
         return GitHubLogic.reviewQueue(prs[.reviewRequested] ?? [], filter)
     }
     /// The rows in the order the list shows them, for the arrow keys and the selection.
     var listed: [GitHubPR] { reviewQueue + visible }
-    var repos: [String] { GitHubLogic.repos(in: prs[kind] ?? []) }
+    var repos: [String] { GitHubLogic.repos(in: rows) }
     var isCapped: Bool { GitHubLogic.isCapped(prs[kind] ?? [], state: filter.state) }
     var showsList: Bool { enabled && (error == nil || hasData) }
     var hasData: Bool { prs.values.contains { !$0.isEmpty } }
@@ -105,11 +118,52 @@ final class GitHubModel: ObservableObject {
             fetched = Date()
             try? store?.saveGitHubPRs(fetch.prs)
         }
+        if fetch.error == nil { await refreshWatched() }
         refreshing = false
+    }
+
+    private func refreshWatched() async {
+        let cli = GitHubLogic.findCLI(), urls = watchedURLs
+        guard let fetched = await Task.detached(operation: { GitHubClient.fetchWatched(cli: cli, urls: urls) }).value else { return }
+        watchedPRs = fetched
+        try? store?.saveGitHubWatchedPRs(fetched)
+        setWatched(GitHubLogic.keptWatches(watchedURLs, fetched: fetched, now: Date()))
+    }
+
+    private func setWatched(_ urls: [String]) {
+        guard urls != watchedURLs else { return }
+        watchedURLs = urls
+        UserDefaults.standard.set(urls, forKey: Self.watchedKey)
+        let kept = Set(urls)
+        watchedPRs.removeAll { !kept.contains($0.url) }
+    }
+
+    func isWatched(_ pr: GitHubPR) -> Bool { watchedURLs.contains(pr.url) }
+
+    func stopWatching(_ pr: GitHubPR) {
+        setWatched(watchedURLs.filter { $0 != pr.url })
+        try? store?.saveGitHubWatchedPRs(watchedPRs)
+    }
+
+    /// Opens the pull request in pasted text and keeps it on the Reviewing tab. False when the text names none.
+    @discardableResult
+    func openPasted(_ text: String) -> Bool {
+        guard let target = GitHubLink.pasted(text) else {
+            showLinkNotice("That is not a GitHub pull request link")
+            return false
+        }
+        if !watchedURLs.contains(target.url) {
+            setWatched(GitHubLogic.watching(target.url, in: watchedURLs))
+            if enabled { Task { await refreshWatched() } }
+        }
+        open(target)
+        return true
     }
 
     func loadCache() {
         prs = GitHubActions.overlay((try? store?.githubPRs()) ?? [:], patches, now: Date())
+        let kept = Set(watchedURLs)
+        watchedPRs = ((try? store?.githubWatchedPRs()) ?? []).filter { kept.contains($0.url) }
         fetched = (try? store?.githubFetched()) ?? nil
         directory = (try? store?.ticketDirectory()) ?? TicketDirectory()
         cachedCount = Set(prs.values.flatMap { $0.map(\.url) }).count
@@ -170,6 +224,7 @@ final class GitHubModel: ObservableObject {
         guard let patch = GitHubActions.patch(for: request.action, now: Date()) else { return }
         if patch.state != nil { patches[request.url] = patch }
         prs = prs.mapValues { rows in rows.map { $0.url == request.url ? GitHubActions.apply(patch, to: $0) : $0 } }
+        watchedPRs = watchedPRs.map { $0.url == request.url ? GitHubActions.apply(patch, to: $0) : $0 }
         if page?.pr.url == request.url { page?.apply(patch) }
     }
 
@@ -223,9 +278,11 @@ final class GitHubModel: ObservableObject {
     #if DEBUG
     /// Shows made-up state, for the previews.
     func showSample(enabled: Bool = true, prs: [GitHubKind: [GitHubPR]], directory: TicketDirectory = TicketDirectory(),
-                    error: GitHubError? = nil, fetched: Date? = Date()) {
+                    error: GitHubError? = nil, fetched: Date? = Date(), watched: [GitHubPR] = []) {
         self.enabled = enabled
         self.prs = prs
+        watchedPRs = watched
+        watchedURLs = watched.map(\.url)
         self.directory = directory
         self.error = error
         self.fetched = fetched

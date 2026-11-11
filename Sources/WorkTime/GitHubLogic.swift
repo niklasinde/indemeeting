@@ -7,8 +7,9 @@ enum GitHubKind: String, CaseIterable, Identifiable {
     case mentioned
     case reviewed
 
-    /// The tabs of the GitHub page. Reviewed is fetched for the notch bar's Reviewing list only.
-    static let pageKinds: [GitHubKind] = [.created, .reviewRequested, .assigned, .mentioned]
+    /// The tabs of the GitHub page. Reviewed is shown as Reviewing, joined with the review requests and the watched pull requests.
+    static let pageKinds: [GitHubKind] = [.created, .reviewed, .reviewRequested, .assigned, .mentioned]
+    static let phoneKinds: [GitHubKind] = [.created, .reviewRequested, .assigned, .mentioned]
 
     var id: String { rawValue }
 
@@ -18,7 +19,7 @@ enum GitHubKind: String, CaseIterable, Identifiable {
         case .reviewRequested: return "Review requested"
         case .assigned: return "Assigned"
         case .mentioned: return "Mentioned"
-        case .reviewed: return "Reviewed"
+        case .reviewed: return "Reviewing"
         }
     }
 
@@ -147,6 +148,18 @@ enum GitHubLogic {
         }
         """
 
+    private static func fields(discussion: Bool) -> String {
+        """
+        number title url isDraft state merged updatedAt reviewDecision additions deletions
+        repository { nameWithOwner }
+        author { login __typename }
+        comments { totalCount }
+        labels(first: 5) { nodes { name } }
+        commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
+        \(discussion ? discussionFields : "")
+        """
+    }
+
     /// The search with the discussion fields, or without them for the closed and merged pull requests, which need no attention.
     static func query(discussion: Bool) -> String {
         """
@@ -156,18 +169,25 @@ enum GitHubLogic {
           search(query: $q, type: ISSUE, first: $first) {
             nodes {
               ... on PullRequest {
-                number title url isDraft state merged updatedAt reviewDecision additions deletions
-                repository { nameWithOwner }
-                author { login __typename }
-                comments { totalCount }
-                labels(first: 5) { nodes { name } }
-                commits(last: 1) { nodes { commit { committedDate statusCheckRollup { state } } } }
-                \(discussion ? discussionFields : "")
+                \(fields(discussion: discussion))
               }
             }
           }
         }
         """
+    }
+
+    /// The watched pull requests by number, one alias each, with the same fields as the open searches.
+    static func watchedQuery(_ targets: [GitHubLink.Target]) -> String {
+        let pulls = targets.enumerated().map { index, target in
+            let (owner, name) = repoName(target.repo)
+            return "w\(index): repository(owner: \"\(owner)\", name: \"\(name)\") { pullRequest(number: \(target.number)) { \(fields(discussion: true)) } }"
+        }
+        return "query {\n  rateLimit { cost remaining }\n  viewer { login }\n" + pulls.joined(separator: "\n") + "\n}"
+    }
+
+    static func watchedArguments(_ targets: [GitHubLink.Target]) -> [String] {
+        ["api", "graphql", "-f", "query=\(watchedQuery(targets))"]
     }
 
     static func arguments(for search: Search) -> [String] {
@@ -233,6 +253,25 @@ enum GitHubLogic {
         struct Failure: Decodable { let message: String? }
         let data: Payload?
         let errors: [Failure]?
+    }
+
+    private struct WatchedResponse: Decodable {
+        struct Repository: Decodable { let pullRequest: Response.Node? }
+        let data: [String: Repository?]?
+    }
+
+    /// The watched pull requests in the order they were asked for. Ones that are gone or out of reach are left out.
+    static func parseWatched(_ data: Data) throws -> [GitHubPR] {
+        guard let response = try? JSONDecoder().decode(Response.self, from: data),
+              let aliases = (try? JSONDecoder().decode(WatchedResponse.self, from: data))?.data else {
+            throw GitHubError.failed("unexpected response")
+        }
+        let me = response.data?.viewer?.login ?? ""
+        return aliases.compactMap { key, repository -> (Int, GitHubPR)? in
+            guard key.hasPrefix("w"), let index = Int(key.dropFirst()), let node = repository?.pullRequest,
+                  let pr = pullRequest(node, me: me) else { return nil }
+            return (index, pr)
+        }.sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     struct Page: Equatable {
@@ -363,12 +402,14 @@ enum GitHubLogic {
         var withoutRefinements: Filter { Filter(query: query, status: status) }
     }
 
-    /// The pull requests that pass the filter, in the order of its sort. Mergeable keeps those ready to merge.
-    static func filter(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false) -> [GitHubPR] {
+    /// The pull requests that pass the filter, in the order of its sort. Mergeable keeps those ready to merge. As a reviewer the
+    /// status is mine in the review, and those waiting on me come first.
+    static func filter(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false, reviewer: Bool = false) -> [GitHubPR] {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
         let quick = filter.quick
         let passing = prs.filter { pr in
-            guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo, filter.status.includes(pr) else { return false }
+            guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo,
+                  filter.status.includes(pr, reviewer: reviewer) else { return false }
             if mergeable && !isMergeable(pr) { return false }
             if !quick.isEmpty || filter.hideBotOnly {
                 let signals = signals(pr)
@@ -377,15 +418,18 @@ enum GitHubLogic {
             let haystack = "\(pr.repo) #\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
-        return sorted(passing, by: filter.sort)
+        let shown = sorted(passing, by: filter.sort)
+        guard reviewer else { return shown }
+        let mine = shown.filter { status($0, reviewer: true) == .myTurn }
+        return mine + shown.filter { status($0, reviewer: true) != .myTurn }
     }
 
     /// How many pull requests each status tab would show with the rest of the filter.
-    static func statusCounts(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false) -> [GitHubStatusTab: Int] {
+    static func statusCounts(_ prs: [GitHubPR], _ filter: Filter, mergeable: Bool = false, reviewer: Bool = false) -> [GitHubStatusTab: Int] {
         Dictionary(uniqueKeysWithValues: GitHubStatusTab.allCases.map { tab in
             var tabbed = filter
             tabbed.status = tab
-            return (tab, Self.filter(prs, tabbed, mergeable: mergeable).count)
+            return (tab, Self.filter(prs, tabbed, mergeable: mergeable, reviewer: reviewer).count)
         })
     }
 
@@ -416,12 +460,35 @@ enum GitHubLogic {
 
     /// Open pull requests by others that ask for my review or that I reviewed, each once, those waiting on me first, then by last update.
     static func reviewing(_ prs: [GitHubKind: [GitHubPR]], status tab: GitHubStatusTab = .all) -> [GitHubPR] {
+        filter(reviewingRows(prs).reviewing, Filter(status: tab), reviewer: true)
+    }
+
+    /// Pull requests by others that ask for my review or that I reviewed, each once, and apart from them the ones I watch.
+    static func reviewingRows(_ prs: [GitHubKind: [GitHubPR]], watched: [GitHubPR] = []) -> (reviewing: [GitHubPR], watching: [GitHubPR]) {
         var seen = Set<String>()
-        let open = ((prs[.reviewRequested] ?? []) + (prs[.reviewed] ?? [])).filter { pr in
-            pr.state == .open && pr.author != pr.activity?.me && seen.insert(pr.url).inserted
-        }
-        let shown = sorted(open, by: .updated).filter { pr in tab.status.map { reviewStatus(pr) == $0 } ?? true }
-        return shown.filter { reviewStatus($0) == .myTurn } + shown.filter { reviewStatus($0) != .myTurn }
+        let others = { (pr: GitHubPR) in pr.author != pr.activity?.me && seen.insert(pr.url).inserted }
+        let reviewing = ((prs[.reviewRequested] ?? []) + (prs[.reviewed] ?? [])).filter(others)
+        return (reviewing, watched.filter(others))
+    }
+
+    static func status(_ pr: GitHubPR, reviewer: Bool) -> GitHubStatus? {
+        reviewer ? (pr.state == .open ? reviewStatus(pr) : nil) : status(pr)
+    }
+
+    // MARK: Watching
+
+    static let watchLimit = 30
+    /// How long a merged or closed watched pull request stays before it is dropped.
+    static let watchGrace: TimeInterval = 3 * 86_400
+
+    static func watching(_ url: String, in urls: [String]) -> [String] {
+        Array(([url] + urls.filter { $0 != url }).prefix(watchLimit))
+    }
+
+    /// The watched addresses less those whose pull request was merged or closed more than the grace period ago.
+    static func keptWatches(_ urls: [String], fetched: [GitHubPR], now: Date) -> [String] {
+        let done = Set(fetched.filter { $0.state != .open && now.timeIntervalSince($0.updated) > watchGrace }.map(\.url))
+        return urls.filter { !done.contains($0) }
     }
 
     static func reviewingCounts(_ prs: [GitHubKind: [GitHubPR]]) -> [GitHubStatusTab: Int] {

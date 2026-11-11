@@ -103,6 +103,19 @@ let githubLinkTests: [(name: String, run: () throws -> Void)] = [
         for text in bad { check(parsed(text) == nil, "rejects \(text)") }
     }),
 
+    ("a pasted pull request link, tab of it, owner/repo#number or app link names the pull request", {
+        let target = GitHubLink.Target(repo: "quiddly-com/finq.api", number: 2483)
+        let good = ["https://github.com/quiddly-com/finq.api/pull/2483", "  https://github.com/quiddly-com/finq.api/pull/2483/files\n",
+                    "https://github.com/quiddly-com/finq.api/pull/2483#discussion_r1", "https://github.com/quiddly-com/finq.api/pull/2483?w=1",
+                    "http://www.github.com/quiddly-com/finq.api/pull/2483", "github.com/quiddly-com/finq.api/pull/2483",
+                    "quiddly-com/finq.api#2483", GitHubLink.appLink(for: target.url)]
+        for text in good { check(GitHubLink.pasted(text) == target, "reads \(text)") }
+        let bad = ["", "finq.api#2483", "https://github.com/quiddly-com/finq.api/issues/2483", "https://gitlab.com/quiddly-com/finq.api/pull/2483",
+                   "https://github.com/quiddly-com/finq.api/pull/0", "https://github.com/quiddly-com/finq.api/pull/12x",
+                   "see https://github.com/quiddly-com/finq.api/pull/2483", "https://evil.example/github.com/o/r/pull/1", "o/r#1 o/r#2"]
+        for text in bad { check(GitHubLink.pasted(text) == nil, "rejects \(text)") }
+    }),
+
     ("the copied app link opens the same pull request it was copied from", {
         check(GitHubLink.appLink(for: finqAPI.url) == encodedFinqAPI, "copy string uses worktime://")
         check(GitHubLink.appLink(for: "https://github.com/quiddly-com/finq.api/pull/2483") == encodedFinqAPI, "copy string from the page address")

@@ -47,6 +47,19 @@ enum GitHubLink {
         return pullRequest(at: address)
     }
 
+    /// The pull request in pasted or typed text: its GitHub page or any tab of it, `owner/repo#number`, or an app link.
+    static func pasted(_ text: String) -> Target? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let target = parse(text) { return target }
+        if let page = text.wholeMatch(of: #/(?i:(?:https?://)?(?:www\.)?github\.com)/([^/\s]+)/([^/\s]+)/pull/([0-9]+)(?:[/?#]\S*)?/#) {
+            return target(owner: String(page.1), repo: String(page.2), number: String(page.3))
+        }
+        if let short = text.wholeMatch(of: #/([^/\s#]+)/([^/\s#]+)#([0-9]+)/#) {
+            return target(owner: String(short.1), repo: String(short.2), number: String(short.3))
+        }
+        return nil
+    }
+
     /// `--open-link <url>`: prints the pull request a link names, or fails. Reads nothing and writes nothing.
     static func printFromCommandLine(_ text: String) -> Never {
         guard let target = parse(text) else {

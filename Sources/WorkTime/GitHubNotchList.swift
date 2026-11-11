@@ -216,8 +216,8 @@ struct PullRequestSummaryRow<Accessory: View>: View {
 }
 
 extension PullRequestSummaryRow where Accessory == EmptyView {
-    init(pr: GitHubPR, showsAuthor: Bool = false, titleLines: Int = 1, open: (() -> Void)? = nil) {
-        self.init(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines, open: open) { EmptyView() }
+    init(pr: GitHubPR, showsAuthor: Bool = false, titleLines: Int = 1, status: GitHubStatus? = nil, open: (() -> Void)? = nil) {
+        self.init(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines, status: status, open: open) { EmptyView() }
     }
 }
 

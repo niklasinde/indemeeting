@@ -3,14 +3,29 @@ import Foundation
 extension MeetingStore {
     static let githubDidChange = Notification.Name("GitHubCacheDidChange")
 
+    /// The kind the watched pull requests are cached under. It is no tab of its own, so the cache's readers leave them out.
+    static let githubWatchedKind = "watched"
+
     func githubPRs() throws -> [GitHubKind: [GitHubPR]] {
+        let rows = try githubRows().compactMap { kind, pr in GitHubKind(rawValue: kind).map { ($0, pr) } }
+        return Dictionary(grouping: rows, by: \.0).mapValues { $0.map(\.1) }
+    }
+
+    func githubWatchedPRs() throws -> [GitHubPR] {
+        try githubRows().filter { $0.kind == Self.githubWatchedKind }.map(\.pr)
+    }
+
+    func saveGitHubWatchedPRs(_ prs: [GitHubPR], fetched: Date = Date()) throws {
+        try saveGitHubRows([Self.githubWatchedKind: prs], fetched: fetched)
+    }
+
+    private func githubRows() throws -> [(kind: String, pr: GitHubPR)] {
         try read {
-            let rows = try db.query("""
+            try db.query("""
                 SELECT kind, url, number, title, repo, is_draft, state, updated, review, checks, author, additions, deletions, comments, labels, discussion, mergeable, merge_state
                 FROM github_prs ORDER BY position
-                """, []) { row -> (GitHubKind, GitHubPR)? in
-                guard let kind = GitHubKind(rawValue: row.string(0)) else { return nil }
-                return (kind, GitHubPR(url: row.string(1), number: Int(row.int64(2)), title: row.string(3), repo: row.string(4),
+                """, []) { row in
+                (row.string(0), GitHubPR(url: row.string(1), number: Int(row.int64(2)), title: row.string(3), repo: row.string(4),
                                        isDraft: row.bool(5), state: GitHubPR.State(rawValue: row.string(6)) ?? .open,
                                        updated: Date(timeIntervalSince1970: row.double(7)),
                                        review: row.optionalString(8).flatMap(GitHubPR.Review.init(rawValue:)),
@@ -21,21 +36,24 @@ extension MeetingStore {
                                        mergeable: row.optionalString(16).flatMap(GitHubPRDetail.Mergeable.init(rawValue:)) ?? .unknown,
                                        mergeState: row.optionalString(17).flatMap(GitHubPRDetail.MergeState.init(rawValue:)) ?? .unknown))
             }
-            return Dictionary(grouping: rows.compactMap { $0 }, by: \.0).mapValues { $0.map(\.1) }
         }
     }
 
     /// Replaces the cached pull requests of each kind given; the other kinds keep theirs.
     func saveGitHubPRs(_ prs: [GitHubKind: [GitHubPR]], fetched: Date = Date()) throws {
+        try saveGitHubRows(Dictionary(uniqueKeysWithValues: prs.map { ($0.key.rawValue, $0.value) }), fetched: fetched)
+    }
+
+    private func saveGitHubRows(_ prs: [String: [GitHubPR]], fetched: Date) throws {
         try write(notify: Self.githubDidChange) {
             for (kind, rows) in prs {
-                try db.run("DELETE FROM github_prs WHERE kind = ?", [kind.rawValue])
+                try db.run("DELETE FROM github_prs WHERE kind = ?", [kind])
                 for (position, pr) in rows.enumerated() {
                     try db.run("""
                         INSERT OR REPLACE INTO github_prs (kind, url, position, number, title, repo, is_draft, state, updated, review, checks,
                             author, additions, deletions, comments, labels, fetched, discussion, mergeable, merge_state)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """, [kind.rawValue, pr.url, position, pr.number, pr.title, pr.repo, pr.isDraft, pr.state.rawValue,
+                        """, [kind, pr.url, position, pr.number, pr.title, pr.repo, pr.isDraft, pr.state.rawValue,
                               pr.updated.timeIntervalSince1970, pr.review?.rawValue, pr.checks.rawValue, pr.author, pr.additions,
                               pr.deletions, pr.comments, pr.labels.joined(separator: "\n"), fetched.timeIntervalSince1970,
                               pr.activity.flatMap { try? JSONEncoder().encode($0) }.map { String(decoding: $0, as: UTF8.self) },

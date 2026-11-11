@@ -89,10 +89,33 @@ let githubTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.searches(for: .mentioned)[0].terms.hasPrefix("mentions:@me is:pr is:open"), "mentioned")
         let reviewed = GitHubLogic.searches(for: .reviewed)
         check(reviewed.count == 1 && reviewed[0].discussion && reviewed[0].terms == "reviewed-by:@me -author:@me is:pr is:open archived:false sort:updated-desc", reviewed[0].terms)
-        check(!GitHubKind.pageKinds.contains(.reviewed) && GitHubKind.allCases.contains(.reviewed), "fetched, but not a tab of the page")
+        check(GitHubKind.pageKinds == [.created, .reviewed, .reviewRequested, .assigned, .mentioned], "Reviewing right after Created")
+        check(GitHubKind.reviewed.tabTitle == "Reviewing" && GitHubKind.reviewed.rawValue == "reviewed", "titled Reviewing, cached as reviewed")
         let created = GitHubLogic.searches(for: .created)
         check(created.map(\.limit) == [50, 30], "limits")
         check(created[0].terms.hasPrefix("author:@me is:pr is:open") && created[1].terms.hasPrefix("author:@me is:pr is:closed"), "states")
+    }),
+
+    ("the watched pull requests are asked for by number in one query and read back in order", {
+        let targets = [GitHubLink.Target(repo: "acme/api", number: 7), GitHubLink.Target(repo: "acme/web", number: 9)]
+        let query = GitHubLogic.watchedQuery(targets)
+        check(query.contains(#"w0: repository(owner: "acme", name: "api") { pullRequest(number: 7)"#), query)
+        check(query.contains(#"w1: repository(owner: "acme", name: "web") { pullRequest(number: 9)"#) && query.contains("latestReviews"), "discussion fields")
+        check(GitHubLogic.watchedArguments(targets).prefix(2) == ["api", "graphql"], "graphql")
+        let data = Data(#"""
+            {"data":{"rateLimit":{"cost":1,"remaining":4999},"viewer":{"login":"me"},
+             "w1":{"pullRequest":\#(node(number: 9, repo: "acme/web", state: "MERGED", merged: true))},
+             "w2":null,
+             "w0":{"pullRequest":\#(node(number: 7, author: #"{"login":"elin"}"#))}},
+             "errors":[{"message":"Could not resolve to a Repository"}]}
+            """#.utf8)
+        let rows = try GitHubLogic.parseWatched(data)
+        check(rows.map(\.number) == [7, 9], "in the order asked, the missing one left out \(rows.map(\.number))")
+        check(rows[0].author == "elin" && rows[0].activity?.me == "me" && rows[1].state == .merged, "fields")
+        do {
+            _ = try GitHubLogic.parseWatched(Data("nope".utf8))
+            check(false, "should throw")
+        } catch { check(error as? GitHubError == .failed("unexpected response"), "unexpected response") }
     }),
 
     ("the gh arguments run a GraphQL search without any token", {

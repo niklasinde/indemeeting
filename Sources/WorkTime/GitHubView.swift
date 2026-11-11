@@ -176,9 +176,9 @@ struct GitHubView: View {
                 .padding(.top, 8)
                 GitHubStatusTabs(selection: $model.filter.status, counts: model.statusCounts)
                     .padding(.top, 6)
-                HStack(spacing: 8) {
-                    SearchField(text: $model.filter.query)
-                    filtersMenu
+                ViewThatFits(in: .horizontal) {
+                    searchRow(compact: false)
+                    searchRow(compact: true)
                 }
                 .controlSize(.small)
                 .padding(.top, 10)
@@ -190,6 +190,14 @@ struct GitHubView: View {
     }
 
     private static let gutter: CGFloat = 16
+
+    private func searchRow(compact: Bool) -> some View {
+        HStack(spacing: 8) {
+            SearchField(text: $model.filter.query).frame(minWidth: compact ? nil : 150)
+            filtersMenu
+            OpenPullRequestButton(model: model, compact: compact)
+        }
+    }
 
     private var refreshControls: some View {
         HStack(spacing: 8) {
@@ -259,6 +267,7 @@ struct GitHubView: View {
                 .focused($focus, equals: .list)
                 .focusEffectDisabled()
                 .onKeyPress(characters: .letters, action: statusKey)
+                .onPasteCommand(of: [.plainText, .url]) { _ in pasteLink() }
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -268,7 +277,14 @@ struct GitHubView: View {
                             ForEach(model.reviewQueue) { row($0, showsAuthor: true, titleLines: titleLines) }
                             section("My pull requests", count: model.visible.count)
                         }
-                        ForEach(model.visible) { row($0, showsAuthor: false, titleLines: titleLines) }
+                        let watching = model.watching
+                        let main = model.visible.dropLast(watching.count)
+                        if !watching.isEmpty, !main.isEmpty { section("Reviewing", count: main.count) }
+                        ForEach(main) { row($0, showsAuthor: model.reviewer, titleLines: titleLines) }
+                        if !watching.isEmpty {
+                            section("Watching", count: watching.count)
+                            ForEach(watching) { row($0, showsAuthor: true, titleLines: titleLines) }
+                        }
                     }
                     .padding(.horizontal, Self.gutter - 8)
                     .padding(.bottom, 20)
@@ -288,6 +304,7 @@ struct GitHubView: View {
                     model.clearMarks()
                     return .handled
                 }
+                .onPasteCommand(of: [.plainText, .url]) { _ in pasteLink() }
                 .onChange(of: model.selectedURL) { if let url = model.selectedURL { proxy.scrollTo(url) } }
             }
         }
@@ -317,6 +334,12 @@ struct GitHubView: View {
         return .handled
     }
 
+    /// Command-V on the list opens a pull request link from the clipboard.
+    private func pasteLink() {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        if model.openPasted(text) { showsDetail = true }
+    }
+
     private func step(_ direction: GitHubSelection.Direction) -> KeyPress.Result {
         model.step(direction)
         return .handled
@@ -340,7 +363,8 @@ private struct PullRequestRow: View {
     @ObservedObject private var actions = GitHubActionsModel.shared
 
     var body: some View {
-        PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines)
+        PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines,
+                              status: model.reviewer ? GitHubLogic.status(pr, reviewer: true) : nil)
             .padding(.vertical, 8)
             .padding(.horizontal, 8)
             .background(RoundedRectangle(cornerRadius: 6).fill(marked ? Color.accentColor.opacity(0.18) : selected ? Color.primary.opacity(0.08) : .clear))
@@ -356,6 +380,7 @@ private struct PullRequestRow: View {
                 Button("Copy Branch") { model.store?.githubHeadBranch(pr.url).map(GitHubModel.copy) }
                     .disabled(model.store?.githubHeadBranch(pr.url) == nil)
                 Button("Open Repository") { open("https://\(GitHubLogic.host)/\(pr.repo)") }
+                if model.isWatched(pr) { Button("Stop Watching") { model.stopWatching(pr) } }
                 GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
                 Divider()
                 Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
@@ -386,6 +411,52 @@ private struct PullRequestRow: View {
             model.clearMarks()
             show(pr)
         }
+    }
+}
+
+/// Opens a pull request from a pasted link or `owner/repo#number`, e.g. one a colleague sent, and keeps it on the Reviewing tab.
+private struct OpenPullRequestButton: View {
+    @ObservedObject var model: GitHubModel
+    var compact = false
+    @State private var showing = false
+    @State private var text = ""
+
+    var body: some View {
+        Button { showing = true } label: {
+            if compact { Image(systemName: "link") } else { Label("Open PR\u{2026}", systemImage: "link") }
+        }
+        .fixedSize()
+        .help("Open a pull request from its link; it stays on the Reviewing tab as Watching")
+        .popover(isPresented: $showing, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Open a pull request").font(.headline)
+                TextField("https://github.com/owner/repo/pull/123 or owner/repo#123", text: $text)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 360)
+                    .onSubmit(open)
+                Text(invalid ? "Paste a GitHub pull request link or owner/repo#number." : "It stays on the Reviewing tab as Watching until a few days after it is merged or closed.")
+                    .font(.caption)
+                    .foregroundStyle(invalid ? .red : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { showing = false }.keyboardShortcut(.cancelAction)
+                    Button("Open", action: open).keyboardShortcut(.defaultAction).disabled(target == nil)
+                }
+            }
+            .padding(14)
+            .frame(width: 388)
+            .onAppear { text = NSPasteboard.general.string(forType: .string).flatMap { GitHubLink.pasted($0) != nil ? $0 : nil } ?? "" }
+        }
+    }
+
+    private var target: GitHubLink.Target? { GitHubLink.pasted(text) }
+    private var invalid: Bool { !text.trimmingCharacters(in: .whitespaces).isEmpty && target == nil }
+
+    private func open() {
+        guard target != nil, model.openPasted(text) else { return }
+        showing = false
+        text = ""
     }
 }
 
