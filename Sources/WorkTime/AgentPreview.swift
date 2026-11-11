@@ -11,6 +11,9 @@ enum AgentPreview {
 
     @MainActor
     static func run(to output: URL) -> Never {
+        let suite = "WorkTimeAgentPreview"
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        AgentModel.defaults = UserDefaults(suiteName: suite) ?? .standard
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
@@ -47,6 +50,8 @@ enum AgentPreview {
             model.preview([AgentItem(id: "user-0", kind: .user(AgentInbox.prompt("Add the missing downgrade to the migration and push.")))]
                           + Array(sample().dropFirst().prefix(4)))
             await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-from-main-light.png"))
+            await sessions(to: output)
+            UserDefaults.standard.removePersistentDomain(forName: suite)
             exit(0)
         }
         app.run()
@@ -101,13 +106,96 @@ enum AgentPreview {
 
     @MainActor
     private static func save(_ model: AgentModel, appearance: NSAppearance.Name, to url: URL) async {
-        let window = AgentWindow.makeWindow(AgentView(model: model))
+        await save(AgentView(model: model), appearance: appearance, to: url)
+    }
+
+    @MainActor
+    private static func save<Content: View>(_ view: Content, size: NSSize = NSSize(width: 820, height: 640), appearance: NSAppearance.Name,
+                                            to url: URL) async {
+        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
+        window.styleMask = [.titled, .closable, .resizable, .fullSizeContentView]
+        window.setContentSize(size)
         window.appearance = NSAppearance(named: appearance)
         window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
         window.orderBack(nil)
         try? await Task.sleep(nanoseconds: 900_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    /// The Main page with its agents list and a session restored from a Claude Code transcript, the session list, and a pull
+    /// request's agent picked in the list. Only with `CLAUDE_CONFIG_DIR` set, since it writes its transcripts there.
+    @MainActor
+    private static func sessions(to output: URL) async {
+        guard ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"] != nil else { return }
+        let folder = "/Users/me/git", now = Date()
+        let ids = ["3f2b1c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "9a8b7c6d-5e4f-4321-9876-543210fedcba", "11111111-2222-4333-8444-555555555555",
+                   "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"]
+        let projects = ClaudeTranscripts.folder(cwd: folder)
+        try? FileManager.default.createDirectory(at: projects, withIntermediateDirectories: true)
+        try? transcript(folder: folder).write(to: projects.appendingPathComponent(ids[1] + ".jsonl"), atomically: true, encoding: .utf8)
+        let other = #"{"type":"user","cwd":"/Users/me/git","message":{"role":"user","content":"Rename the voucher class to Voucher in finq.api"}}"#
+        try? other.write(to: projects.appendingPathComponent(ids[3] + ".jsonl"), atomically: true, encoding: .utf8)
+        let defaults = AgentModel.defaults
+        func entry(_ index: Int, _ title: String, hours: Double, model: String?) -> AgentSessionEntry {
+            AgentSessionEntry(id: ids[index], folder: folder, created: now.addingTimeInterval(-hours * 3600 - 600),
+                              lastUsed: now.addingTimeInterval(-hours * 3600), title: title, model: model)
+        }
+        let api = "https://github.com/quiddly-com/finq.api/pull/2591", admin = "https://github.com/quiddly-com/finq.admin-ui/pull/664"
+        let saved = "https://github.com/quiddly-com/finq.client-ui/pull/412"
+        let history = [AgentOverview.mainKey: [entry(1, "Why does the VAT test skip on CI?", hours: 0.3, model: "claude-sonnet-5-5"),
+                                               entry(0, "Catch up", hours: 5, model: "claude-haiku-5-5"),
+                                               entry(2, "Draft the release notes for 3.14", hours: 50, model: "claude-opus-5-5")],
+                       saved: [AgentSessionEntry(id: ids[2], folder: folder, created: now.addingTimeInterval(-90_000),
+                                                 lastUsed: now.addingTimeInterval(-86_400), title: "Review quiddly-com/finq.client-ui#412", model: nil)]]
+        defaults.set(AgentSessions.encode(history), forKey: AgentSessions.historyKey)
+        defaults.set(folder, forKey: AgentLogic.mainFolderKey)
+        defaults.set(ids[1], forKey: AgentLogic.mainSessionKey)
+        let hub = AgentHub.shared
+        for (url, busy, seen) in [(api, false, false), (admin, true, true)] {
+            guard let target = GitHubLink.pullRequest(at: url) else { continue }
+            let agent = AgentModel(folder: folder)
+            agent.open(pr: target, checkout: nil)
+            agent.preview(url == admin ? Array(sample().suffix(2)) : Array(sample().prefix(7)), busy: busy, seen: seen)
+            PRAgents.shared.showSample(url, model: agent)
+            PRAgents.shared.hide(url)
+        }
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        let size = NSSize(width: 1180, height: 760)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            hub.selected = AgentOverview.mainKey
+            await save(AgentsPage(hub: hub), size: size, appearance: appearance, to: output.appendingPathComponent("main-restored-\(name).png"))
+            let others = await hub.main.otherSessions()
+            await save(AgentSessionList(model: hub.main, others: others, showsOthers: true).background(.background), size: NSSize(width: 340, height: 300),
+                       appearance: appearance, to: output.appendingPathComponent("sessions-picker-\(name).png"))
+        }
+        hub.selected = api
+        await save(AgentsPage(hub: hub), size: size, appearance: .aqua, to: output.appendingPathComponent("main-pr-agent-light.png"))
+        hub.selected = saved
+        await save(AgentsPage(hub: hub), size: size, appearance: .aqua, to: output.appendingPathComponent("main-saved-pr-light.png"))
+    }
+
+    /// A Claude Code transcript: a question, a search and a read, the answer, then a fix with an edit.
+    private static func transcript(folder: String) -> String {
+        func line(_ object: [String: Any]) -> String {
+            String(decoding: (try? JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes])) ?? Data(), as: UTF8.self)
+        }
+        func user(_ content: Any) -> String { line(["type": "user", "cwd": folder, "message": ["role": "user", "content": content]]) }
+        func assistant(_ content: [[String: Any]]) -> String { line(["type": "assistant", "cwd": folder, "message": ["role": "assistant", "content": content]]) }
+        return [
+            user("Why does the VAT test skip on CI?"),
+            assistant([["type": "tool_use", "id": "toolu_1", "name": "Grep", "input": ["pattern": "skipif", "path": folder + "/finq.api/tests"]]]),
+            user([["type": "tool_result", "tool_use_id": "toolu_1", "content": "tests/test_vat.py:12: @pytest.mark.skipif(not VAT_ENABLED)"]]),
+            assistant([["type": "tool_use", "id": "toolu_2", "name": "Read", "input": ["file_path": folder + "/finq.api/tests/test_vat.py"]]]),
+            user([["type": "tool_result", "tool_use_id": "toolu_2", "content": [["type": "text", "text": "import pytest\n…"]]]]),
+            assistant([["type": "text", "text": "It skips because `VAT_ENABLED` is read from the environment and CI never sets it "
+                        + "(finq.api/tests/test_vat.py:12). Set it in the test job, or default it to true in `conftest.py`."]]),
+            user("Fix it in conftest"),
+            assistant([["type": "tool_use", "id": "toolu_3", "name": "Edit", "input": ["file_path": folder + "/finq.api/tests/conftest.py",
+                                                                                       "old_string": "", "new_string": "VAT_ENABLED = True"]]]),
+            user([["type": "tool_result", "tool_use_id": "toolu_3", "content": "The file was updated.", "is_error": false]]),
+            assistant([["type": "text", "text": "Done: `conftest.py` now turns VAT on for every test, so the skip no longer applies."]]),
+        ].joined(separator: "\n")
     }
 
     /// Main answering Catch up, then asking to hand a prompt to a pull request's agent.

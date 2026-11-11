@@ -16,9 +16,9 @@ final class PRAgents: ObservableObject {
     func isShown(_ key: String) -> Bool { models[key] != nil && shown.contains(key) }
 
     /// Shows the pull request's agent, made in its checkout with the review prompt waiting the first time. Without the
-    /// embedded panes (the swiftc build) the Agent window opens instead.
+    /// embedded panes (the swiftc build) it shows on the Main page instead.
     func open(_ target: GitHubLink.Target) {
-        guard EmbeddedTerminalModel.available else { return AgentWindow.shared.show(pr: target) }
+        guard EmbeddedTerminalModel.available else { return AgentHub.shared.show(target.url) }
         let key = target.url
         if models[key] != nil { return show(key) }
         Task { @MainActor in
@@ -111,6 +111,7 @@ struct AgentDockPane: View {
             Text(folder).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
                 .help("The agent works in \(folder)")
             Spacer(minLength: 4)
+            AgentSessionsButton(model: model).labelStyle(.iconOnly)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).buttonStyle(.bordered)
             Divider().frame(height: 14)
@@ -148,10 +149,12 @@ struct DockPlacementMenu: View {
     }
 }
 
-/// Writes `agents.json` for the MCP server a second after the agents change, once started by the app (never by previews).
+/// A second after the agents change, refreshes the Main page's list and writes `agents.json` for the MCP server, the file
+/// only once started by the app (never by previews).
 @MainActor
-final class AgentStateWriter {
+final class AgentStateWriter: ObservableObject {
     static let shared = AgentStateWriter()
+    @Published private(set) var revision = 0
     private var url: URL?
     private var scheduled = false
 
@@ -161,13 +164,14 @@ final class AgentStateWriter {
     }
 
     func changed() {
-        guard url != nil, !scheduled else { return }
+        guard !scheduled else { return }
         scheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.write() }
     }
 
     private func write() {
         scheduled = false
+        revision += 1
         guard let url else { return }
         let data = AgentOverview.encode(states(), now: Date())
         DispatchQueue.global(qos: .utility).async {
@@ -177,16 +181,13 @@ final class AgentStateWriter {
     }
 
     func states() -> [AgentState] {
-        var states: [AgentState] = []
-        if let main = AgentWindow.shared.model {
-            states.append(state(main, key: AgentOverview.mainKey, title: main.prURL.map { AgentOverview.prTitle($0) } ?? "Main"))
-        }
+        let main = AgentHub.shared.main
+        var states = [state(main, key: AgentOverview.mainKey, title: "Main")]
         let titles = Dictionary(GitHubModel.shared.prs.values.joined().map { ($0.url, $0.title) }) { first, _ in first }
         for (url, model) in PRAgents.shared.models.sorted(by: { $0.key < $1.key }) {
             states.append(state(model, key: url, title: AgentOverview.prTitle(url, title: titles[url])))
         }
-        let sessions = UserDefaults.standard.dictionary(forKey: AgentLogic.prSessionsKey) as? [String: String] ?? [:]
-        return AgentOverview.withPersisted(states, sessions: sessions).map { state in
+        return AgentOverview.withPersisted(states, sessions: AgentModel.prSessions, known: Array(AgentSessionStore.all().keys)).map { state in
             var state = state
             if !state.loaded, let title = titles[state.key] { state.title = AgentOverview.prTitle(state.key, title: title) }
             return state

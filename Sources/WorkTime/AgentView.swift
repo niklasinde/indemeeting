@@ -1,47 +1,138 @@
 import AppKit
 import SwiftUI
 
+/// The Main page of the main window: every agent in a list beside the one picked. Main lives for the whole run of the app,
+/// so its transcript stays when the page or the window goes away.
 @MainActor
-final class AgentWindow {
-    static let shared = AgentWindow()
+final class AgentHub: ObservableObject {
+    static let shared = AgentHub()
 
-    private(set) var model: AgentModel?
-    private var window: AppWindow?
+    let main = AgentModel(main: true)
+    @Published var selected = AgentOverview.mainKey
 
-    /// The Main agent: one session across launches, in the repositories folder.
-    func configure() {
-        let model = AgentModel(main: true)
-        self.model = model
-        window = AppWindow(onClose: { model.stopClient() }) { Self.makeWindow(AgentView(model: model)) }
+    /// Set by the main window: brings it forward on the Main page.
+    var showPage: (() -> Void)?
+
+    var isMainSelected: Bool { selected == AgentOverview.mainKey }
+
+    func show(_ key: String = AgentOverview.mainKey) {
+        selected = key
+        showPage?()
+    }
+}
+
+struct AgentsPage: View {
+    @ObservedObject var hub: AgentHub
+    @ObservedObject private var writer = AgentStateWriter.shared
+    @AppStorage("agentListHidden") private var listHidden = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if !listHidden {
+                AgentList(hub: hub, rows: AgentSessions.sidebar(writer.states(), lastUsed: AgentSessions.lastUsed(AgentSessionStore.all())))
+                    .frame(width: 250)
+                Divider()
+            }
+            Group {
+                if hub.isMainSelected {
+                    AgentView(model: hub.main, listHidden: $listHidden)
+                } else {
+                    AgentPRPage(key: hub.selected, listHidden: $listHidden)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onAppear { hub.main.loadFiles() }
+    }
+}
+
+/// The agents: Main first, then the pull requests' agents, the ones that need you first.
+struct AgentList: View {
+    @ObservedObject var hub: AgentHub
+    let rows: [AgentState]
+
+    var body: some View {
+        let now = Date()
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 2) {
+                ForEach(rows, id: \.key) { state in
+                    Button { hub.selected = state.key } label: { row(state, now: now) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(8)
+        }
+        .background(Color.primary.opacity(0.025))
     }
 
-    func show() {
-        guard let model else { return }
-        model.loadFiles()
-        window?.show()
+    private func row(_ state: AgentState, now: Date) -> some View {
+        let need = AgentOverview.need(state)
+        let isMain = state.key == AgentOverview.mainKey
+        return HStack(alignment: .top, spacing: 8) {
+            Circle().fill(Self.color(need)).frame(width: 8, height: 8).padding(.top, 5).help(need.label)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(isMain ? "Main" : Self.reference(state)).font(.callout.weight(.medium)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let updated = state.updatedAt {
+                        Text(GitHubLogic.updatedText(updated, now: now)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+                Text(isMain ? "Overview of everything" : Self.title(state)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                if need != .idle {
+                    Text(state.status == .signedOut ? "Signed out of Claude" : need.label).font(.caption2).foregroundStyle(Self.color(need))
+                }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(hub.selected == state.key ? Color.primary.opacity(0.08) : .clear))
+        .contentShape(Rectangle())
     }
 
-    /// Opens the window on a pull request, in the local checkout of its repository when there is one.
-    func show(pr target: GitHubLink.Target) {
-        guard let model else { return }
-        Task { @MainActor in
-            let checkout = await Task.detached { GitHubClaude.checkout(for: target.repo, under: GitHubClaudeModel.repositoriesRoot) }.value
-            model.open(pr: target, checkout: checkout)
-            window?.show()
+    static func color(_ need: AgentOverview.Need) -> Color {
+        switch need {
+        case .waiting: return .orange
+        case .unseen: return .accentColor
+        case .error: return .red
+        case .working: return .green
+        case .idle: return .secondary.opacity(0.4)
         }
     }
 
-    static func makeWindow(_ view: AgentView) -> NSWindow {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-        window.title = view.model.isMain ? "Main" : "Agent"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
-        window.setContentSize(NSSize(width: 820, height: 640))
-        return window
+    private static func reference(_ state: AgentState) -> String {
+        state.prURL.map(AgentSessions.shortReference) ?? state.title
+    }
+
+    private static func title(_ state: AgentState) -> String {
+        let reference = state.prURL.map { AgentOverview.prTitle($0) } ?? state.title
+        let rest = state.title.hasPrefix(reference) ? state.title.dropFirst(reference.count).trimmingCharacters(in: .whitespaces) : state.title
+        return rest.isEmpty ? (state.loaded ? "Pull request agent" : "Saved session") : rest
+    }
+}
+
+/// A pull request's agent on the Main page: the same model as beside the pull request, loaded when it is not yet.
+struct AgentPRPage: View {
+    let key: String
+    @Binding var listHidden: Bool
+    @ObservedObject private var agents = PRAgents.shared
+
+    var body: some View {
+        if let model = agents.model(for: key) {
+            AgentView(model: model, listHidden: $listHidden)
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                .task(id: key) {
+                    if let target = GitHubLink.pullRequest(at: key) { _ = await agents.load(target) }
+                }
+        }
     }
 }
 
 struct AgentView: View {
     @ObservedObject var model: AgentModel
+    var listHidden: Binding<Bool>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -49,35 +140,137 @@ struct AgentView: View {
             Divider()
             AgentPanel(model: model)
         }
-        .frame(minWidth: 600, minHeight: 440)
+        .frame(minWidth: 420, minHeight: 440)
     }
+
+    private var isMain: Bool { model.isMain && model.prURL == nil }
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text(model.isMain && model.prURL == nil ? "Main" : "Agent").font(.system(size: 20, weight: .medium))
-            Button { model.chooseFolder() } label: {
-                Label((model.folder as NSString).abbreviatingWithTildeInPath, systemImage: "folder").lineLimit(1).truncationMode(.head)
+            if let listHidden {
+                Button { listHidden.wrappedValue.toggle() } label: { Image(systemName: "sidebar.squares.left") }
+                    .buttonStyle(.borderless)
+                    .help(listHidden.wrappedValue ? "Show the agents" : "Hide the agents")
             }
-            .buttonStyle(.borderless)
-            .help("The folder the agent works in")
-            if let pr = model.prURL.flatMap(GitHubLink.pullRequest(at:)) {
-                Label("\(pr.repo) #\(pr.number)", systemImage: "arrow.triangle.pull").font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            if let url = model.prURL, let pr = GitHubLink.pullRequest(at: url) {
+                Label(AgentSessions.shortReference(url), systemImage: "arrow.triangle.pull").font(.system(size: 15, weight: .medium)).lineLimit(1)
+                    .help(url)
+                Button { AgentModel.openAgentLink?(pr) } label: { Label("Open PR", systemImage: "arrow.up.forward.square") }
+                    .help("Open the pull request page with this agent beside it")
+            } else {
+                Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium))
+                Button { model.chooseFolder() } label: {
+                    Label((model.folder as NSString).abbreviatingWithTildeInPath, systemImage: "folder").lineLimit(1).truncationMode(.head)
+                }
+                .buttonStyle(.borderless)
+                .help("The folder the agent works in")
             }
             Spacer()
-            if model.sessionID != nil {
-                Text("Continuing session").font(.caption).foregroundStyle(.secondary)
-            }
-            if model.isMain && model.prURL == nil {
+            if isMain {
                 Button { model.catchUp() } label: { Label("Catch up", systemImage: "sparkles") }
                     .disabled(model.busy)
                     .help(AgentLogic.catchUpPrompt)
             }
+            AgentSessionsButton(model: model)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model)
         }
         .padding(.horizontal, RecordingDetail.gutter)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+        .padding(.vertical, 12)
+    }
+}
+
+/// The sessions of one agent: the current one, the earlier ones newest first, and those in its folder it has not had.
+struct AgentSessionsButton: View {
+    @ObservedObject var model: AgentModel
+    @State private var showing = false
+
+    var body: some View {
+        Button { showing.toggle() } label: { Label("Sessions", systemImage: "clock.arrow.circlepath") }
+            .disabled(model.busy)
+            .help(model.busy ? "Switch sessions when the agent has finished" : "Pick an earlier session")
+            .popover(isPresented: $showing, arrowEdge: .bottom) {
+                AgentSessionList(model: model) { showing = false }
+            }
+    }
+}
+
+struct AgentSessionList: View {
+    @ObservedObject var model: AgentModel
+    var done: () -> Void = {}
+    @State var others: [AgentSessionEntry]?
+    @State var showsOthers = false
+
+    var body: some View {
+        let now = Date()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                if model.sessionID == nil {
+                    row(title: "New session", detail: "Not started yet", current: true) {}
+                }
+                ForEach(model.history) { entry in
+                    row(title: entry.title, detail: detail(entry, now: now), current: entry.id == model.sessionID) { pick(entry) }
+                        .contextMenu {
+                            Button("Remove from List") { model.forget(entry.id) }.disabled(entry.id == model.sessionID)
+                        }
+                }
+                Divider().padding(.vertical, 4)
+                if showsOthers {
+                    Text("Other sessions in this folder").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.horizontal, 8)
+                    if let others {
+                        if others.isEmpty {
+                            Text("None").font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 8)
+                        }
+                        ForEach(others) { entry in
+                            row(title: entry.title, detail: GitHubLogic.updatedText(entry.lastUsed, now: now), current: false) { pick(entry) }
+                        }
+                    } else {
+                        ProgressView().controlSize(.small).padding(.horizontal, 8)
+                    }
+                } else {
+                    Button("Show All Sessions in This Folder") {
+                        showsOthers = true
+                        Task { others = await model.otherSessions() }
+                    }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(8)
+        }
+        .frame(width: 340)
+        .frame(maxHeight: 420)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func pick(_ entry: AgentSessionEntry) {
+        model.switchTo(entry)
+        done()
+    }
+
+    private func detail(_ entry: AgentSessionEntry, now: Date) -> String {
+        ([GitHubLogic.updatedText(entry.lastUsed, now: now)] + [entry.model.map(AgentLogic.modelName)].compactMap { $0 })
+            .joined(separator: " \u{00B7} ")
+    }
+
+    private func row(title: String, detail: String, current: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "checkmark").font(.caption.weight(.semibold)).opacity(current ? 1 : 0).padding(.top, 2)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).lineLimit(1).truncationMode(.tail)
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(current ? Color.primary.opacity(0.07) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

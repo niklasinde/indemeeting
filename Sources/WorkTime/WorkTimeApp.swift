@@ -217,7 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         ClaudeAPIWindow.shared.configure(store: store)
-        AgentWindow.shared.configure()
+        AgentHub.shared.showPage = { [weak self] in self?.mainWindow.show(section: .agent) }
         AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
         AgentStateWriter.shared.start()
         AgentInboxWatcher.shared.start()
@@ -242,6 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
         PRAgents.shared.stopAll()
+        AgentHub.shared.main.stopClient()
         LocalLLM.shared.unload(wait: true)
         tracker.flush()
         AppUpgrade.shared.relaunchIfRequested()
@@ -383,7 +384,7 @@ struct MenuContent: View {
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
         Button("Chat\u{2026}") { ChatWindow.shared.show() }
             .keyboardShortcut("a", modifiers: [.command, .shift])
-        Button("Main Agent\u{2026}") { AgentWindow.shared.show() }
+        Button("Main Agent\u{2026}") { AgentHub.shared.show() }
         Menu("Languages: \(listened.summary)") {
             ForEach(MeetingLanguage.allCases) { language in
                 Toggle(language.displayName, isOn: listened.isListening(language)).disabled(listened.isOnly(language))

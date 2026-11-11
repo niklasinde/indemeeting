@@ -66,10 +66,11 @@ enum AgentOverview {
         return state
     }
 
-    /// The loaded agents, then every saved pull request session that is not loaded this run.
-    static func withPersisted(_ agents: [AgentState], sessions: [String: String]) -> [AgentState] {
+    /// The loaded agents, then every pull request with a saved session or session history that is not loaded this run.
+    static func withPersisted(_ agents: [AgentState], sessions: [String: String], known: [String] = []) -> [AgentState] {
         let loaded = Set(agents.compactMap(\.prURL))
-        return agents + sessions.keys.sorted().filter { !loaded.contains($0) }.map { url in
+        let urls = Set(sessions.keys).union(known.filter { GitHubLink.pullRequest(at: $0) != nil })
+        return agents + urls.sorted().filter { !loaded.contains($0) }.map { url in
             AgentState(key: url, title: prTitle(url), prURL: url, sessionID: sessions[url], status: .idle, loaded: false)
         }
     }
@@ -174,10 +175,19 @@ enum AgentTranscript {
         return folders.map { $0.appendingPathComponent(sessionID + ".jsonl") }.first { fileManager.fileExists(atPath: $0.path) }
     }
 
-    static func entries(jsonl: String) -> [String] {
-        var entries: [String] = []
-        for line in jsonl.split(whereSeparator: \.isNewline) {
-            guard let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+    /// One line of a transcript that the Agent shows: a prompt, a reply, a tool call or its output. Sidechains, meta lines and
+    /// command wrappers are left out.
+    enum Line {
+        case user(String)
+        case assistant(String)
+        case toolUse(id: String, name: String, input: [String: Any], cwd: String)
+        case toolResult(id: String, content: String, isError: Bool)
+    }
+
+    static func lines(jsonl: String) -> [Line] {
+        var lines: [Line] = []
+        for raw in jsonl.split(whereSeparator: \.isNewline) {
+            guard let object = try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any],
                   object["isSidechain"] as? Bool != true, object["isMeta"] as? Bool != true,
                   let message = object["message"] as? [String: Any] else { continue }
             let cwd = object["cwd"] as? String ?? ""
@@ -187,33 +197,65 @@ enum AgentTranscript {
             } else {
                 blocks = message["content"] as? [[String: Any]] ?? []
             }
-            switch object["type"] as? String {
-            case "user":
-                for block in blocks where block["type"] as? String == "text" {
+            let role = object["type"] as? String
+            guard role == "user" || role == "assistant" else { continue }
+            for block in blocks {
+                switch block["type"] as? String {
+                case "text":
                     guard let text = (block["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty,
-                          !text.hasPrefix("<") else { continue }
-                    entries.append("User: " + ActivityLogic.truncate(text, to: entryLimit))
+                          role == "assistant" || !text.hasPrefix("<") else { continue }
+                    lines.append(role == "user" ? .user(text) : .assistant(text))
+                case "tool_use" where role == "assistant":
+                    lines.append(.toolUse(id: block["id"] as? String ?? "", name: block["name"] as? String ?? "tool",
+                                          input: block["input"] as? [String: Any] ?? [:], cwd: cwd))
+                case "tool_result" where role == "user":
+                    lines.append(.toolResult(id: block["tool_use_id"] as? String ?? "", content: resultText(block["content"]),
+                                             isError: block["is_error"] as? Bool ?? false))
+                default: break
                 }
-            case "assistant":
-                for block in blocks {
-                    switch block["type"] as? String {
-                    case "text":
-                        guard let text = (block["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { continue }
-                        entries.append("Assistant: " + ActivityLogic.truncate(text, to: entryLimit))
-                    case "tool_use":
-                        let tool = block["name"] as? String ?? "tool"
-                        let summary = AgentLogic.summary(tool: tool, input: block["input"] as? [String: Any] ?? [:], cwd: cwd)
-                        entries.append("Tool: \(AgentLogic.displayName(tool))" + (summary.isEmpty ? "" : " \u{2014} \(summary)"))
-                    default: break
-                    }
-                }
-            default: break
+            }
+        }
+        return lines
+    }
+
+    private static func resultText(_ content: Any?) -> String {
+        if let text = content as? String { return text }
+        let parts = content as? [[String: Any]] ?? []
+        return parts.compactMap { $0["type"] as? String == "text" ? $0["text"] as? String : nil }.joined(separator: "\n")
+    }
+
+    static func entries(jsonl: String) -> [String] {
+        var entries: [String] = lines(jsonl: jsonl).compactMap { line in
+            switch line {
+            case .user(let text): return "User: " + ActivityLogic.truncate(text, to: entryLimit)
+            case .assistant(let text): return "Assistant: " + ActivityLogic.truncate(text, to: entryLimit)
+            case .toolUse(_, let tool, let input, let cwd):
+                let summary = AgentLogic.summary(tool: tool, input: input, cwd: cwd)
+                return "Tool: \(AgentLogic.displayName(tool))" + (summary.isEmpty ? "" : " \u{2014} \(summary)")
+            case .toolResult: return nil
             }
         }
         if let last = entries.last, last.hasPrefix("Assistant: ") {
             entries[entries.count - 1] = "Result: " + last.dropFirst("Assistant: ".count)
         }
         return entries
+    }
+
+    /// The transcript as the Agent shows it, for a session continued after a restart or picked from the session list.
+    static func items(jsonl: String, cwd: String, resultLimit: Int = 10_000) -> [AgentItem] {
+        var items: [AgentItem] = []
+        for line in lines(jsonl: jsonl) {
+            switch line {
+            case .user(let text): items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))
+            case .assistant(let text): AgentLogic.apply(.text(text), to: &items)
+            case .toolUse(let id, let tool, let input, let lineCwd):
+                AgentLogic.apply(.toolUse(id: id, tool: tool, summary: AgentLogic.summary(tool: tool, input: input, cwd: lineCwd.isEmpty ? cwd : lineCwd),
+                                          detail: AgentLogic.detail(tool: tool, input: input)), to: &items)
+            case .toolResult(let id, let content, let isError):
+                AgentLogic.apply(.toolResult(id: id, content: ActivityLogic.truncate(content, to: resultLimit), isError: isError, auto: false), to: &items)
+            }
+        }
+        return items
     }
 
     /// The entries, newest kept: earlier ones are dropped until the text fits in `maxChars`.

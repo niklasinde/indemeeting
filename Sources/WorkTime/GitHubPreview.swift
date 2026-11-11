@@ -21,7 +21,7 @@ enum GitHubPreview {
         let model = GitHubModel.shared
         model.store = store
         let library = RecordingLibrary(store: store, folder: output.appendingPathComponent("empty", isDirectory: true))
-        library.showsGitHub = true
+        library.show(.gitHub)
         let window = MainWindow.makeWindow(MainView(recorder: Recorder(), processor: MeetingProcessor(notifier: nil, store: store), library: library,
                                                     activity: ActivityModel(store: store, tracker: ActivityTracker(store: store)),
                                                     playback: AudioPlayback()))

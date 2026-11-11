@@ -39,19 +39,13 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         }
     }
 
-    var opensWindow: Bool { [.chat, .claudeAPI, .agent].contains(self) }
+    var opensWindow: Bool { [.chat, .claudeAPI].contains(self) }
 }
 
 enum SidebarLogic {
     static let defaultSection = SidebarSection.meetings
     /// The stored sidebar state: true while the sidebar is hidden.
     static let hiddenKey = "sidebarHidden"
-
-    static func section(activity: Bool, gitHub: Bool) -> SidebarSection {
-        if activity { return .activity }
-        if gitHub { return .gitHub }
-        return defaultSection
-    }
 
     static func toggleTitle(hidden: Bool) -> String { hidden ? "Show Sidebar" : "Hide Sidebar" }
 }

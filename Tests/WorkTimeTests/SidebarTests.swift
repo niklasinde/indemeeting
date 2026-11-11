@@ -7,14 +7,8 @@ let sidebarTests: [(name: String, run: () throws -> Void)] = [
     ("sidebar lists Meetings above Activity, GitHub, Chat, Claude API and Agent", {
         check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Claude API", "Main"],
               "order \(SidebarSection.allCases.map(\.title))")
-        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI, .agent], "chat, Claude API and Agent open their windows")
-    }),
-
-    ("the sidebar opens on Meetings, and Activity or GitHub replace it", {
+        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI], "chat and Claude API open their windows, Main is a page")
         check(SidebarLogic.defaultSection == .meetings, "default section")
-        check(SidebarLogic.section(activity: false, gitHub: false) == .meetings, "nothing shown")
-        check(SidebarLogic.section(activity: true, gitHub: false) == .activity, "activity")
-        check(SidebarLogic.section(activity: false, gitHub: true) == .gitHub, "github")
     }),
 
     ("sidebar visibility is stored under its own key and defaults to shown", {

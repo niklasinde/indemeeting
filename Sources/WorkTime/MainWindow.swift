@@ -41,15 +41,13 @@ final class MainWindow {
         playback.seek(to: time)
     }
 
-    func showActivity() {
-        library.start()
-        library.showsActivity = true
-        window.show()
-    }
+    func showActivity() { show(section: .activity) }
 
-    func showGitHub() {
+    func showGitHub() { show(section: .gitHub) }
+
+    func show(section: SidebarSection) {
         library.start()
-        library.showsGitHub = true
+        library.show(section)
         window.show()
     }
 
@@ -79,14 +77,8 @@ final class RecordingLibrary: ObservableObject {
     @Published var query = "" { didSet { if oldValue != query { search() } } }
     @Published var tab = DetailTab.summary
     @Published var confirmingDelete = false
-    /// The Activity page is shown instead of the selected meeting.
-    @Published var showsActivity = false {
-        didSet { if showsActivity { showsGitHub = false } }
-    }
-    /// The GitHub page is shown instead of the selected meeting.
-    @Published var showsGitHub = false {
-        didSet { if showsGitHub { showsActivity = false } }
-    }
+    /// The page shown: the meetings, or the Activity, GitHub or Main page instead of the selected meeting.
+    @Published private(set) var section = SidebarLogic.defaultSection
     /// A moment in the selected meeting that the transcript should scroll to.
     @Published var seekTarget: TimeInterval?
     /// The meeting being recorded, listed before its file exists.
@@ -114,13 +106,11 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub) }
-
     var selected: RecordingEntry? { section == .meetings ? recordings.first { $0.id == selection } : nil }
 
     func show(_ section: SidebarSection) {
-        showsActivity = section == .activity
-        showsGitHub = section == .gitHub
+        guard !section.opensWindow else { return }
+        self.section = section
     }
 
     func select(_ entry: RecordingEntry) {
@@ -460,6 +450,7 @@ struct MainView: View {
         switch library.section {
         case .activity: ActivityView(model: activity, tracker: activity.tracker)
         case .gitHub: GitHubView(model: .shared)
+        case .agent: AgentsPage(hub: .shared)
         default: MeetingsView(recorder: recorder, processor: processor, library: library, playback: playback) { newMeeting() }
         }
     }
@@ -616,7 +607,6 @@ struct SectionSidebar: View {
         switch section {
         case .chat: ChatWindow.shared.show()
         case .claudeAPI: ClaudeAPIWindow.shared.show()
-        case .agent: AgentWindow.shared.show()
         default: library.show(section)
         }
     }

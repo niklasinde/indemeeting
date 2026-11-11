@@ -82,7 +82,7 @@ enum PreviewRenderer {
                 }
             }
             UserDefaults.standard.removeObject(forKey: SidebarLogic.hiddenKey)
-            library.showsActivity = true
+            library.show(.activity)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 window.appearance = NSAppearance(named: appearance)
                 let mode = appearance == .aqua ? "light" : "dark"

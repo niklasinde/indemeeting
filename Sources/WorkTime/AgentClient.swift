@@ -56,10 +56,14 @@ final class AgentModel: ObservableObject {
     @Published private(set) var sessionID: String? {
         didSet {
             if let prURL, let sessionID { Self.prSessions[prURL] = sessionID }
-            if isMain, prURL == nil { UserDefaults.standard.set(sessionID, forKey: AgentLogic.mainSessionKey) }
+            if isMain, prURL == nil { Self.defaults.set(sessionID, forKey: AgentLogic.mainSessionKey) }
+            if let sessionID, oldValue != sessionID { remember(sessionID) }
             touch()
         }
     }
+    /// This agent's earlier sessions, newest first; New Session keeps the current one here.
+    @Published private(set) var history: [AgentSessionEntry] = []
+    private var restoring: String?
     @Published private(set) var prURL: String?
     /// Whether the user has seen the latest reply: false when a turn ends while no pane shows this agent.
     @Published private(set) var resultSeen = true {
@@ -71,8 +75,8 @@ final class AgentModel: ObservableObject {
     private var visiblePanes = 0
     /// The overview session of the Agent window, kept across launches.
     let isMain: Bool
-    @Published var model = AgentLogic.storedModel(UserDefaults.standard.string(forKey: AgentLogic.modelKey)) {
-        didSet { UserDefaults.standard.set(model, forKey: AgentLogic.modelKey) }
+    @Published var model = AgentLogic.storedModel(AgentModel.defaults.string(forKey: AgentLogic.modelKey)) {
+        didSet { Self.defaults.set(model, forKey: AgentLogic.modelKey) }
     }
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
@@ -89,16 +93,23 @@ final class AgentModel: ObservableObject {
     private var lastModel: String?
     private var turnIsAuto = false
 
+    /// Replaced by the debug preview, so it never writes the app's own settings.
+    static var defaults = UserDefaults.standard
+
     init(folder: String? = nil, main: Bool = false) {
         isMain = main
-        let defaults = UserDefaults.standard
+        let defaults = Self.defaults
         self.folder = folder ?? (main ? defaults.string(forKey: AgentLogic.mainFolderKey) ?? GitHubClaudeModel.repositoriesRoot.path
                                       : defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory())
+        history = AgentSessionStore.list(for: historyKey)
         if main, let session = defaults.string(forKey: AgentLogic.mainSessionKey) {
             sessionID = session
-            items = [AgentItem(id: "status-0", kind: .status("Continuing the earlier session"))]
+            remember(session)
+            restore()
         }
     }
+
+    var historyKey: String { AgentSessions.key(prURL: prURL, isMain: isMain, folder: folder) }
 
     var waitingForPermission: Bool {
         busy && items.contains { if case .permission(_, _, _, nil) = $0.kind { true } else { false } }
@@ -119,16 +130,19 @@ final class AgentModel: ObservableObject {
         AgentLogic.mentionQuery(draft).map { AgentLogic.fuzzyMatches($0, in: files) } ?? []
     }
 
-    func preview(_ items: [AgentItem], files: [String] = []) {
+    func preview(_ items: [AgentItem], files: [String] = [], busy: Bool = false, seen: Bool = true) {
+        restoring = nil
         self.items = items
         self.files = files
+        self.busy = busy
+        resultSeen = seen
     }
 
     func choose(folder: String) {
         guard folder != self.folder else { return }
         prURL = nil
         self.folder = folder
-        UserDefaults.standard.set(folder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
+        Self.defaults.set(folder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
         newSession()
         loadFiles()
     }
@@ -141,14 +155,82 @@ final class AgentModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { choose(folder: url.path) }
     }
 
+    /// Starts afresh; the session so far stays in the history, so it can be picked again.
     func newSession() {
         if busy { stop() }
         if let prURL { Self.prSessions[prURL] = nil }
         sessionID = nil
         lastModel = nil
+        restoring = nil
         items = []
         queued = []
         problem = nil
+    }
+
+    /// Continues an earlier session: its folder, and its transcript read back from Claude Code's file.
+    func switchTo(_ entry: AgentSessionEntry) {
+        guard !busy, entry.id != sessionID else { return }
+        history = AgentSessionStore.update(historyKey) { AgentSessions.record(entry, in: $0) }
+        if entry.folder != folder {
+            folder = entry.folder
+            if isMain, prURL == nil { Self.defaults.set(folder, forKey: AgentLogic.mainFolderKey) }
+            loadFiles()
+        }
+        lastModel = nil
+        queued = []
+        problem = nil
+        sessionID = entry.id
+        restore()
+    }
+
+    func forget(_ id: String) {
+        guard id != sessionID else { return }
+        history = AgentSessionStore.update(historyKey) { AgentSessions.removing(id, from: $0) }
+    }
+
+    /// Sessions in this agent's folder that its list does not have, for picking one Claude Code or another agent started.
+    func otherSessions() async -> [AgentSessionEntry] {
+        let folder = folder, known = Set(history.map(\.id)).union([sessionID].compactMap { $0 })
+        return await Task.detached { AgentSessionStore.others(in: folder, excluding: known) }.value
+    }
+
+    private func remember(_ id: String) {
+        guard !history.contains(where: { $0.id == id }) else { return }
+        let prompt = items.lazy.compactMap { if case .user(let text) = $0.kind { text } else { nil } }.first
+        let now = Date()
+        let entry = AgentSessionEntry(id: id, folder: folder, created: now, lastUsed: now,
+                                      title: prompt.map(AgentSessions.title(prompt:)) ?? AgentSessions.untitled, model: lastModel)
+        history = AgentSessionStore.update(historyKey) { AgentSessions.record(entry, in: $0) }
+    }
+
+    /// Reads the current session's transcript back; work started meanwhile wins over it.
+    private func restore() {
+        guard let id = sessionID else { return }
+        restoring = id
+        items = [AgentItem(id: "status-0", kind: .status("Loading the earlier session\u{2026}"))]
+        let folder = folder
+        Task.detached {
+            let text = AgentTranscript.url(sessionID: id, cwd: folder).flatMap { try? String(contentsOf: $0, encoding: .utf8) }
+            let restored = text.map { AgentSessions.restored(AgentTranscript.items(jsonl: $0, cwd: folder)) }
+            let title = text.flatMap { ActivityLogic.claudeSession(id: id, jsonl: $0, titleLimit: AgentSessions.titleLimit)?.title }
+            await MainActor.run { [weak self] in self?.restored(id, items: restored, title: title) }
+        }
+    }
+
+    private func restored(_ id: String, items restored: [AgentItem]?, title: String?) {
+        guard restoring == id, sessionID == id, !busy else { return }
+        restoring = nil
+        items = restored.flatMap { $0.isEmpty ? nil : $0 }
+            ?? [AgentItem(id: "status-0", kind: .status("Continuing the earlier session; its transcript was not found"))]
+        updated = history.first { $0.id == id }?.lastUsed ?? updated
+        guard let title, history.first(where: { $0.id == id })?.title == AgentSessions.untitled else { return }
+        history = AgentSessionStore.update(historyKey) { list in
+            list.map { entry in
+                var entry = entry
+                if entry.id == id { entry.title = title }
+                return entry
+            }
+        }
     }
 
     /// Points the window at a pull request: its checkout (or the home folder), the session it had before, and a review
@@ -160,15 +242,18 @@ final class AgentModel: ObservableObject {
         folder = checkout?.path ?? NSHomeDirectory()
         lastModel = nil
         problem = nil
+        history = AgentSessionStore.list(for: historyKey)
+        restoring = nil
+        items = []
         sessionID = Self.prSessions[target.url]
-        items = sessionID == nil ? [] : [AgentItem(id: "status-0", kind: .status("Continuing the earlier session on this pull request"))]
+        restore()
         draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: checkout != nil) : ""
         loadFiles()
     }
 
-    private static var prSessions: [String: String] {
-        get { UserDefaults.standard.dictionary(forKey: AgentLogic.prSessionsKey) as? [String: String] ?? [:] }
-        set { UserDefaults.standard.set(newValue, forKey: AgentLogic.prSessionsKey) }
+    static var prSessions: [String: String] {
+        get { defaults.dictionary(forKey: AgentLogic.prSessionsKey) as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: AgentLogic.prSessionsKey) }
     }
 
     /// Return in the prompt: picks the first file while an `@` mention is being typed, sends otherwise.
@@ -182,7 +267,7 @@ final class AgentModel: ObservableObject {
 
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !busy else { return }
+        guard !text.isEmpty, !busy, restoring == nil else { return }
         if start(text) { draft = "" }
     }
 
@@ -319,6 +404,7 @@ final class AgentModel: ObservableObject {
 
     private func finishTurn() {
         busy = false
+        if let sessionID { history = AgentSessionStore.update(historyKey) { AgentSessions.touch(sessionID, at: Date(), model: lastModel, in: $0) } }
         resultSeen = visiblePanes > 0
         if !queued.isEmpty { start(queued.removeFirst()) }
     }
@@ -331,6 +417,38 @@ final class AgentModel: ObservableObject {
         if AgentLogic.needsSignIn(errors) { return AgentLogic.appendSignIn(to: &items) }
         let tail = errors.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
         items.append(AgentItem(id: "error-\(items.count)", kind: .error("The agent stopped (exit \(status)). \(tail)")))
+    }
+}
+
+/// The session history of every agent, in the app's settings.
+@MainActor
+enum AgentSessionStore {
+    static func all() -> [String: [AgentSessionEntry]] {
+        AgentSessions.decode(AgentModel.defaults.data(forKey: AgentSessions.historyKey))
+    }
+
+    static func list(for key: String) -> [AgentSessionEntry] { all()[key] ?? [] }
+
+    static func update(_ key: String, _ change: ([AgentSessionEntry]) -> [AgentSessionEntry]) -> [AgentSessionEntry] {
+        var history = all()
+        let list = change(history[key] ?? [])
+        history[key] = list.isEmpty ? nil : list
+        AgentModel.defaults.set(AgentSessions.encode(history), forKey: AgentSessions.historyKey)
+        return list
+    }
+
+    nonisolated static func others(in folder: String, excluding known: Set<String>, fileManager: FileManager = .default) -> [AgentSessionEntry] {
+        let directory = ClaudeTranscripts.folder(cwd: folder)
+        let urls = (try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+        let files = urls.filter { $0.pathExtension == "jsonl" }.map { url in
+            (id: url.deletingPathExtension().lastPathComponent,
+             modified: (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast)
+        }
+        return AgentSessions.others(files, excluding: known).map { file in
+            AgentSessionEntry(id: file.id, folder: folder, created: file.modified, lastUsed: file.modified,
+                              title: ClaudeTranscripts.title(in: directory, id: file.id).map { ActivityLogic.truncate($0, to: AgentSessions.titleLimit) }
+                                  ?? AgentSessions.untitled, model: nil)
+        }
     }
 }
 
