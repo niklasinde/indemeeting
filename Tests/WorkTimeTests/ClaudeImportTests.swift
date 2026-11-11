@@ -172,4 +172,49 @@ let claudeImportTests: [(name: String, run: () throws -> Void)] = [
               TopicAgents.systemPrompt(topic))
         check(TopicAgents.decode(TopicAgents.encode([topic])) == [topic], "round trip")
     }),
+
+    ("agent folder: a Claude desktop worktree's parent checkout, used when the worktree is gone", {
+        let worktree = "/Users/me/git/papercut/.claude/worktrees/next-priorities-786edc"
+        check(AgentFolders.worktreeParent(of: worktree) == "/Users/me/git/papercut", "worktree")
+        check(AgentFolders.worktreeParent(of: worktree + "/src/app") == "/Users/me/git/papercut", "inside one")
+        check(AgentFolders.worktreeParent(of: "/Users/me/git/papercut/.claude/worktrees") == nil, "no name")
+        check(AgentFolders.worktreeParent(of: "/Users/me/git/papercut") == nil, "a checkout")
+        check(AgentFolders.worktreeParent(of: "/.claude/worktrees/x") == nil, "no repository")
+        check(AgentFolders.replacement(for: worktree, exists: { $0 == "/Users/me/git/papercut" }) == "/Users/me/git/papercut", "gone")
+        check(AgentFolders.replacement(for: worktree, exists: { _ in true }) == nil, "still there")
+        check(AgentFolders.replacement(for: worktree, exists: { _ in false }) == nil, "parent gone too")
+        check(AgentFolders.missingMessage("/x") == "This agent\u{2019}s folder no longer exists: /x", "message")
+        let line = #"{"type":"error","message":"This agent's folder no longer exists: /x","missingFolder":"/x"}"#
+        check(AgentEvent.decode(line, cwd: "/x") == .missingFolder("/x"), "sidecar error")
+        var items: [AgentItem] = []
+        AgentLogic.apply(.missingFolder("/x"), to: &items)
+        AgentLogic.apply(.missingFolder("/x"), to: &items)
+        check(items.map(\.kind) == [.missingFolder("/x")], "one card")
+    }),
+
+    ("agent folder: a move copies the sessions to the new folder's project folder and never touches the old files", {
+        let root = try scratch()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let old = "/Users/me/git/app/.claude/worktrees/wt", new = "/Users/me/git/app"
+        let entry = { (id: String, folder: String) in AgentSessionEntry(id: id, folder: folder, created: Date(), lastUsed: Date(), title: "t", model: nil) }
+        let forkID = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
+        let records = [ClaudeImportRecord(original: sessionID, date: Date(), forked: forkID)]
+        let history = [entry(forkID, old), entry(otherID, old), entry("elsewhere", "/other")]
+        let ids = AgentFolders.sessions(current: forkID, history: history, folder: old, records: records)
+        check(ids == [forkID, sessionID, otherID], "\(ids)")
+        let plan = AgentFolders.plan(sessions: ids + ["not-a-uuid"], from: old, to: new, root: root)
+        check(plan.count == 3 && plan.allSatisfy { $0.to.deletingLastPathComponent() == ClaudeTranscripts.folder(cwd: new, root: root) }, "\(plan)")
+        check(AgentFolders.plan(sessions: ids, from: "/a/my.app", to: "/a/my-app", root: root).isEmpty, "same project folder")
+        try write(fixture, to: ClaudeTranscripts.transcript(id: sessionID, cwd: old, root: root)!)
+        try write(fixture + "{}\n", to: ClaudeTranscripts.transcript(id: forkID, cwd: old, root: root)!)
+        try write("already there\n", to: ClaudeTranscripts.transcript(id: sessionID, cwd: new, root: root)!)
+        let copied = AgentFolders.copy(plan)
+        check(copied.map { $0.from.deletingPathExtension().lastPathComponent } == [forkID], "only the fork is new and exists: \(copied)")
+        let read = { (id: String, cwd: String) in try? String(contentsOf: ClaudeTranscripts.transcript(id: id, cwd: cwd, root: root)!, encoding: .utf8) }
+        check(read(forkID, new) == fixture + "{}\n" && read(forkID, old) == fixture + "{}\n", "copied, the old kept")
+        check(read(sessionID, new) == "already there\n" && read(sessionID, old) == fixture, "an existing one left alone")
+        check(read(otherID, new) == nil, "a missing one skipped")
+        let moved = AgentFolders.moved(history, from: old, to: new)
+        check(moved.map(\.folder) == [new, new, "/other"], "\(moved.map(\.folder))")
+    }),
 ]

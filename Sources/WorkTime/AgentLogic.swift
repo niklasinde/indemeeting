@@ -11,6 +11,7 @@ enum AgentEvent: Equatable {
     case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?, mode: AgentPermissionMode? = nil)
     case error(String)
     case signIn
+    case missingFolder(String)
     /// Whether the Claude in Chrome tools work: nil once one has, the error text when the extension is not reachable.
     case chrome(problem: String?)
     case idle
@@ -39,6 +40,7 @@ enum AgentEvent: Equatable {
             return .result(sessionID: object["sessionId"] as? String, isError: object["isError"] as? Bool ?? false, text: string("text"),
                            turns: object["turns"] as? Int, model: object["model"] as? String,
                            mode: (object["permissionMode"] as? String).flatMap(AgentPermissionMode.init(rawValue:)))
+        case "error" where object["missingFolder"] is String: return .missingFolder(string("missingFolder"))
         case "error": return object["auth"] as? Bool == true || AgentLogic.needsSignIn(string("message")) ? .signIn : .error(string("message"))
         case "idle": return .idle
         case "chrome": return .chrome(problem: object["connected"] as? Bool == true ? nil : string("message").isEmpty ? "Not connected" : string("message"))
@@ -142,6 +144,7 @@ struct AgentItem: Identifiable, Equatable {
         case status(String)
         case error(String)
         case signIn
+        case missingFolder(String)
     }
 
     let id: String
@@ -151,6 +154,7 @@ struct AgentItem: Identifiable, Equatable {
 enum AgentLogic {
     static let folderKey = "agentFolder"
     static let chromeKey = "agentChrome"
+    static let movedFoldersKey = "agentMovedFolders"
 
     /// Whether an agent has Claude in Chrome switched on, by its history key; off unless saved.
     static func chromeEnabled(_ saved: [String: Any]?, key: String) -> Bool {
@@ -191,6 +195,9 @@ enum AgentLogic {
             items.append(AgentItem(id: "error-\(items.count)", kind: .error(message)))
         case .signIn:
             appendSignIn(to: &items)
+        case .missingFolder(let folder):
+            guard items.last?.kind != .missingFolder(folder) else { return nil }
+            items.append(AgentItem(id: "missing-folder-\(items.count)", kind: .missingFolder(folder)))
         }
         return nil
     }

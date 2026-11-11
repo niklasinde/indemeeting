@@ -230,3 +230,63 @@ enum ClaudeSessionFiles {
         [hint, recorded].compactMap { $0 }.first { ClaudeTranscripts.folderName(cwd: $0) == project } ?? hint ?? recorded
     }
 }
+
+/// Moving an agent to another folder without losing its conversation: Claude Code finds a session by the project folder of
+/// its working folder, so the transcripts are copied there. The old ones are never changed or removed.
+enum AgentFolders {
+    struct Copy: Equatable {
+        let from: URL
+        let to: URL
+    }
+
+    static func missingMessage(_ folder: String) -> String { "This agent\u{2019}s folder no longer exists: \(folder)" }
+
+    /// `<repo>` for a folder inside `<repo>/.claude/worktrees/<name>`: the checkout a Claude desktop worktree was made from.
+    static func worktreeParent(of folder: String) -> String? {
+        let parts = URL(fileURLWithPath: folder).standardizedFileURL.pathComponents
+        guard let index = parts.indices.first(where: { $0 >= 2 && $0 + 2 < parts.count && parts[$0] == ".claude" && parts[$0 + 1] == "worktrees" })
+        else { return nil }
+        return NSString.path(withComponents: Array(parts[..<index]))
+    }
+
+    /// The parent checkout to use instead of a worktree folder that no longer exists.
+    static func replacement(for folder: String, exists: (String) -> Bool) -> String? {
+        guard !exists(folder), let parent = worktreeParent(of: folder), exists(parent) else { return nil }
+        return parent
+    }
+
+    /// The sessions a move takes along: the current one, its imported original and fork, and the earlier ones in the old folder.
+    static func sessions(current: String?, history: [AgentSessionEntry], folder: String, records: [ClaudeImportRecord]) -> [String] {
+        let record = ClaudeImport.record(for: current, in: records)
+        var seen = Set<String>()
+        return ([current, record?.original, record?.forked] + history.filter { $0.folder == folder }.map(\.id))
+            .compactMap { $0 }.filter { seen.insert($0).inserted }
+    }
+
+    static func plan(sessions: [String], from old: String, to new: String, root: URL = ClaudeTranscripts.projectsFolder) -> [Copy] {
+        guard ClaudeTranscripts.folderName(cwd: old) != ClaudeTranscripts.folderName(cwd: new) else { return [] }
+        return sessions.compactMap { id in
+            guard let from = ClaudeTranscripts.transcript(id: id, cwd: old, root: root),
+                  let to = ClaudeTranscripts.transcript(id: id, cwd: new, root: root) else { return nil }
+            return Copy(from: from, to: to)
+        }
+    }
+
+    /// Copies each transcript that exists and is not in the new place yet; what is there already is left alone.
+    @discardableResult
+    static func copy(_ plan: [Copy], fileManager: FileManager = .default) -> [Copy] {
+        plan.filter { copy in
+            guard fileManager.fileExists(atPath: copy.from.path), !fileManager.fileExists(atPath: copy.to.path) else { return false }
+            try? fileManager.createDirectory(at: copy.to.deletingLastPathComponent(), withIntermediateDirectories: true)
+            return (try? fileManager.copyItem(at: copy.from, to: copy.to)) != nil
+        }
+    }
+
+    static func moved(_ history: [AgentSessionEntry], from old: String, to new: String) -> [AgentSessionEntry] {
+        history.map { entry in
+            var entry = entry
+            if entry.folder == old { entry.folder = new }
+            return entry
+        }
+    }
+}

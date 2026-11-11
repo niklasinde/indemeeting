@@ -191,6 +191,41 @@ final class AgentModel: ObservableObject {
         if panel.runModal() == .OK, let url = panel.url { choose(folder: url.path) }
     }
 
+    /// Moves the agent to another folder and keeps its conversation: the sessions' transcripts are copied to where Claude Code
+    /// looks for them from the new folder, so the next prompt resumes there.
+    func move(to newFolder: String) {
+        guard !busy, newFolder != folder else { return }
+        let old = folder, oldKey = historyKey
+        let ids = AgentFolders.sessions(current: sessionID, history: history, folder: old, records: Self.importRecords)
+        AgentFolders.copy(AgentFolders.plan(sessions: ids, from: old, to: newFolder))
+        folder = newFolder
+        if let prURL {
+            Self.movedFolders[prURL] = newFolder
+        } else if let topic {
+            self.topic = TopicAgentStore.shared.setFolder(topic.key, to: newFolder) ?? topic
+        } else {
+            Self.defaults.set(newFolder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
+        }
+        let moved = AgentFolders.moved(history, from: old, to: newFolder), kept = Set(moved.map(\.id))
+        if oldKey != historyKey { _ = AgentSessionStore.update(oldKey) { _ in [] } }
+        history = AgentSessionStore.update(historyKey) { moved + $0.filter { !kept.contains($0.id) } }
+        problem = nil
+        items.append(AgentItem(id: "status-\(items.count)", kind: .status("Moved to \((newFolder as NSString).abbreviatingWithTildeInPath)")))
+        loadFiles()
+    }
+
+    /// Picks the folder to move the agent to, starting from the nearest one that still exists.
+    func changeFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Move Here"
+        var start = URL(fileURLWithPath: folder)
+        while start.path != "/", !FileManager.default.fileExists(atPath: start.path) { start.deleteLastPathComponent() }
+        panel.directoryURL = start
+        if panel.runModal() == .OK, let url = panel.url { move(to: url.path) }
+    }
+
     /// Starts afresh; the session so far stays in the history, so it can be picked again.
     func newSession() {
         if busy { stop() }
@@ -285,8 +320,9 @@ final class AgentModel: ObservableObject {
     /// prompt waiting to be sent when there is no session yet. Opening the one already shown changes nothing.
     func open(pr target: GitHubLink.Target, checkout: URL?) {
         guard prURL != target.url || (items.isEmpty && !busy) else { return }
-        point(prURL: target.url, topic: nil, folder: checkout?.path ?? NSHomeDirectory())
-        draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: checkout != nil) : ""
+        let moved = Self.movedFolders[target.url]
+        point(prURL: target.url, topic: nil, folder: moved ?? checkout?.path ?? NSHomeDirectory())
+        draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: moved != nil || checkout != nil) : ""
     }
 
     /// Points the agent at a topic: its folder, the session it had before, and the prompt for its ticket or thread waiting
@@ -325,6 +361,12 @@ final class AgentModel: ObservableObject {
         set { defaults.set(newValue, forKey: AgentLogic.prSessionsKey) }
     }
 
+    /// The folders pull requests' agents were moved to, by url, used instead of their checkouts.
+    static var movedFolders: [String: String] {
+        get { defaults.dictionary(forKey: AgentLogic.movedFoldersKey) as? [String: String] ?? [:] }
+        set { defaults.set(newValue, forKey: AgentLogic.movedFoldersKey) }
+    }
+
     /// The Claude Code sessions continued in WorkTime, whose originals are forked rather than written to.
     static var importRecords: [ClaudeImportRecord] {
         get { ClaudeImport.decode(defaults.data(forKey: ClaudeImport.recordsKey)) }
@@ -356,7 +398,7 @@ final class AgentModel: ObservableObject {
         let decision = AgentInbox.decide(busy: busy || routing != nil, waitingForPermission: waitingForPermission, queued: queued.count)
         switch decision {
         case .start:
-            if !start(AgentInbox.prompt(text)) { return .reject(problem ?? "The agent could not start.") }
+            if !start(AgentInbox.prompt(text)) { return .reject(problem ?? AgentFolders.missingMessage(folder)) }
         case .queue: queued.append(AgentInbox.prompt(text))
         case .reject: break
         }
@@ -365,6 +407,10 @@ final class AgentModel: ObservableObject {
 
     @discardableResult
     private func start(_ text: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: folder) else {
+            AgentLogic.apply(.missingFolder(folder), to: &items)
+            return false
+        }
         guard let client = runningClient() else { return false }
         problem = nil
         items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))

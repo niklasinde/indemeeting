@@ -85,6 +85,14 @@ final class TopicAgentStore: ObservableObject {
         return model
     }
 
+    /// Points the topic at another folder; returns the updated topic.
+    func setFolder(_ key: String, to folder: String) -> TopicAgent? {
+        guard let index = topics.firstIndex(where: { $0.key == key }) else { return nil }
+        topics[index].folder = folder
+        save()
+        return topics[index]
+    }
+
     /// Hidden from the lists; the folder and the sessions stay, so unarchiving continues where it was.
     func setArchived(_ key: String, _ archived: Bool) {
         guard let index = topics.firstIndex(where: { $0.key == key }) else { return }

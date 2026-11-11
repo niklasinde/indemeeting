@@ -113,6 +113,7 @@ struct AgentDockPane: View {
             }
             Text(folder).font(.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
                 .help("The agent works in \(folder)")
+            AgentWorktreeNote(folder: model.folder)
             Spacer(minLength: 4)
             AgentSessionsButton(model: model).labelStyle(.iconOnly)
             AgentChromeToggle(model: model).labelStyle(.iconOnly)

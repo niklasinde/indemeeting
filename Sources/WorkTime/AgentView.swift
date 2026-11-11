@@ -243,6 +243,7 @@ struct AgentView: View {
                 .buttonStyle(.borderless)
                 .help("The folder the agent works in")
             }
+            AgentWorktreeNote(folder: model.folder)
             Spacer()
             ViewThatFits(in: .horizontal) {
                 controls(compact: false)
@@ -467,7 +468,8 @@ struct AgentPanel: View {
                         }
                     }
                     ForEach(model.items) { item in
-                        AgentItemRow(item: item, folder: model.folder) { model.answer(item, allow: $0, always: $1) }
+                        AgentItemRow(item: item, folder: model.folder, answer: { model.answer(item, allow: $0, always: $1) },
+                                     move: { if let folder = $0 { model.move(to: folder) } else { model.changeFolder() } })
                     }
                     if model.busy {
                         HStack(spacing: 8) {
@@ -580,6 +582,8 @@ private struct AgentItemRow: View {
     let item: AgentItem
     let folder: String
     let answer: (_ allow: Bool, _ always: Bool) -> Void
+    /// Moves the agent to the folder, or asks for one when nil.
+    let move: (String?) -> Void
 
     var body: some View {
         switch item.kind {
@@ -617,6 +621,20 @@ private struct AgentItemRow: View {
             Label(LocalizedStringKey(AgentLogic.signInMessage), systemImage: "person.crop.circle.badge.exclamationmark")
                 .font(.callout)
                 .textSelection(.enabled)
+        case .missingFolder(let missing):
+            VStack(alignment: .leading, spacing: 8) {
+                Label(AgentFolders.missingMessage((missing as NSString).abbreviatingWithTildeInPath), systemImage: "folder.badge.questionmark")
+                    .font(.callout).textSelection(.enabled)
+                HStack {
+                    Button("Choose Folder\u{2026}") { move(nil) }
+                    if let parent = AgentFolders.worktreeParent(of: missing), FileManager.default.fileExists(atPath: parent) {
+                        Button("Use \(URL(fileURLWithPath: parent).lastPathComponent)") { move(parent) }
+                            .help("Continue the conversation in \((parent as NSString).abbreviatingWithTildeInPath)")
+                    }
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.1)))
         }
     }
 }

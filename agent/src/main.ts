@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline";
 import { query, type HookCallback, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { missingFolderError } from "./folder.js";
 import { chromeResultStatus, chromeServerStatus, isChromeTool } from "./chrome.js";
 import { sessionOptions, type PromptOptions } from "./options.js";
 import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
@@ -131,6 +132,11 @@ function denyPending(reason: string) {
 
 async function run(input: Extract<Input, { type: "prompt" }>) {
   if (running) return send({ type: "error", message: "The agent is still working on the previous prompt." });
+  const missing = missingFolderError(input.cwd);
+  if (missing) {
+    send(missing);
+    return send({ type: "idle" });
+  }
   const abort = new AbortController();
   const promptModel = input.model || model;
   mode = parseMode(input.permissionMode);
@@ -157,7 +163,10 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       finished ||= message.type === "result";
     }
   } catch (error) {
-    if (!finished) send({ type: "error", message: abort.signal.aborted ? "Stopped." : String((error as Error)?.message ?? error) });
+    if (!finished) {
+      send(abort.signal.aborted ? { type: "error", message: "Stopped." }
+        : missingFolderError(input.cwd) ?? { type: "error", message: String((error as Error)?.message ?? error) });
+    }
   } finally {
     denyPending("The prompt ended.");
     autoAllowed.clear();

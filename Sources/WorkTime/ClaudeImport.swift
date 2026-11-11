@@ -16,7 +16,12 @@ enum ClaudeSessionImporter {
             AgentHub.shared.show()
             return Notifier.postAgentMessage(title: "Claude Code session not found", body: "No transcript for the session \(id) on this Mac.")
         }
-        let folder = summary.cwd
+        let recorded = summary.cwd
+        let folder = await Task.detached { () -> String in
+            guard let parent = AgentFolders.replacement(for: recorded, exists: { FileManager.default.fileExists(atPath: $0) }) else { return recorded }
+            AgentFolders.copy(AgentFolders.plan(sessions: [id], from: recorded, to: parent))
+            return parent
+        }.value
         let repository = await Task.detached(operation: { ClaudeImport.repository(at: folder) }).value
         var seen = Set<String>()
         let prs = GitHubModel.shared.prs.values.joined().filter { seen.insert($0.url).inserted }
@@ -67,6 +72,9 @@ struct AgentOverflowMenu: View {
                 if let session = model.sessionID { ClaudeSessionImporter.openInClaudeCode(folder: model.folder, session: session) }
             }
             .disabled(model.sessionID == nil)
+            Button("Change Folder\u{2026}") { model.changeFolder() }
+                .disabled(model.busy)
+                .help("Move the agent to another folder; the conversation continues there")
         } label: {
             Image(systemName: "ellipsis.circle")
         }
@@ -74,6 +82,20 @@ struct AgentOverflowMenu: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .help("More")
+    }
+}
+
+/// Said in the header when the agent works in a Claude desktop worktree, which Claude desktop removes when its session ends.
+struct AgentWorktreeNote: View {
+    let folder: String
+
+    var body: some View {
+        if let parent = AgentFolders.worktreeParent(of: folder) {
+            Label("Temporary worktree", systemImage: "clock.arrow.circlepath")
+                .font(.caption).foregroundStyle(.orange).lineLimit(1).fixedSize()
+                .help("Claude desktop may delete this worktree. Change Folder\u{2026} in the \u{2026} menu moves the agent, "
+                      + "for example to \((parent as NSString).abbreviatingWithTildeInPath).")
+        }
     }
 }
 
