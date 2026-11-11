@@ -1,11 +1,12 @@
 import { createInterface } from "node:readline";
-import { query, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
-import { isAutoAllowedTool, isReadOnlyCommand } from "./readonly.js";
-import { matchRules, parseRules, suggestRules, type Rule } from "./rules.js";
+import { query, type HookCallback, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
+import { parseRules, suggestRules, type Rule } from "./rules.js";
 
 type Input =
-  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string; appendSystemPrompt?: string }
+  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string; appendSystemPrompt?: string; permissionMode?: string }
   | { type: "permission"; id: string; allow: boolean }
+  | { type: "mode"; mode: string }
   | { type: "interrupt" }
   | { type: "rules"; rules: unknown };
 
@@ -21,6 +22,44 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["
 const pending = new Map<string, (result: PermissionResult) => void>();
 let running: { query: Query; abort: AbortController } | undefined;
 let nextPermission = 0;
+let mode: Mode = "default";
+/// Calls the user allowed in the PreToolUse hook, so canUseTool does not ask a second time.
+const hookAllowed = new Set<string>();
+/// A hook waits as long as the user takes to answer.
+const hookTimeout = 24 * 3600;
+
+function ask(tool: string, input: Record<string, unknown>, cwd: string): Promise<PermissionResult> {
+  return new Promise((resolve) => {
+    const id = String(++nextPermission);
+    pending.set(id, resolve);
+    send({ type: "permission_request", id, tool, input, offer: suggestRules(tool, input, cwd) });
+  });
+}
+
+/// Applies an allow decision: read-only commands and rule matches are marked auto in the transcript.
+function allowed(decision: Extract<Decision, { kind: "allow" }>, toolUseID: string): PermissionResult {
+  if (decision.readOnly || decision.rule) autoAllowed.set(toolUseID, decision.rule);
+  return { behavior: "allow" };
+}
+
+/// Runs before the mode decides, so the read-only list and saved rules apply in every mode and send_to_agent is asked
+/// of the user even where the auto mode classifier would otherwise answer.
+function preToolUse(cwd: string): HookCallback {
+  return async (hook) => {
+    if (hook.hook_event_name !== "PreToolUse") return {};
+    const input = (hook.tool_input ?? {}) as Record<string, unknown>;
+    const decision = preToolDecision(hook.tool_name, input, cwd, rules, mode);
+    if (decision.kind === "defer") return {};
+    const result = decision.kind === "allow" ? allowed(decision, hook.tool_use_id) : await ask(hook.tool_name, input, cwd);
+    if (result.behavior === "allow") hookAllowed.add(hook.tool_use_id);
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse", permissionDecision: result.behavior === "allow" ? "allow" : "deny",
+        ...(result.behavior === "deny" ? { permissionDecisionReason: result.message } : {}),
+      },
+    };
+  };
+}
 
 function send(message: Record<string, unknown>) {
   process.stdout.write(JSON.stringify(message) + "\n");
@@ -67,7 +106,7 @@ function forward(message: any, model: string) {
     case "result":
       send({
         type: "result", sessionId: message.session_id, isError: message.is_error === true || message.subtype !== "success",
-        text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns, model,
+        text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns, model, permissionMode: mode,
       });
       break;
   }
@@ -82,6 +121,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
   if (running) return send({ type: "error", message: "The agent is still working on the previous prompt." });
   const abort = new AbortController();
   const promptModel = input.model || model;
+  mode = parseMode(input.permissionMode);
   const current = query({
     prompt: input.text,
     options: {
@@ -90,26 +130,17 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       resume: input.sessionId,
       tools,
       ...(input.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.appendSystemPrompt } } : {}),
-      permissionMode: "default",
+      permissionMode: mode,
       settingSources: ["project"],
       env,
       mcpServers: mcpServers(),
       abortController: abort,
-      canUseTool: (tool, toolInput, { toolUseID }) => new Promise<PermissionResult>((resolve) => {
-        if (isAutoAllowedTool(tool)) return resolve({ behavior: "allow" });
-        if (tool === "Bash" && typeof toolInput.command === "string" && isReadOnlyCommand(toolInput.command)) {
-          autoAllowed.set(toolUseID, undefined);
-          return resolve({ behavior: "allow" });
-        }
-        const rule = matchRules(rules, tool, toolInput, input.cwd);
-        if (rule) {
-          autoAllowed.set(toolUseID, rule);
-          return resolve({ behavior: "allow" });
-        }
-        const id = String(++nextPermission);
-        pending.set(id, resolve);
-        send({ type: "permission_request", id, tool, input: toolInput, offer: suggestRules(tool, toolInput, input.cwd) });
-      }),
+      hooks: { PreToolUse: [{ hooks: [preToolUse(input.cwd)], timeout: hookTimeout }] },
+      canUseTool: async (tool, toolInput, { toolUseID }) => {
+        if (hookAllowed.delete(toolUseID)) return { behavior: "allow" };
+        const decision = preToolDecision(tool, toolInput, input.cwd, rules, mode);
+        return decision.kind === "allow" ? allowed(decision, toolUseID) : ask(tool, toolInput, input.cwd);
+      },
     },
   });
   running = { query: current, abort };
@@ -124,6 +155,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
   } finally {
     denyPending("The prompt ended.");
     autoAllowed.clear();
+    hookAllowed.clear();
     running = undefined;
     send({ type: "idle" });
   }
@@ -146,6 +178,10 @@ function handle(line: string) {
       resolve?.(input.allow ? { behavior: "allow" } : { behavior: "deny", message: "The user denied this tool call." });
       break;
     }
+    case "mode":
+      mode = parseMode(input.mode);
+      running?.query.setPermissionMode(mode).catch(() => {});
+      break;
     case "rules":
       rules = parseRules(input.rules);
       break;

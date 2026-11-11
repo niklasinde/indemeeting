@@ -40,17 +40,20 @@ final class PRAgents: ObservableObject {
 
     /// A prompt from Main for a pull request's agent, sent without showing it; a notification says where it went.
     func deliver(_ request: AgentInbox.Request) async -> AgentInbox.Reply {
-        func reply(_ status: AgentInbox.Reply.Status, _ message: String, session: String? = nil) -> AgentInbox.Reply {
-            AgentInbox.Reply(id: request.id, status: status, sessionID: session, message: message)
+        guard let target = GitHubLink.pullRequest(at: request.agent) else {
+            return AgentInbox.Reply(id: request.id, status: .rejected, message: "Not a pull request url.")
         }
-        guard let target = GitHubLink.pullRequest(at: request.prURL) else { return reply(.rejected, "Not a pull request url.") }
-        let model = await load(target)
+        return Self.deliver(request, to: await load(target), title: AgentOverview.prTitle(target.url))
+    }
+
+    /// Hands Main's prompt to the agent and says how it went; a notification says where it went.
+    static func deliver(_ request: AgentInbox.Request, to model: AgentModel, title: String) -> AgentInbox.Reply {
         switch model.deliver(fromMain: request.text) {
-        case .reject(let why): return reply(.rejected, why)
+        case .reject(let why): return AgentInbox.Reply(id: request.id, status: .rejected, message: why)
         case .start, .queue:
             let queued = !model.queued.isEmpty
-            Notifier.postAgentMessage(title: "Main \u{2192} \(AgentOverview.prTitle(target.url))", body: request.text)
-            return reply(queued ? .queued : .started, queued ? "queued" : "started", session: model.sessionID)
+            Notifier.postAgentMessage(title: "Main \u{2192} \(title)", body: request.text)
+            return AgentInbox.Reply(id: request.id, status: queued ? .queued : .started, sessionID: model.sessionID, message: queued ? "queued" : "started")
         }
     }
 
@@ -112,6 +115,7 @@ struct AgentDockPane: View {
                 .help("The agent works in \(folder)")
             Spacer(minLength: 4)
             AgentSessionsButton(model: model).labelStyle(.iconOnly)
+            AgentPermissionPicker(model: model)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).buttonStyle(.bordered)
             Divider().frame(height: 14)
@@ -187,7 +191,13 @@ final class AgentStateWriter: ObservableObject {
         for (url, model) in PRAgents.shared.models.sorted(by: { $0.key < $1.key }) {
             states.append(state(model, key: url, title: AgentOverview.prTitle(url, title: titles[url])))
         }
-        return AgentOverview.withPersisted(states, sessions: AgentModel.prSessions, known: Array(AgentSessionStore.all().keys)).map { state in
+        let sessions = AgentModel.savedSessions
+        let topics = TopicAgentStore.shared
+        for topic in topics.visible {
+            let loaded = topics.models[topic.key].map { state($0, key: topic.key, title: topic.name) }
+            states.append(AgentState.topic(topic, loaded: loaded, sessionID: sessions[topic.key]))
+        }
+        return AgentOverview.withPersisted(states, sessions: sessions, known: Array(AgentSessionStore.all().keys)).map { state in
             var state = state
             if !state.loaded, let title = titles[state.key] { state.title = AgentOverview.prTitle(state.key, title: title) }
             return state
@@ -228,6 +238,8 @@ final class AgentInboxWatcher {
                 let reply: AgentInbox.Reply
                 if let problem = AgentInbox.problem(request, now: Date()) {
                     reply = AgentInbox.Reply(id: request.id, status: .rejected, message: problem.message)
+                } else if TopicAgents.isKey(request.agent) {
+                    reply = TopicAgentStore.shared.deliver(request)
                 } else {
                     reply = await PRAgents.shared.deliver(request)
                 }

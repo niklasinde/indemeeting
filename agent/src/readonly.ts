@@ -1,3 +1,8 @@
+import builtIn from "./builtin-allowed.json" with { type: "json" };
+
+/// What runs without asking, also listed in WorkTime's Settings, which reads this file from the build.
+export const builtInAllowed: { tools: string[]; mcpPrefix: string; alwaysAsk: string[]; commands: { name: string; anyArgs?: boolean; note?: string }[] } = builtIn;
+
 type Token = { word: string; start: number; end: number } | { op: string };
 type Word = { word: string; start: number; end: number };
 
@@ -81,10 +86,7 @@ function tokenize(command: string): Token[] | undefined {
   return tokens;
 }
 
-const anyArgs = new Set([
-  "ls", "cat", "head", "tail", "wc", "grep", "pwd", "which", "cd", "jq", "echo",
-  "cut", "tr", "basename", "dirname", "realpath", "stat", "true", "false", "test", "[",
-]);
+const anyArgs = new Set(builtInAllowed.commands.filter((c) => c.anyArgs).map((c) => c.name));
 const gitSubcommands = new Set([
   "status", "log", "diff", "show", "branch", "rev-parse", "remote", "ls-files", "blame",
   "grep", "ls-tree", "cat-file", "show-ref", "merge-base", "rev-list", "describe", "shortlog", "config",
@@ -207,23 +209,30 @@ function isReadOnlySimple(words: string[]): boolean {
   const [name, ...args] = words;
   if (!name || name.includes("/") || name.includes("=") || name.includes("$")) return false;
   if (anyArgs.has(name)) return true;
-  switch (name) {
-    case "git": return isReadOnlyGit(args);
-    case "gh": return isReadOnlyGh(args);
-    case "rg": return !args.some((a) => a.startsWith("--pre"));
-    case "find": return !args.some((a) => findActions.has(a));
-    case "sed": return isReadOnlySed(args);
-    case "awk": return isReadOnlyAwk(args);
-    case "uniq": return isReadOnlyUniq(args);
-    case "sort": return !args.some((a) => /^-[A-Za-z]*o/.test(a) || a.startsWith("--output") || a.startsWith("--compress-program"));
-    case "diff": return !args.some((a) => a.startsWith("--output") || /^-[A-Za-z]*o/.test(a));
-    case "file": return !args.some((a) => /^-[A-Za-z]*C/.test(a) || a === "--compile");
-    case "date": return args.every((a) => a.startsWith("+") || ["-u", "-R", "--utc"].includes(a) || /^(-I|--iso-8601)/.test(a));
-    case "printf": return !args.some((a) => a === "-v");
-    case "env": return args.length === 0;
-    case "exit": return args.length === 0 || (args.length === 1 && /^\d+$/.test(args[0]));
-    default: return false;
-  }
+  return checkedCommands.get(name)?.(args) ?? false;
+}
+
+/// The commands allowed with some arguments only, each with its check.
+const checkedCommands = new Map<string, (args: string[]) => boolean>([
+  ["git", isReadOnlyGit],
+  ["gh", isReadOnlyGh],
+  ["rg", (args) => !args.some((a) => a.startsWith("--pre"))],
+  ["find", (args) => !args.some((a) => findActions.has(a))],
+  ["sed", isReadOnlySed],
+  ["awk", isReadOnlyAwk],
+  ["uniq", isReadOnlyUniq],
+  ["sort", (args) => !args.some((a) => /^-[A-Za-z]*o/.test(a) || a.startsWith("--output") || a.startsWith("--compress-program"))],
+  ["diff", (args) => !args.some((a) => a.startsWith("--output") || /^-[A-Za-z]*o/.test(a))],
+  ["file", (args) => !args.some((a) => /^-[A-Za-z]*C/.test(a) || a === "--compile")],
+  ["date", (args) => args.every((a) => a.startsWith("+") || ["-u", "-R", "--utc"].includes(a) || /^(-I|--iso-8601)/.test(a))],
+  ["printf", (args) => !args.some((a) => a === "-v")],
+  ["env", (args) => args.length === 0],
+  ["exit", (args) => args.length === 0 || (args.length === 1 && /^\d+$/.test(args[0]))],
+]);
+
+/// Every command name the checks know, so the listed ones can be kept the same.
+export function handledCommands(): string[] {
+  return [...anyArgs, ...checkedCommands.keys()];
 }
 
 const assignment = /^([A-Za-z_]\w*)=(.*)$/s;
@@ -312,6 +321,6 @@ export function isReadOnlyCommand(command: string): boolean {
 /// Tools that run without asking: reading files and the WorkTime MCP tools, except send_to_agent, which hands a prompt to
 /// another agent and so is asked about every time.
 export function isAutoAllowedTool(tool: string): boolean {
-  if (["Read", "Grep", "Glob"].includes(tool)) return true;
-  return tool.startsWith("mcp__worktime__") && tool !== "mcp__worktime__send_to_agent";
+  if (builtInAllowed.tools.includes(tool)) return true;
+  return tool.startsWith(builtInAllowed.mcpPrefix) && !builtInAllowed.alwaysAsk.includes(tool);
 }

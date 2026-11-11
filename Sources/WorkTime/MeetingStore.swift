@@ -22,6 +22,10 @@ enum AppPaths {
     static var agentState: URL { support.appendingPathComponent(AgentOverview.fileName) }
     /// Prompts the MCP server hands the app for a pull request's agent.
     static var agentInbox: URL { support.appendingPathComponent("agent-inbox", isDirectory: true) }
+    /// The topic agents, read by the MCP server to find one by name.
+    static var topicAgents: URL { support.appendingPathComponent("topic-agents.json") }
+    /// Each topic agent's own working folder.
+    static var topicFolders: URL { support.appendingPathComponent("Agents", isDirectory: true) }
 
     private static var support: URL {
         dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

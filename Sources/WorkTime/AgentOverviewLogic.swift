@@ -23,6 +23,19 @@ struct AgentState: Codable, Equatable {
     /// Whether the agent is loaded in this run of the app; persisted sessions that are not have only their id.
     var loaded = true
     var queued = 0
+    /// A topic agent's links.
+    var jiraKey: String?
+    var slackURL: String?
+
+    var isTopic: Bool { TopicAgents.isKey(key) }
+
+    /// A topic agent as it stands: its loaded model's state, or its saved session.
+    static func topic(_ topic: TopicAgent, loaded: AgentState?, sessionID: String?) -> AgentState {
+        var state = loaded ?? AgentState(key: topic.key, title: topic.name, folder: topic.folder, sessionID: sessionID, status: .idle, loaded: false)
+        state.jiraKey = topic.jiraKey
+        state.slackURL = topic.slackURL
+        return state
+    }
 }
 
 /// The agents' state file shared with the `--mcp` process, and the overview the MCP tools make of it.
@@ -69,7 +82,7 @@ enum AgentOverview {
     /// The loaded agents, then every pull request with a saved session or session history that is not loaded this run.
     static func withPersisted(_ agents: [AgentState], sessions: [String: String], known: [String] = []) -> [AgentState] {
         let loaded = Set(agents.compactMap(\.prURL))
-        let urls = Set(sessions.keys).union(known.filter { GitHubLink.pullRequest(at: $0) != nil })
+        let urls = Set(sessions.keys).union(known).filter { GitHubLink.pullRequest(at: $0) != nil }
         return agents + urls.sorted().filter { !loaded.contains($0) }.map { url in
             AgentState(key: url, title: prTitle(url), prURL: url, sessionID: sessions[url], status: .idle, loaded: false)
         }
@@ -144,6 +157,10 @@ enum AgentOverview {
         if !state.loaded { facts.append("saved session, not open") }
         var lines = ["- **\(state.title)** \u{00B7} " + facts.joined(separator: " \u{00B7} ")]
         if let url = state.prURL { lines.append("  \(url) \u{00B7} agent: \(GitHubLink.agentLink(for: url))") }
+        if state.isTopic {
+            lines.append("  topic agent \(state.key)" + [state.jiraKey.map { "Jira \($0)" }, state.slackURL.map { "Slack \($0)" }]
+                .compactMap { $0 }.map { " \u{00B7} " + $0 }.joined())
+        }
         if let folder = state.folder { lines.append("  folder: \(folder)") }
         if let session = state.sessionID { lines.append("  session: \(session)") }
         if let error = state.error { lines.append("  error: \(oneLine(error))") }
@@ -284,7 +301,8 @@ enum AgentInbox {
 
     struct Request: Codable, Equatable {
         var id: String
-        var prURL: String
+        /// A pull request url or a topic agent's key.
+        var agent: String
         var text: String
         var created: Date
     }
@@ -306,17 +324,17 @@ enum AgentInbox {
 
     static func isRequest(_ name: String) -> Bool { name.hasSuffix(".request.json") }
 
-    /// A request for a pull request url and some text, or why there can be none.
-    static func request(prURL: String, text: String, now: Date, id: String = UUID().uuidString) -> Result<Request, AgentInboxError> {
-        let request = Request(id: id, prURL: prURL.trimmingCharacters(in: .whitespaces), text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+    /// A request for an agent (a pull request url or a topic key) and some text, or why there can be none.
+    static func request(agent: String, text: String, now: Date, id: String = UUID().uuidString) -> Result<Request, AgentInboxError> {
+        let request = Request(id: id, agent: agent.trimmingCharacters(in: .whitespaces), text: text.trimmingCharacters(in: .whitespacesAndNewlines),
                               created: now)
         return problem(request, now: now).map { .failure($0) } ?? .success(request)
     }
 
     static func problem(_ request: Request, now: Date) -> AgentInboxError? {
         guard ClaudeTranscripts.isSessionID(request.id) else { return AgentInboxError("The request id is not a UUID.") }
-        guard GitHubLink.pullRequest(at: request.prURL) != nil else {
-            return AgentInboxError("pr_url must be a GitHub pull request url, not \(request.prURL).")
+        guard GitHubLink.pullRequest(at: request.agent) != nil || TopicAgents.isKey(request.agent) else {
+            return AgentInboxError("agent must be a GitHub pull request url or a topic agent key, not \(request.agent).")
         }
         guard !request.text.isEmpty else { return AgentInboxError("text is empty.") }
         guard request.text.count <= textLimit else { return AgentInboxError("text is \(request.text.count) characters; the limit is \(textLimit).") }
@@ -351,8 +369,7 @@ enum AgentInbox {
         return try? decoder.decode(type, from: data)
     }
 
-    static func replyText(_ reply: Reply, prURL: String) -> String {
-        let target = AgentOverview.prTitle(prURL)
+    static func replyText(_ reply: Reply, title target: String) -> String {
         var lines: [String]
         switch reply.status {
         case .started: lines = ["Sent to the agent on \(target); it is working on it now."]

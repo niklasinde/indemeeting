@@ -242,6 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
         PRAgents.shared.stopAll()
+        TopicAgentStore.shared.stopAll()
         AgentHub.shared.main.stopClient()
         LocalLLM.shared.unload(wait: true)
         tracker.flush()

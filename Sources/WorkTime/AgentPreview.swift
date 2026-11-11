@@ -51,6 +51,7 @@ enum AgentPreview {
                           + Array(sample().dropFirst().prefix(4)))
             await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-from-main-light.png"))
             await sessions(to: output)
+            await topics(to: output)
             await rules(to: output)
             UserDefaults.standard.removePersistentDomain(forName: suite)
             exit(0)
@@ -213,6 +214,65 @@ enum AgentPreview {
         await save(AgentsPage(hub: hub), size: size, appearance: .aqua, to: output.appendingPathComponent("main-pr-agent-light.png"))
         hub.selected = saved
         await save(AgentsPage(hub: hub), size: size, appearance: .aqua, to: output.appendingPathComponent("main-saved-pr-light.png"))
+    }
+
+    /// Topic agents in the Main page's list (a ticket, a Slack thread and a free topic), one of them picked with its answer and a
+    /// drafted reply, and the New agent sheet empty, filled and refusing a bad key. The store writes only into `output`.
+    @MainActor
+    private static func topics(to output: URL) async {
+        let store = TopicAgentStore.shared, data = output.appendingPathComponent("topics-data", isDirectory: true)
+        store.useSample(file: data.appendingPathComponent("topic-agents.json"), root: data.appendingPathComponent("Agents", isDirectory: true))
+        let thread = "https://acme.slack.com/archives/C0SUPPORT/p1792990000123456"
+        let made = [("Support: Intrum UAT", "ISD-123", ""), ("Slack: #support \u{00B7} Anna", "", thread), ("Q4 invoicing questions", "", "")]
+            .compactMap { try? store.make(name: $0.0, jira: $0.1, slack: $0.2).get() }
+        guard let intrum = made.first else { return }
+        let agent = store.load(intrum)
+        var items = [AgentItem(id: "user-0", kind: .user(TopicAgents.prompt(intrum)))]
+        let events: [AgentEvent] = [
+            .toolUse(id: "1", tool: "mcp__worktime__jira_issue", summary: "ISD-123", detail: "{\n  \"key\" : \"ISD-123\"\n}"),
+            .toolResult(id: "1", content: "# ISD-123 Intrum UAT login fails …", isError: false, auto: false),
+            .toolUse(id: "2", tool: "mcp__worktime__slack_search", summary: "Intrum UAT", detail: ""),
+            .toolResult(id: "2", content: "- 2026-11-10 14:03 · #support · anna: UAT is down …", isError: false, auto: false),
+            .text("""
+                **What\u{2019}s needed from you:** Intrum can\u{2019}t log in to UAT since Monday\u{2019}s SSO change (blocked by QDLY-9, in Review). \
+                Anna asked in #support for an ETA.
+
+                Draft reply for ISD-123 (post it yourself):
+
+                ```
+                Hi Anna, the login problem comes from the SSO change in QDLY-9. The fix is in review and should reach UAT on Thursday; \
+                I'll confirm here once it's deployed.
+                ```
+                """),
+            .result(sessionID: "preview-topic", isError: false, text: "", turns: 3, model: "claude-sonnet-5-5", mode: .auto),
+        ]
+        events.forEach { AgentLogic.apply($0, to: &items) }
+        agent.preview(items, seen: false)
+        agent.permissionMode = .auto
+        let hub = AgentHub.shared, size = NSSize(width: 1180, height: 760)
+        try? await Task.sleep(nanoseconds: 1_500_000_000)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            hub.selected = AgentOverview.mainKey
+            await save(AgentsPage(hub: hub), size: size, appearance: appearance, to: output.appendingPathComponent("topics-main-\(name).png"))
+            hub.selected = intrum.key
+            await save(AgentsPage(hub: hub), size: size, appearance: appearance, to: output.appendingPathComponent("topics-agent-\(name).png"))
+        }
+        hub.selected = made[2].key
+        await save(AgentsPage(hub: hub), size: size, appearance: .aqua, to: output.appendingPathComponent("topics-free-light.png"))
+        let sheets: [(String, NewTopicAgentSheet)] = [
+            ("empty", NewTopicAgentSheet { _ in }),
+            ("filled", NewTopicAgentSheet(name: "Support: Gaia invoices", jira: "isd-456", slack: thread) { _ in }),
+            ("invalid", NewTopicAgentSheet(name: "Support", jira: "ISD-", slack: "https://example.com/x",
+                                           problem: TopicAgentError.badJiraKey("ISD-").message) { _ in }),
+        ]
+        for (name, sheet) in sheets {
+            for (look, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] where name == "filled" || look == "light" {
+                await save(sheet.background(.background), size: NSSize(width: 460, height: 400), appearance: appearance,
+                           to: output.appendingPathComponent("topics-new-\(name)-\(look).png"))
+            }
+        }
+        hub.selected = AgentOverview.mainKey
+        store.stopAll()
     }
 
     /// A Claude Code transcript: a question, a search and a read, the answer, then a fix with an edit.

@@ -103,6 +103,12 @@ struct SlackNotchList: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open in Agent") {
+                onOpen()
+                TopicAgentStore.shared.open(slack: message, link: SlackLogic.webLink(message, workspace: model.identity?.url))
+            }
+        }
     }
 
     private func topLine(_ message: SlackMessage) -> String {

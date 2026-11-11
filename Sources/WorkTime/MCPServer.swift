@@ -27,7 +27,8 @@ struct MCPServer {
     static let instructions = """
         Read-only access to WorkTime on this Mac: the user's meetings (summaries, action items, notes, transcripts \
         with speakers), tracked activity (apps, repositories, branches, tickets, Claude Code sessions, hours), cached pull \
-        requests and the app's Claude agents. send_to_agent is the one tool that acts: it hands a prompt to a pull request's agent.
+        requests, the app's Claude agents, and read-only Jira and Slack lookups with the tokens set up in WorkTime. send_to_agent \
+        is the one tool that acts: it hands a prompt to one of the app's agents.
         """
 
     let tools: [MCPTool]
@@ -89,12 +90,18 @@ struct MCPServer {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// The names of every tool the server offers.
+    static var toolNames: [String] {
+        let none = Result<MeetingStore, Error>.failure(MCPToolError(""))
+        return (meetingTools(none) + githubTools(none) + agentTools(none) + topicTools()).map(\.name)
+    }
+
     /// `--mcp`: serves the read-only tools over stdin and stdout until stdin closes.
     static func runFromCommandLine() -> Never {
         let store = Result { try MeetingStore.openReadOnly() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let github = githubTools(store)
-        let server = MCPServer(tools: meetingTools(store) + github + agentTools(store, github: github), version: version)
+        let server = MCPServer(tools: meetingTools(store) + github + agentTools(store, github: github) + topicTools(), version: version)
         while let line = readLine() {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty, let response = server.handle(line) else { continue }
             FileHandle.standardOutput.write(Data((response + "\n").utf8))

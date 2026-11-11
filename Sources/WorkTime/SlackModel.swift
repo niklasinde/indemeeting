@@ -165,31 +165,16 @@ final class SlackModel: ObservableObject {
 
     /// Runs `work` with a token that works: refreshed first when it is about to run out, and once more when Slack turns it down.
     private func authorized<T>(_ work: (SlackAPI) async throws -> T) async throws -> T {
-        do {
-            return try await work(makeClient(try await validToken()))
-        } catch SlackError.unauthorized where storedAuth()?.refreshToken != nil {
-            return try await work(makeClient(try await validToken(renew: true)))
-        }
+        try await SlackClient.authorized(stored: storedAuth, renew: renew, save: store, client: makeClient, work)
     }
 
-    private func validToken(renew: Bool = false) async throws -> String {
-        guard let auth = storedAuth() else { throw SlackError.notConfigured }
-        guard renew || SlackLogic.needsRefresh(auth, now: Date()) else { return auth.accessToken }
-        guard let refreshToken = auth.refreshToken else { throw SlackError.unauthorized }
-        let request = SlackLogic.refreshRequest(clientID: clientID, refreshToken: refreshToken)
-        let transport = self.transport
-        let task = renewal ?? Task { try await SlackClient.authorize(request, now: Date(), previous: auth, transport: transport) }
+    /// One renewal at a time: a second caller waits for the one already running.
+    private func renew(_ auth: SlackAuth) async throws -> SlackAuth {
+        let clientID = clientID, transport = transport
+        let task = renewal ?? Task { try await SlackClient.renew(auth, clientID: clientID, transport: transport) }
         renewal = task
         defer { renewal = nil }
-        do {
-            let renewed = try await task.value
-            try store(renewed)
-            return renewed.accessToken
-        } catch SlackError.offline {
-            throw SlackError.offline
-        } catch {
-            throw SlackError.signInAgain
-        }
+        return try await task.value
     }
 
     func open(_ message: SlackMessage) {

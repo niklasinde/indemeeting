@@ -56,7 +56,7 @@ final class AgentModel: ObservableObject {
     }
     @Published private(set) var sessionID: String? {
         didSet {
-            if let prURL, let sessionID { Self.prSessions[prURL] = sessionID }
+            if let agentKey, let sessionID { Self.savedSessions[agentKey] = sessionID }
             if isMain, prURL == nil { Self.defaults.set(sessionID, forKey: AgentLogic.mainSessionKey) }
             if let sessionID, oldValue != sessionID { remember(sessionID) }
             touch()
@@ -66,6 +66,8 @@ final class AgentModel: ObservableObject {
     @Published private(set) var history: [AgentSessionEntry] = []
     private var restoring: String?
     @Published private(set) var prURL: String?
+    /// The topic this agent is for, when it is a topic agent.
+    @Published private(set) var topic: TopicAgent?
     /// Whether the user has seen the latest reply: false when a turn ends while no pane shows this agent.
     @Published private(set) var resultSeen = true {
         didSet { if oldValue != resultSeen { touch() } }
@@ -78,6 +80,16 @@ final class AgentModel: ObservableObject {
     let isMain: Bool
     @Published var model = AgentLogic.storedModel(AgentModel.defaults.string(forKey: AgentLogic.modelKey)) {
         didSet { Self.defaults.set(model, forKey: AgentLogic.modelKey) }
+    }
+    /// How this agent's calls are approved, saved per agent; a change reaches a turn already running too.
+    @Published var permissionMode = AgentPermissionMode.ask {
+        didSet {
+            guard oldValue != permissionMode else { return }
+            var modes = Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey) ?? [:]
+            modes[historyKey] = permissionMode == .ask ? nil : permissionMode.rawValue
+            Self.defaults.set(modes, forKey: AgentPermissionMode.storageKey)
+            if busy { client?.send(.mode(permissionMode)) }
+        }
     }
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
@@ -104,6 +116,7 @@ final class AgentModel: ObservableObject {
         self.folder = folder ?? (main ? defaults.string(forKey: AgentLogic.mainFolderKey) ?? GitHubClaudeModel.repositoriesRoot.path
                                       : defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory())
         history = AgentSessionStore.list(for: historyKey)
+        loadMode()
         rulesChanged = AgentRuleStore.shared.$rules.dropFirst().sink { [weak self] in self?.client?.send(.rules($0)) }
         if main, let session = defaults.string(forKey: AgentLogic.mainSessionKey) {
             sessionID = session
@@ -112,7 +125,10 @@ final class AgentModel: ObservableObject {
         }
     }
 
-    var historyKey: String { AgentSessions.key(prURL: prURL, isMain: isMain, folder: folder) }
+    /// The pull request url or topic key the agent is saved under; nil for Main and a plain folder.
+    var agentKey: String? { prURL ?? topic?.key }
+
+    var historyKey: String { AgentSessions.key(agent: agentKey, isMain: isMain, folder: folder) }
 
     var waitingForPermission: Bool {
         busy && items.contains { if case .permission(_, _, _, _, nil) = $0.kind { true } else { false } }
@@ -144,9 +160,11 @@ final class AgentModel: ObservableObject {
     func choose(folder: String) {
         guard folder != self.folder else { return }
         prURL = nil
+        topic = nil
         self.folder = folder
         Self.defaults.set(folder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
         newSession()
+        loadMode()
         loadFiles()
     }
 
@@ -161,7 +179,7 @@ final class AgentModel: ObservableObject {
     /// Starts afresh; the session so far stays in the history, so it can be picked again.
     func newSession() {
         if busy { stop() }
-        if let prURL { Self.prSessions[prURL] = nil }
+        if let agentKey { Self.savedSessions[agentKey] = nil }
         sessionID = nil
         lastModel = nil
         restoring = nil
@@ -240,21 +258,40 @@ final class AgentModel: ObservableObject {
     /// prompt waiting to be sent when there is no session yet. Opening the one already shown changes nothing.
     func open(pr target: GitHubLink.Target, checkout: URL?) {
         guard prURL != target.url || (items.isEmpty && !busy) else { return }
+        point(prURL: target.url, topic: nil, folder: checkout?.path ?? NSHomeDirectory())
+        draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: checkout != nil) : ""
+    }
+
+    /// Points the agent at a topic: its folder, the session it had before, and the prompt for its ticket or thread waiting
+    /// when there is no session yet. A renamed topic only updates the name.
+    func open(topic: TopicAgent) {
+        guard self.topic?.id != topic.id || (items.isEmpty && !busy) else { return self.topic = topic }
+        point(prURL: nil, topic: topic, folder: topic.folder)
+        draft = sessionID == nil ? TopicAgents.prompt(topic) : ""
+    }
+
+    private func point(prURL: String?, topic: TopicAgent?, folder: String) {
         if busy { stop() }
-        prURL = target.url
-        folder = checkout?.path ?? NSHomeDirectory()
+        self.prURL = prURL
+        self.topic = topic
+        self.folder = folder
         lastModel = nil
         problem = nil
         history = AgentSessionStore.list(for: historyKey)
         restoring = nil
         items = []
-        sessionID = Self.prSessions[target.url]
+        sessionID = agentKey.flatMap { Self.savedSessions[$0] }
         restore()
-        draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: checkout != nil) : ""
+        loadMode()
         loadFiles()
     }
 
-    static var prSessions: [String: String] {
+    private func loadMode() {
+        permissionMode = AgentPermissionMode.stored(Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey), key: historyKey)
+    }
+
+    /// The current session of each pull request's and topic's agent, by its key.
+    static var savedSessions: [String: String] {
         get { defaults.dictionary(forKey: AgentLogic.prSessionsKey) as? [String: String] ?? [:] }
         set { defaults.set(newValue, forKey: AgentLogic.prSessionsKey) }
     }
@@ -308,7 +345,8 @@ final class AgentModel: ObservableObject {
             lastModel = picked
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
-                                appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : nil))
+                                appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : topic.map(TopicAgents.systemPrompt),
+                                mode: permissionMode))
         }
         return true
     }

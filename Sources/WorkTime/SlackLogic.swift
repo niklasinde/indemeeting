@@ -10,6 +10,18 @@ struct SlackIdentity: Equatable, Sendable {
     let url: String
 }
 
+/// A pasted message link: `https://acme.slack.com/archives/C123/p1700000000123456`, with `?thread_ts=` for a reply.
+struct SlackThreadLink: Equatable, Sendable {
+    let host: String
+    let channel: String
+    let ts: String
+    let threadTS: String?
+
+    /// The message that starts the thread.
+    var root: String { threadTS ?? ts }
+    var url: String { "https://\(host)/archives/\(channel)/p\(ts.replacingOccurrences(of: ".", with: ""))" + (threadTS.map { "?thread_ts=\($0)" } ?? "") }
+}
+
 struct SlackMessage: Equatable, Identifiable, Sendable {
     enum Kind: String, Sendable { case mention, direct }
 
@@ -279,10 +291,16 @@ enum SlackLogic {
     }
 
     static func parseMentions(_ data: Data, teamID: String, me: String, now: Date) throws -> [SlackMessage] {
-        let response = try JSONDecoder().decode(Search.self, from: checked(data))
         let cutoff = now.addingTimeInterval(-Double(mentionDays) * 86400).timeIntervalSince1970
+        return try parseSearch(data, teamID: teamID) { match in (Double(match.ts) ?? 0) >= cutoff && match.user != me }
+    }
+
+    static func parseSearch(_ data: Data, teamID: String) throws -> [SlackMessage] { try parseSearch(data, teamID: teamID) { _ in true } }
+
+    private static func parseSearch(_ data: Data, teamID: String, keep: (Search.Match) -> Bool) throws -> [SlackMessage] {
+        let response = try JSONDecoder().decode(Search.self, from: checked(data))
         return (response.messages?.matches ?? []).compactMap { match in
-            guard let channel = match.channel, (Double(match.ts) ?? 0) >= cutoff, match.user != me else { return nil }
+            guard let channel = match.channel, keep(match) else { return nil }
             let place: String
             if channel.is_im == true {
                 place = match.username ?? "Direct message"
@@ -308,6 +326,61 @@ enum SlackLogic {
 
     static func parseLatest(_ data: Data) throws -> SlackRawMessage? {
         try JSONDecoder().decode(History.self, from: checked(data)).messages.first.map(raw)
+    }
+
+    static let threadLimit = 200
+    static let searchCountLimit = 50
+
+    /// A message link copied from Slack, or nil for anything else.
+    static func threadLink(_ input: String) -> SlackThreadLink? {
+        guard let url = URLComponents(string: input.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https",
+              let host = url.host?.lowercased(), host.hasSuffix(".slack.com") else { return nil }
+        let parts = url.path.split(separator: "/").map(String.init)
+        guard parts.count == 3, parts[0] == "archives", parts[1].wholeMatch(of: #/[A-Z0-9]{5,}/#) != nil,
+              let digits = parts[2].wholeMatch(of: #/p([0-9]{7,})/#)?.1 else { return nil }
+        let ts = String(digits.dropLast(6)) + "." + String(digits.suffix(6))
+        let thread = url.queryItems?.first { $0.name == "thread_ts" }?.value
+        guard thread.map({ $0.wholeMatch(of: #/[0-9]+\.[0-9]+/#) != nil }) ?? true else { return nil }
+        return SlackThreadLink(host: host, channel: parts[1], ts: ts, threadTS: thread == ts ? nil : thread)
+    }
+
+    static func repliesParameters(_ link: SlackThreadLink) -> [String: String] {
+        ["channel": link.channel, "ts": link.root, "limit": "\(threadLimit)"]
+    }
+
+    static func searchParameters(query: String, count: Int) -> [String: String] {
+        ["query": query, "sort": "timestamp", "sort_dir": "desc", "count": "\(min(max(count, 1), searchCountLimit))"]
+    }
+
+    /// The thread's messages oldest first, bots named by their username, and whether Slack has more than were returned.
+    static func parseReplies(_ data: Data) throws -> (messages: [SlackRawMessage], more: Bool) {
+        let response = try JSONDecoder().decode(History.self, from: checked(data))
+        return (response.messages.map { SlackRawMessage(ts: $0.ts, text: $0.text ?? "", user: $0.user ?? $0.username) }, response.has_more == true)
+    }
+
+    static func threadMarkdown(_ messages: [SlackRawMessage], more: Bool, link: SlackThreadLink, names: [String: String]) -> String {
+        guard !messages.isEmpty else { return "The thread has no messages.\n" }
+        let header = "Slack thread \(link.url) \u{00B7} \(messages.count) message\(messages.count == 1 ? "" : "s")" + (more ? ", more not shown" : "")
+        return header + "\n\n" + messages.map { message in
+            "- \(timeText(message.ts)) \(message.user.map { names[$0] ?? $0 } ?? "someone"): " + clean(message.text, names: names)
+        }.joined(separator: "\n") + "\n"
+    }
+
+    static func searchMarkdown(_ messages: [SlackMessage], query: String, names: [String: String]) -> String {
+        guard !messages.isEmpty else { return "No Slack messages match \(query).\n" }
+        return messages.map { message in
+            let author = message.author.map { names[$0] ?? $0 }.map { " \u{00B7} \($0)" } ?? ""
+            return "- \(timeText(message.ts)) \u{00B7} \(message.place)\(author): " + clean(message.text, names: names)
+                + (message.permalink.map { "\n  \($0)" } ?? "")
+        }.joined(separator: "\n") + "\n"
+    }
+
+    /// `2026-11-10 14:03` in the Mac's time zone.
+    static func timeText(_ ts: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter.string(from: Date(timeIntervalSince1970: Double(ts) ?? 0))
     }
 
     static func parseUserName(_ data: Data) throws -> String {
@@ -519,6 +592,7 @@ enum SlackLogic {
         let text: String?
         let user: String?
         let bot_id: String?
+        let username: String?
     }
 
     private struct ConversationList: Decodable {
@@ -529,7 +603,10 @@ enum SlackLogic {
 
     private struct ConversationInfo: Decodable { let channel: Channel }
 
-    private struct History: Decodable { let messages: [Message] }
+    private struct History: Decodable {
+        let messages: [Message]
+        let has_more: Bool?
+    }
 
     private struct UserInfo: Decodable {
         let user: User

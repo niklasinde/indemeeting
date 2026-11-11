@@ -61,6 +61,49 @@ struct SlackClient: SlackAPI {
         _ = try await send("auth.revoke")
     }
 
+    func thread(_ link: SlackThreadLink) async throws -> (messages: [SlackRawMessage], more: Bool) {
+        try SlackLogic.parseReplies(await send("conversations.replies", SlackLogic.repliesParameters(link)))
+    }
+
+    func search(_ query: String, count: Int, teamID: String) async throws -> [SlackMessage] {
+        try SlackLogic.parseSearch(await send("search.messages", SlackLogic.searchParameters(query: query, count: count)), teamID: teamID)
+    }
+
+    /// Display names for the user ids in `ids` that `names` lacks, at most `limit` looked up; the ones that fail stay ids.
+    func names(_ ids: [String], known names: [String: String] = [:], limit: Int = 30) async -> [String: String] {
+        var names = names
+        for id in Set(ids).filter({ names[$0] == nil && $0.wholeMatch(of: #/[UW][A-Z0-9]+/#) != nil }).sorted().prefix(limit) {
+            names[id] = try? await userName(id)
+        }
+        return names
+    }
+
+    /// Runs `work` with a token that works: renewed first when it is about to run out, and once more when Slack turns it down.
+    static func authorized<Client, T>(stored: () -> SlackAuth?, renew: (SlackAuth) async throws -> SlackAuth, save: (SlackAuth) throws -> Void,
+                                      client: (String) -> Client, now: Date = Date(), isolation: isolated (any Actor)? = #isolation,
+                                      _ work: (Client) async throws -> T) async throws -> T {
+        func token(renewing: Bool) async throws -> String {
+            guard let auth = stored() else { throw SlackError.notConfigured }
+            guard renewing || SlackLogic.needsRefresh(auth, now: now) else { return auth.accessToken }
+            guard auth.refreshToken != nil else { throw SlackError.unauthorized }
+            let renewed: SlackAuth
+            do { renewed = try await renew(auth) } catch SlackError.offline { throw SlackError.offline } catch { throw SlackError.signInAgain }
+            try save(renewed)
+            return renewed.accessToken
+        }
+        do {
+            return try await work(client(try await token(renewing: false)))
+        } catch SlackError.unauthorized where stored()?.refreshToken != nil {
+            return try await work(client(try await token(renewing: true)))
+        }
+    }
+
+    /// Exchanges the stored refresh token for a new user token.
+    static func renew(_ auth: SlackAuth, clientID: String, transport: SlackTransport = urlSession) async throws -> SlackAuth {
+        guard let refreshToken = auth.refreshToken else { throw SlackError.unauthorized }
+        return try await authorize(SlackLogic.refreshRequest(clientID: clientID, refreshToken: refreshToken), now: Date(), previous: auth, transport: transport)
+    }
+
     /// Exchanges a sign-in code, or a refresh token, for a user token.
     static func authorize(_ request: URLRequest, now: Date, previous: SlackAuth? = nil,
                           transport: SlackTransport = urlSession) async throws -> SlackAuth {

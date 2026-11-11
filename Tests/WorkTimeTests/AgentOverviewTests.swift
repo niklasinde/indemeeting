@@ -117,18 +117,18 @@ let agentOverviewTests: [(name: String, run: () throws -> Void)] = [
 
     ("agents: inbox requests are checked for url, length and age, and queue behind a busy agent", {
         let id = UUID().uuidString
-        guard case .success(let request) = AgentInbox.request(prURL: " \(pull) ", text: " Rebase it \n", now: now, id: id) else {
+        guard case .success(let request) = AgentInbox.request(agent: " \(pull) ", text: " Rebase it \n", now: now, id: id) else {
             return check(false, "valid request")
         }
-        check(request.prURL == pull && request.text == "Rebase it", "trimmed")
-        check(AgentInbox.request(prURL: "https://example.com", text: "x", now: now) == .failure(AgentInboxError(
-            "pr_url must be a GitHub pull request url, not https://example.com.")), "url")
-        check(AgentInbox.request(prURL: pull, text: "  ", now: now) == .failure(AgentInboxError("text is empty.")), "empty")
-        if case .success = AgentInbox.request(prURL: pull, text: String(repeating: "a", count: AgentInbox.textLimit + 1), now: now) {
+        check(request.agent == pull && request.text == "Rebase it", "trimmed")
+        check(AgentInbox.request(agent: "https://example.com", text: "x", now: now) == .failure(AgentInboxError(
+            "agent must be a GitHub pull request url or a topic agent key, not https://example.com.")), "url")
+        check(AgentInbox.request(agent: pull, text: "  ", now: now) == .failure(AgentInboxError("text is empty.")), "empty")
+        if case .success = AgentInbox.request(agent: pull, text: String(repeating: "a", count: AgentInbox.textLimit + 1), now: now) {
             check(false, "too long is refused")
         }
         check(AgentInbox.problem(request, now: now.addingTimeInterval(AgentInbox.staleAfter + 1)) != nil, "stale")
-        check(AgentInbox.problem(AgentInbox.Request(id: "../x", prURL: pull, text: "a", created: now), now: now) != nil, "id must be a UUID")
+        check(AgentInbox.problem(AgentInbox.Request(id: "../x", agent: pull, text: "a", created: now), now: now) != nil, "id must be a UUID")
         check(AgentInbox.decide(busy: false, waitingForPermission: false, queued: 0) == .start, "idle starts")
         check(AgentInbox.decide(busy: true, waitingForPermission: false, queued: 0) == .queue, "busy queues")
         check(AgentInbox.decide(busy: false, waitingForPermission: false, queued: 1) == .queue, "keeps the order behind queued ones")

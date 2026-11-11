@@ -8,7 +8,7 @@ enum AgentEvent: Equatable {
     case toolUse(id: String, tool: String, summary: String, detail: String)
     case toolResult(id: String, content: String, isError: Bool, auto: Bool, rule: String? = nil)
     case permissionRequest(id: String, tool: String, summary: String, detail: String, offer: [AgentRule] = [])
-    case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?)
+    case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?, mode: AgentPermissionMode? = nil)
     case error(String)
     case signIn
     case idle
@@ -35,7 +35,8 @@ enum AgentEvent: Equatable {
                                       offer: (object["offer"] as? [Any] ?? []).compactMap(AgentRule.init))
         case "result":
             return .result(sessionID: object["sessionId"] as? String, isError: object["isError"] as? Bool ?? false, text: string("text"),
-                           turns: object["turns"] as? Int, model: object["model"] as? String)
+                           turns: object["turns"] as? Int, model: object["model"] as? String,
+                           mode: (object["permissionMode"] as? String).flatMap(AgentPermissionMode.init(rawValue:)))
         case "error": return object["auth"] as? Bool == true || AgentLogic.needsSignIn(string("message")) ? .signIn : .error(string("message"))
         case "idle": return .idle
         default: return nil
@@ -43,21 +44,76 @@ enum AgentEvent: Equatable {
     }
 }
 
+/// How an agent's tool calls are approved, picked per agent beside the model. The sidecar applies the read-only list
+/// and saved rules first and asks about send_to_agent in every mode; bypassing permissions is never offered.
+enum AgentPermissionMode: String, CaseIterable, Identifiable {
+    case ask = "default", auto, acceptEdits, plan
+
+    static let storageKey = "agentPermissionModes"
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .ask: "Ask"
+        case .auto: "Auto"
+        case .acceptEdits: "Accept edits"
+        case .plan: "Plan"
+        }
+    }
+
+    /// Set beside the title in the picker, so Auto is not mistaken for the model's Auto next to it.
+    var symbol: String {
+        switch self {
+        case .ask: "hand.raised"
+        case .auto: "checkmark.shield"
+        case .acceptEdits: "pencil"
+        case .plan: "list.bullet.clipboard"
+        }
+    }
+
+    /// In the line under a finished turn, where the model can be Auto too.
+    var status: String {
+        switch self {
+        case .ask: "Ask"
+        case .auto: "Auto mode"
+        case .acceptEdits: "Accepting edits"
+        case .plan: "Plan mode"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .ask: "Asks before every edit and command that is not read-only or allowed by your rules"
+        case .auto: "A classifier approves or denies calls; you are asked when it cannot decide. Send to agent always asks."
+        case .acceptEdits: "Edits files without asking; commands still ask"
+        case .plan: "Reads and plans only; nothing is changed"
+        }
+    }
+
+    /// Each agent's mode by its history key, Ask when none is saved or it is no longer offered.
+    static func stored(_ modes: [String: Any]?, key: String) -> AgentPermissionMode {
+        (modes?[key] as? String).flatMap(AgentPermissionMode.init(rawValue:)) ?? .ask
+    }
+}
+
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
-    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil)
+    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask)
     case permission(id: String, allow: Bool)
+    case mode(AgentPermissionMode)
     case rules([AgentRule])
     case interrupt
 
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt):
-            object = ["type": "prompt", "text": text, "cwd": cwd]
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode):
+            object = ["type": "prompt", "text": text, "cwd": cwd, "permissionMode": mode.rawValue]
             if let sessionID { object["sessionId"] = sessionID }
             if let model { object["model"] = model }
             if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
+        case .mode(let mode): object = ["type": "mode", "mode": mode.rawValue]
         case .permission(let id, let allow): object = ["type": "permission", "id": id, "allow": allow]
         case .rules(let rules): object = ["type": "rules", "rules": rules.map(\.json)]
         case .interrupt: object = ["type": "interrupt"]
@@ -108,13 +164,13 @@ enum AgentLogic {
         case .permissionRequest(let id, let tool, let summary, let detail, let offer):
             items.append(AgentItem(id: "permission-\(id)-\(items.count)",
                                    kind: .permission(tool: tool, summary: summary, detail: detail, offer: offer, allowed: nil)))
-        case .result(let sessionID, let isError, let text, let turns, let model):
+        case .result(let sessionID, let isError, let text, let turns, let model, let mode):
             if isError, needsSignIn(text) {
                 appendSignIn(to: &items)
             } else if isError {
                 items.append(AgentItem(id: "error-\(items.count)", kind: .error(text.isEmpty ? "The agent stopped with an error." : text)))
             } else {
-                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns, model: model, auto: auto))))
+                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns, model: model, auto: auto, mode: mode))))
             }
             return sessionID
         case .error(let message):
@@ -143,9 +199,10 @@ enum AgentLogic {
         return parts.count == 3 && parts[0] == "permission" ? String(parts[1]) : nil
     }
 
-    static func resultLine(turns: Int?, model: String? = nil, auto: Bool = false) -> String {
+    static func resultLine(turns: Int?, model: String? = nil, auto: Bool = false, mode: AgentPermissionMode? = nil) -> String {
         let model = model.map { (auto ? "Auto \u{2192} " : "") + modelName($0) }
-        return (["Done", turns.map { "\($0) turn\($0 == 1 ? "" : "s")" }, model] as [String?]).compactMap { $0 }.joined(separator: " \u{00B7} ")
+        let mode = mode.flatMap { $0 == .ask ? nil : $0.status }
+        return (["Done", turns.map { "\($0) turn\($0 == 1 ? "" : "s")" }, mode, model] as [String?]).compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
     // MARK: Sign-in
@@ -460,6 +517,10 @@ enum AgentLogic {
         When the user asks you to have a pull request's agent do something, delegate with send_to_agent (the user approves \
         each message), then check back later with agents_overview and agent_session. You cannot answer another agent's \
         permission prompts; tell the user to open that agent instead.
+        Besides pull requests there are topic agents (keys topic:<id>), one per support case or other topic, often linked \
+        to a Jira ticket or Slack thread. Delegate to them the same way, with send_to_agent and their key or name. \
+        jira_issue, jira_search, slack_thread and slack_search read Jira and Slack; nothing can post there, so draft any reply \
+        as text for the user.
         """
 
     // MARK: Models

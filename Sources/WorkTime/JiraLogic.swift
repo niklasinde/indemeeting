@@ -10,6 +10,36 @@ struct JiraTicket: Equatable, Identifiable, Sendable {
     var id: String { key }
 }
 
+/// One issue as the agents' `jira_issue` tool shows it.
+struct JiraIssue: Equatable, Sendable {
+    struct Comment: Equatable, Sendable {
+        let author: String
+        let created: Date?
+        let body: String
+    }
+
+    struct Link: Equatable, Sendable {
+        let relation: String
+        let key: String
+        let summary: String
+        let status: String
+    }
+
+    let key: String
+    let summary: String
+    let status: String
+    let type: String?
+    let priority: String?
+    let assignee: String?
+    let reporter: String?
+    let created: Date?
+    let updated: Date?
+    let description: String
+    let comments: [Comment]
+    let commentTotal: Int
+    let links: [Link]
+}
+
 struct JiraSearch: Equatable, Sendable {
     var tickets: [JiraTicket]
     /// Nil when there are more pages and the count is not known.
@@ -76,6 +106,23 @@ enum JiraLogic {
     static let legacySearchPath = "/rest/api/3/search"
     static let countPath = "/rest/api/3/search/approximate-count"
     static let myselfPath = "/rest/api/3/myself"
+    static let issueFields = ["summary", "status", "issuetype", "priority", "assignee", "reporter", "created", "updated", "description",
+                              "comment", "issuelinks"]
+    static let commentLimit = 10
+    static let searchLimit = 50
+
+    static func issuePath(_ key: String) -> String { "/rest/api/3/issue/\(key)?fields=" + issueFields.joined(separator: ",") }
+
+    /// `ISD-123` from a typed key in any case, or from a pasted browse or board link; nil for anything else.
+    static func issueKey(_ input: String) -> String? {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        var candidates = [text]
+        if text.contains("://"), let url = URLComponents(string: text) {
+            candidates += (url.queryItems ?? []).filter { $0.name == "selectedIssue" }.compactMap(\.value)
+            candidates += url.path.split(separator: "/").last.map { [String($0)] } ?? []
+        }
+        return candidates.map { $0.uppercased() }.first { $0.wholeMatch(of: #/[A-Z][A-Z0-9_]+-[1-9][0-9]*/#) != nil }
+    }
 
     /// The host of a typed site: `yourco`, `yourco.atlassian.net` or a pasted `https://yourco.atlassian.net/browse/X-1`.
     static func site(_ input: String) -> String? {
@@ -113,7 +160,9 @@ enum JiraLogic {
         return request
     }
 
-    static var searchBody: [String: Any] { ["jql": jql, "fields": fields, "maxResults": maxResults] }
+    static var searchBody: [String: Any] { searchBody(jql: jql) }
+
+    static func searchBody(jql: String, max: Int = maxResults) -> [String: Any] { ["jql": jql, "fields": fields, "maxResults": max] }
 
     static func parseSearch(_ data: Data) throws -> JiraSearch {
         let response = try JSONDecoder().decode(SearchResponse.self, from: data)
@@ -135,6 +184,82 @@ enum JiraLogic {
 
     static func headline(total: Int?, shown: Int) -> String {
         total.map { "\($0) assigned to you" } ?? "\(shown)+ assigned to you"
+    }
+
+    static func parseIssue(_ data: Data) throws -> JiraIssue {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let key = object["key"] as? String,
+              let fields = object["fields"] as? [String: Any] else { throw JiraError.failed("unexpected response") }
+        func name(_ value: Any?) -> String? { (value as? [String: Any])?["name"] as? String }
+        func person(_ value: Any?) -> String? { (value as? [String: Any])?["displayName"] as? String }
+        let comment = fields["comment"] as? [String: Any] ?? [:]
+        let comments = (comment["comments"] as? [[String: Any]] ?? []).map {
+            JiraIssue.Comment(author: person($0["author"]) ?? "Someone", created: ($0["created"] as? String).flatMap(date), body: text($0["body"]))
+        }
+        let links = (fields["issuelinks"] as? [[String: Any]] ?? []).compactMap { link -> JiraIssue.Link? in
+            let type = link["type"] as? [String: Any] ?? [:]
+            let outward = link["outwardIssue"] != nil
+            guard let issue = link[outward ? "outwardIssue" : "inwardIssue"] as? [String: Any], let linked = issue["key"] as? String else { return nil }
+            let linkedFields = issue["fields"] as? [String: Any] ?? [:]
+            return JiraIssue.Link(relation: type[outward ? "outward" : "inward"] as? String ?? "relates to", key: linked,
+                                  summary: linkedFields["summary"] as? String ?? "", status: name(linkedFields["status"]) ?? "")
+        }
+        return JiraIssue(key: key, summary: fields["summary"] as? String ?? "", status: name(fields["status"]) ?? "", type: name(fields["issuetype"]),
+                         priority: name(fields["priority"]), assignee: person(fields["assignee"]), reporter: person(fields["reporter"]),
+                         created: (fields["created"] as? String).flatMap(date), updated: (fields["updated"] as? String).flatMap(date),
+                         description: text(fields["description"]), comments: comments,
+                         commentTotal: comment["total"] as? Int ?? comments.count, links: links)
+    }
+
+    /// Plain text of an Atlassian Document Format value, or of a plain string as older sites return.
+    static func text(_ document: Any?) -> String {
+        func walk(_ node: Any?) -> String {
+            if let text = node as? String { return text }
+            guard let node = node as? [String: Any] else { return "" }
+            let inner = (node["content"] as? [Any] ?? []).map(walk).joined()
+            let attrs = node["attrs"] as? [String: Any] ?? [:]
+            switch node["type"] as? String {
+            case "text": return node["text"] as? String ?? ""
+            case "hardBreak": return "\n"
+            case "mention", "emoji", "status": return attrs["text"] as? String ?? attrs["shortName"] as? String ?? ""
+            case "inlineCard", "blockCard": return attrs["url"] as? String ?? ""
+            case "listItem": return "- " + inner.trimmingCharacters(in: .whitespacesAndNewlines) + "\n"
+            case "paragraph", "heading", "codeBlock", "blockquote", "tableRow": return inner + "\n"
+            case "tableCell", "tableHeader": return inner.trimmingCharacters(in: .whitespacesAndNewlines) + " | "
+            default: return inner
+            }
+        }
+        return walk(document).replacing(#/\n{3,}/#, with: "\n\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func issueMarkdown(_ issue: JiraIssue, site: String?, now: Date) -> String {
+        let facts = [issue.type, issue.status, issue.priority.map { "priority \($0)" }].compactMap { $0 }.filter { !$0.isEmpty }
+        var lines = ["# \(issue.key) \(issue.summary)", facts.joined(separator: " \u{00B7} ")]
+        if let site, let url = browseURL(site: site, key: issue.key) { lines.append(url.absoluteString) }
+        lines.append("Assignee: \(issue.assignee ?? "unassigned") \u{00B7} Reporter: \(issue.reporter ?? "unknown")")
+        let times = [issue.created.map { "Created \(GitHubLogic.updatedText($0, now: now))" },
+                     issue.updated.map { "updated \(GitHubLogic.updatedText($0, now: now))" }].compactMap { $0 }
+        if !times.isEmpty { lines.append(times.joined(separator: ", ")) }
+        lines.append("\n## Description\n" + (issue.description.isEmpty ? "No description." : issue.description))
+        if !issue.links.isEmpty {
+            lines.append("\n## Linked issues\n" + issue.links.map { "- \($0.relation) \($0.key) \($0.summary)" + ($0.status.isEmpty ? "" : " (\($0.status))") }
+                .joined(separator: "\n"))
+        }
+        let shown = issue.comments.suffix(commentLimit)
+        let header = "\n## Comments" + (issue.commentTotal > shown.count ? " (last \(shown.count) of \(issue.commentTotal))" : "")
+        lines.append(header + "\n" + (shown.isEmpty ? "No comments." : shown.map { comment in
+            "### \(comment.author)" + (comment.created.map { ", \(GitHubLogic.updatedText($0, now: now))" } ?? "") + "\n" + comment.body
+        }.joined(separator: "\n\n")))
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    static func searchMarkdown(_ search: JiraSearch, jql: String, site: String?, now: Date) -> String {
+        guard !search.tickets.isEmpty else { return "No issues match \(jql).\n" }
+        let count = search.total.map { "\($0) issue\($0 == 1 ? "" : "s")" } ?? "\(search.tickets.count)+ issues"
+        return "\(count) for \(jql)\n" + search.tickets.map { ticket in
+            let facts = [ticket.status, ticket.priority, ticket.updated.map { "updated \(GitHubLogic.updatedText($0, now: now))" }].compactMap { $0 }
+            let url = site.flatMap { browseURL(site: $0, key: ticket.key) }.map { "\n  \($0.absoluteString)" } ?? ""
+            return "- \(ticket.key) \(ticket.summary) \u{00B7} " + facts.joined(separator: " \u{00B7} ") + url
+        }.joined(separator: "\n") + "\n"
     }
 
     private static func date(_ text: String) -> Date? {
@@ -178,7 +303,8 @@ enum JiraLogic {
 
 /// An API token in the app's secrets file and nowhere else.
 struct TokenStore {
-    static let jira = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"), account: "api-token")
+    static let jiraService = "com.niklasinde.MeetingRecorder.jira"
+    static let jira = TokenStore(secrets: AppSecretStore(service: jiraService), account: "api-token")
     static let slackService = "com.niklasinde.MeetingRecorder.slack"
     static let slack = TokenStore(secrets: AppSecretStore(service: slackService), account: "user-token")
 

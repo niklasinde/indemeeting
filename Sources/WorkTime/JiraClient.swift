@@ -22,18 +22,29 @@ struct JiraClient: Sendable {
 
     /// The open tickets assigned to the user, through the current search endpoint or the older one where it is missing.
     func assigned() async throws -> JiraSearch {
-        let data: Data
-        do {
-            data = try await send(path: JiraLogic.searchPath, body: JiraLogic.searchBody)
-        } catch JiraError.notFound {
-            data = try await send(path: JiraLogic.legacySearchPath, body: JiraLogic.searchBody)
-        }
-        var search: JiraSearch
-        do { search = try JiraLogic.parseSearch(data) } catch { throw JiraError.failed("unexpected response") }
+        var search = try await search(body: JiraLogic.searchBody)
         if search.total == nil {
             search.total = try? JiraLogic.parseCount(await send(path: JiraLogic.countPath, body: ["jql": JiraLogic.filter]))
         }
         return search
+    }
+
+    func search(jql: String, max: Int) async throws -> JiraSearch {
+        try await search(body: JiraLogic.searchBody(jql: jql, max: max))
+    }
+
+    func issue(_ key: String) async throws -> JiraIssue {
+        try JiraLogic.parseIssue(await send(path: JiraLogic.issuePath(key)))
+    }
+
+    private func search(body: [String: Any]) async throws -> JiraSearch {
+        let data: Data
+        do {
+            data = try await send(path: JiraLogic.searchPath, body: body)
+        } catch JiraError.notFound {
+            data = try await send(path: JiraLogic.legacySearchPath, body: body)
+        }
+        do { return try JiraLogic.parseSearch(data) } catch { throw JiraError.failed("unexpected response") }
     }
 
     private func send(path: String, body: [String: Any]? = nil) async throws -> Data {

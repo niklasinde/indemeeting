@@ -449,6 +449,12 @@ private struct AssignedTickets: View {
             .buttonStyle(.plain)
             if let pr = claude.pullRequest(for: ticket.key) { OpenInClaudeCodeButton(pr: pr).padding(.trailing, 8) }
         }
+        .contextMenu {
+            Button("Open in Agent") {
+                onOpen()
+                TopicAgentStore.shared.open(ticket: ticket)
+            }
+        }
     }
 
     private var header: String {

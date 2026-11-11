@@ -24,6 +24,7 @@ final class AgentHub: ObservableObject {
 struct AgentsPage: View {
     @ObservedObject var hub: AgentHub
     @ObservedObject private var writer = AgentStateWriter.shared
+    @ObservedObject private var topics = TopicAgentStore.shared
     @AppStorage("agentListHidden") private var listHidden = false
 
     var body: some View {
@@ -36,6 +37,8 @@ struct AgentsPage: View {
             Group {
                 if hub.isMainSelected {
                     AgentView(model: hub.main, listHidden: $listHidden)
+                } else if TopicAgents.isKey(hub.selected) {
+                    AgentTopicPage(key: hub.selected, listHidden: $listHidden)
                 } else {
                     AgentPRPage(key: hub.selected, listHidden: $listHidden)
                 }
@@ -46,23 +49,72 @@ struct AgentsPage: View {
     }
 }
 
-/// The agents: Main first, then the pull requests' agents, the ones that need you first.
+/// The agents: Main first, then the pull requests' and topics' agents, the ones that need you first.
 struct AgentList: View {
     @ObservedObject var hub: AgentHub
     let rows: [AgentState]
+    @ObservedObject var topics = TopicAgentStore.shared
+    @State var creating = false
+    @State private var deleting: TopicAgent?
 
     var body: some View {
         let now = Date()
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                ForEach(rows, id: \.key) { state in
-                    Button { hub.selected = state.key } label: { row(state, now: now) }
-                        .buttonStyle(.plain)
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(rows, id: \.key) { state in
+                        Button { hub.selected = state.key } label: { row(state, now: now) }
+                            .buttonStyle(.plain)
+                            .contextMenu { if let topic = topics.topic(state.key) { menu(topic) } }
+                    }
                 }
+                .padding(8)
             }
-            .padding(8)
+            Divider()
+            footer
         }
         .background(Color.primary.opacity(0.025))
+        .sheet(isPresented: $creating) {
+            NewTopicAgentSheet { topic in
+                creating = false
+                if let topic { hub.selected = topic.key }
+            }
+        }
+        .confirmationDialog("Delete \u{201C}\(deleting?.name ?? "")\u{201D}?", isPresented: Binding { deleting != nil } set: { if !$0 { deleting = nil } }) {
+            Button("Delete Agent and Folder", role: .destructive) {
+                if let deleting { topics.delete(deleting.key) }
+            }
+        } message: {
+            Text("Removes the agent from the list and deletes its folder \((deleting?.folder ?? "") as NSString).abbreviatingWithTildeInPath). "
+                 + "Claude Code keeps its session transcripts.")
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button { creating = true } label: { Label("New Agent", systemImage: "plus") }
+                .help("An agent for a support case or other topic, linked to a Jira ticket or Slack thread")
+            Spacer()
+            if !topics.archived.isEmpty {
+                Menu {
+                    ForEach(topics.archived) { topic in
+                        Button("Unarchive \(topic.name)") { topics.setArchived(topic.key, false) }
+                    }
+                } label: { Image(systemName: "archivebox") }
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("\(topics.archived.count) archived topic agent\(topics.archived.count == 1 ? "" : "s")")
+            }
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func menu(_ topic: TopicAgent) -> some View {
+        Button("Archive") { topics.setArchived(topic.key, true) }
+        Button("Delete\u{2026}", role: .destructive) { deleting = topic }
     }
 
     private func row(_ state: AgentState, now: Date) -> some View {
@@ -71,7 +123,8 @@ struct AgentList: View {
         return HStack(alignment: .top, spacing: 8) {
             Circle().fill(Self.color(need)).frame(width: 8, height: 8).padding(.top, 5).help(need.label)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if let topic = topics.topic(state.key) { AgentTopicIcon(kind: topic.kind) }
                     Text(isMain ? "Main" : Self.reference(state)).font(.callout.weight(.medium)).lineLimit(1)
                     Spacer(minLength: 4)
                     if let updated = state.updatedAt {
@@ -106,6 +159,10 @@ struct AgentList: View {
     }
 
     private static func title(_ state: AgentState) -> String {
+        if state.isTopic {
+            let links = [state.jiraKey, state.slackURL.map { _ in "Slack thread" }].compactMap { $0 }
+            return links.isEmpty ? "Topic agent" : links.joined(separator: " \u{00B7} ")
+        }
         let reference = state.prURL.map { AgentOverview.prTitle($0) } ?? state.title
         let rest = state.title.hasPrefix(reference) ? state.title.dropFirst(reference.count).trimmingCharacters(in: .whitespaces) : state.title
         return rest.isEmpty ? (state.loaded ? "Pull request agent" : "Saved session") : rest
@@ -157,6 +214,8 @@ struct AgentView: View {
                     .help(url)
                 Button { AgentModel.openAgentLink?(pr) } label: { Label("Open PR", systemImage: "arrow.up.forward.square") }
                     .help("Open the pull request page with this agent beside it")
+            } else if let topic = model.topic {
+                AgentTopicHeader(topic: topic)
             } else {
                 Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium))
                 Button { model.chooseFolder() } label: {
@@ -172,6 +231,7 @@ struct AgentView: View {
                     .help(AgentLogic.catchUpPrompt)
             }
             AgentSessionsButton(model: model)
+            AgentPermissionPicker(model: model)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model)
         }
@@ -287,6 +347,19 @@ struct AgentModelPicker: View {
     }
 }
 
+struct AgentPermissionPicker: View {
+    @ObservedObject var model: AgentModel
+
+    var body: some View {
+        Picker("Permissions", selection: $model.permissionMode) {
+            ForEach(AgentPermissionMode.allCases) { Label($0.title, systemImage: $0.symbol).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help("Permissions: \(model.permissionMode.help)")
+    }
+}
+
 struct AgentNewSessionButton: View {
     @ObservedObject var model: AgentModel
 
@@ -320,6 +393,8 @@ struct AgentPanel: View {
                     if model.items.isEmpty {
                         Text(isMain ? "Main keeps an eye on everything: pull requests, the agents beside them, Slack and meeting action items. "
                                 + "Ask what needs you, or have it hand a prompt to a pull request\u{2019}s agent. It only reads unless you ask for more."
+                             : model.topic != nil ? "This agent works on one topic in its own folder. It reads the linked Jira ticket and Slack "
+                                + "thread and searches both, and drafts replies for you to copy; it cannot post anywhere."
                              : "Ask the agent to read, search or change code in this folder. Type @ to reference a file. Edits and commands ask first.")
                             .foregroundStyle(.secondary)
                         if isMain {
@@ -373,7 +448,7 @@ struct AgentPanel: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(radius: 2))
             } else if model.draft.isEmpty && model.items.isEmpty {
                 HStack {
-                    ForEach(isMain ? [] : AgentLogic.quickActions, id: \.title) { action in
+                    ForEach(isMain || model.topic != nil ? [] : AgentLogic.quickActions, id: \.title) { action in
                         Button(action.title) { model.draft = action.prompt }.buttonStyle(SuggestionStyle())
                     }
                 }
@@ -539,6 +614,10 @@ struct AgentSettingsSection: View {
     @ObservedObject var store: AgentRuleStore
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 22) { sections }
+    }
+
+    @ViewBuilder private var sections: some View {
         SettingsSection("Always allowed", footer: "Saved with Always allow on a permission prompt and used by every agent. A command is "
                         + "allowed when each part that is not read-only starts with one of these; send to agent is always asked.") {
             if store.rules.isEmpty {
@@ -559,7 +638,89 @@ struct AgentSettingsSection: View {
                     Button("Remove all", role: .destructive) { store.removeAll() }
                 }
             }
+            Divider().padding(.leading, 14)
+            AgentAddRuleRow(store: store, builtIn: builtIn)
         }
+        SettingsSection("Always allowed (built in)", footer: "What every agent runs without asking. Commands only when every part of the "
+                        + "line is one of these; anything the check is unsure about is asked.") {
+            if let builtIn {
+                DisclosureGroup("\(builtIn.tools.count + 1) tools, \(builtIn.commands.count) commands") {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Tools: " + (builtIn.tools + ["WorkTime\u{2019}s MCP tools except " + builtIn.alwaysAsk.map(AgentLogic.displayName)
+                            .joined(separator: ", ")]).joined(separator: ", "))
+                        ForEach(builtIn.lines, id: \.self) { Text($0) }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+            } else {
+                SettingsRow("Not found", detail: "Build the agent sidecar (npm run build in agent) to see the list") {}
+            }
+        }
+    }
+
+    var builtIn: AgentBuiltIn? = AgentBuiltIn.load(sidecars: AgentLogic.sidecarCandidates(
+        environment: ProcessInfo.processInfo.environment, resources: Bundle.main.resourceURL, sourceFile: #filePath))
+}
+
+/// Adds a rule by hand: a command prefix typed in, edits in a folder, or one of WorkTime's tools.
+private struct AgentAddRuleRow: View {
+    @ObservedObject var store: AgentRuleStore
+    let builtIn: AgentBuiltIn?
+    @State private var text = ""
+    @State private var problem: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("Add rule", text: $text, prompt: Text("Command, like gh pr view *"))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addCommand)
+                Button("Add", action: addCommand).disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+                Menu("More") {
+                    Button("Edits in a Folder\u{2026}", action: addFolder)
+                    if let builtIn {
+                        Menu("WorkTime Tool") {
+                            ForEach(AgentRules.toolChoices(MCPServer.toolNames, builtIn: builtIn), id: \.self) { tool in
+                                Button(AgentLogic.displayName(tool)) { store.add([AgentRule(kind: .tool, value: tool)]) }
+                            }
+                        }
+                    }
+                }
+                .fixedSize()
+            }
+            if let problem {
+                Text(problem).font(.caption).foregroundStyle(.red)
+            } else if case .success(let rule) = AgentRules.bashRule(text), let warning = AgentRules.warning([rule]) {
+                Label(warning, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .onChange(of: text) { problem = nil }
+    }
+
+    private func addCommand() {
+        switch AgentRules.bashRule(text) {
+        case .success(let rule):
+            store.add([rule])
+            text = ""
+        case .failure(let error): problem = error.message
+        }
+    }
+
+    private func addFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.prompt = "Allow Edits"
+        if panel.runModal() == .OK, let url = panel.url { store.add([AgentRule(kind: .edits, value: url.path)]) }
     }
 }
 

@@ -1,11 +1,11 @@
 import { dirname, resolve, sep } from "node:path";
-import { commandParts } from "./readonly.js";
+import { builtInAllowed, commandParts } from "./readonly.js";
 
 export type Rule = { kind: "bash" | "edits" | "tool"; value: string };
 
 const editTools = ["Edit", "Write"];
 /// Tools that are asked about every time, so they are never offered or matched as a rule.
-const alwaysAsk = new Set(["mcp__worktime__send_to_agent"]);
+const alwaysAsk = new Set(builtInAllowed.alwaysAsk);
 
 export function parseRules(value: unknown): Rule[] {
   if (!Array.isArray(value)) return [];

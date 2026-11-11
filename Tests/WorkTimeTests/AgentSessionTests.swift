@@ -55,8 +55,8 @@ let agentSessionTests: [(name: String, run: () throws -> Void)] = [
         check(AgentSessions.decode(Data("nope".utf8)).isEmpty && AgentSessions.decode(nil).isEmpty, "garbage")
         check(AgentSessions.lastUsed(history)["main"] == now.addingTimeInterval(-180), "last used per agent")
         check(AgentSessions.shortReference("https://github.com/acme/api/pull/7") == "api#7", "short reference")
-        check(AgentSessions.key(prURL: nil, isMain: true, folder: "/x") == AgentOverview.mainKey, "main")
-        check(AgentSessions.key(prURL: "https://github.com/acme/api/pull/7", isMain: false, folder: "/x") == "https://github.com/acme/api/pull/7", "pr")
+        check(AgentSessions.key(agent: nil, isMain: true, folder: "/x") == AgentOverview.mainKey, "main")
+        check(AgentSessions.key(agent: "https://github.com/acme/api/pull/7", isMain: false, folder: "/x") == "https://github.com/acme/api/pull/7", "pr")
     }),
 
     ("agent sessions: other transcripts in the folder leave out known and non-session files", {

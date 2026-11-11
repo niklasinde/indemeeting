@@ -7,10 +7,14 @@ extension MCPServer {
         var stateFile = AppPaths.agentState
         var inbox = AppPaths.agentInbox
         var projects = ClaudeTranscripts.projectsFolder
+        var topics = AppPaths.topicAgents
         var replyTimeout: TimeInterval = 10
         /// Slack mentions and unread DMs as Markdown, nil when Slack is not signed in.
         var slack: () -> String? = { MCPServer.slackAttention() }
     }
+
+    static let agentProperty: [String: Any] = ["type": "string",
+                                               "description": "A pull request url, or a topic agent's key (topic:<id>) or name, as agents_overview lists them."]
 
     static func agentTools(_ opened: Result<MeetingStore, Error>, sources: AgentSources = AgentSources(),
                            github: [MCPTool] = [], now: @escaping () -> Date = Date.init) -> [MCPTool] {
@@ -21,9 +25,17 @@ extension MCPServer {
             guard let file = AgentOverview.decode(data) else { throw MCPToolError("\(sources.stateFile.path) could not be read.") }
             return file
         }
+        func target(_ args: [String: Any]) throws -> AgentTarget? {
+            guard let text = [args["agent"], args["pr_url"]].compactMap({ $0 as? String })
+                .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+            switch TopicAgents.resolve(text, topics: TopicAgents.decode(try? Data(contentsOf: sources.topics))) {
+            case .success(let target): return target
+            case .failure(let error): throw MCPToolError(error.message)
+            }
+        }
         return [
             MCPTool(name: "agents_overview",
-                    description: "Every Claude agent WorkTime knows (Main and one per pull request), most urgent first: waiting for the "
+                    description: "Every Claude agent WorkTime knows (Main, one per pull request and the topic agents), most urgent first: waiting for the "
                         + "user's permission (with the tool it asks for), finished with a result the user has not seen, errored, working, "
                         + "idle. Each with its pull request url, worktime://agent link, folder, session id, last prompt and last result.",
                     properties: ["active_only": ["type": "boolean", "description": "Leave out idle agents. False when left out."]]) {
@@ -32,23 +44,25 @@ extension MCPServer {
             MCPTool(name: "agent_session",
                     description: "A compact transcript of one agent's Claude Code session: the user's prompts, the assistant's replies, "
                         + "tool calls in one line each and the final result, without thinking or tool output. Newest kept when cut.",
-                    properties: ["pr_url": ["type": "string", "description": "The pull request whose agent to read."],
-                                 "session_id": ["type": "string", "description": "A session id from agents_overview, instead of pr_url."],
+                    properties: ["agent": agentProperty,
+                                 "pr_url": ["type": "string", "description": "The pull request whose agent to read; the same as agent."],
+                                 "session_id": ["type": "string", "description": "A session id from agents_overview, instead of agent."],
                                  "max_chars": ["type": "integer", "minimum": 1000, "maximum": outputLimit,
                                                "description": "Keep at most this many characters, \(AgentTranscript.defaultLimit) when left out."]]) { args in
-                let pr = (args["pr_url"] as? String)?.trimmingCharacters(in: .whitespaces)
                 var session = (args["session_id"] as? String)?.trimmingCharacters(in: .whitespaces)
                 var cwd: String?
                 let agents = (try? stateFile())?.agents ?? []
-                if let pr, !pr.isEmpty {
-                    guard let agent = agents.first(where: { $0.prURL == pr }) else { throw MCPToolError("No agent for \(pr) in agents_overview.") }
-                    guard let id = agent.sessionID else { throw MCPToolError("The agent on \(pr) has no session yet.") }
+                if let target = try target(args) {
+                    guard let agent = agents.first(where: { $0.key == target.key }) else {
+                        throw MCPToolError("No agent for \(target.title) in agents_overview.")
+                    }
+                    guard let id = agent.sessionID else { throw MCPToolError("The agent \(target.title) has no session yet.") }
                     session = id
                     cwd = agent.folder
                 } else if let id = session {
                     cwd = agents.first { $0.sessionID == id }?.folder
                 }
-                guard let session, !session.isEmpty else { throw MCPToolError("pr_url or session_id is required.") }
+                guard let session, !session.isEmpty else { throw MCPToolError("agent or session_id is required.") }
                 guard let url = AgentTranscript.url(sessionID: session, cwd: cwd, root: sources.projects),
                       let text = try? String(contentsOf: url, encoding: .utf8) else {
                     throw MCPToolError("No transcript for session \(session).")
@@ -77,20 +91,23 @@ extension MCPServer {
                 return cut(sections.joined(separator: "\n"), at: outputLimit)
             },
             MCPTool(name: "send_to_agent",
-                    description: "Sends a prompt to a pull request's agent in WorkTime, marked as from Main. It starts when the agent is idle "
+                    description: "Sends a prompt to an agent in WorkTime, marked as from Main: a pull request's agent, or a topic agent "
+                        + "(a support case or other topic, by its key or name). It starts when the agent is idle "
                         + "and queues while it works; it is refused while the agent waits for a permission. The agent asks the user in its "
                         + "own pane for anything it wants to run. Returns the session id to read the outcome with agent_session later.",
-                    properties: ["pr_url": ["type": "string", "description": "The pull request's GitHub url."],
+                    properties: ["agent": agentProperty,
+                                 "pr_url": ["type": "string", "description": "A pull request's GitHub url; the same as agent."],
                                  "text": ["type": "string", "maxLength": AgentInbox.textLimit, "description": "The prompt for that agent."]],
-                    required: ["pr_url", "text"], readOnly: false) { args in
+                    required: ["text"], readOnly: false) { args in
+                guard let target = try target(args) else { throw MCPToolError("agent is required.") }
                 let request: AgentInbox.Request
-                switch AgentInbox.request(prURL: args["pr_url"] as? String ?? "", text: args["text"] as? String ?? "", now: now()) {
+                switch AgentInbox.request(agent: target.key, text: args["text"] as? String ?? "", now: now()) {
                 case .success(let made): request = made
                 case .failure(let error): throw MCPToolError(error.message)
                 }
                 let reply = try deliver(request, inbox: sources.inbox, timeout: sources.replyTimeout)
-                if reply.status == .rejected { throw MCPToolError(AgentInbox.replyText(reply, prURL: request.prURL)) }
-                return AgentInbox.replyText(reply, prURL: request.prURL)
+                if reply.status == .rejected { throw MCPToolError(AgentInbox.replyText(reply, title: target.title)) }
+                return AgentInbox.replyText(reply, title: target.title)
             },
         ]
     }

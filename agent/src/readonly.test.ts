@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isAutoAllowedTool, isReadOnlyCommand, nonReadOnlyParts } from "./readonly.js";
+import { builtInAllowed, handledCommands, isAutoAllowedTool, isReadOnlyCommand, nonReadOnlyParts } from "./readonly.js";
 
 test("read-only commands are allowed", () => {
   for (const command of [
@@ -168,4 +168,17 @@ test("worktime tools run without asking, except send_to_agent", () => {
   for (const tool of ["mcp__worktime__send_to_agent", "Edit", "Write", "Bash", "mcp__other__read"]) {
     assert.equal(isAutoAllowedTool(tool), false, tool);
   }
+  for (const tool of ["mcp__worktime__jira_issue", "mcp__worktime__jira_search", "mcp__worktime__slack_thread", "mcp__worktime__slack_search"]) {
+    assert.equal(isAutoAllowedTool(tool), true, tool);
+  }
+});
+
+test("the built-in list Settings shows names exactly the commands the checks know", () => {
+  const listed = builtInAllowed.commands.map((c) => c.name).sort();
+  assert.deepEqual(listed, handledCommands().sort());
+  assert.equal(new Set(listed).size, listed.length, "no duplicates");
+  for (const command of builtInAllowed.commands) {
+    assert.ok(command.anyArgs || command.note, `${command.name} has a note or runs with any arguments`);
+  }
+  assert.equal(isReadOnlyCommand("constructor"), false, "names are looked up as own keys only");
 });

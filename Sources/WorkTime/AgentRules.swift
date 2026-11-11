@@ -71,7 +71,54 @@ enum AgentRules {
             + "including ones that delete work or run anything (rm -rf, push --force, reset --hard, piping into a shell)."
     }
 
+    /// A command prefix typed in Settings, like `gh pr view` or `gh pr view *`: words a prefix rule can hold, nothing a shell
+    /// would read as an operator, quote or expansion.
+    static func bashRule(_ text: String) -> Result<AgentRule, AgentInboxError> {
+        var words = text.split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.last == "*" { words.removeLast() }
+        guard let name = words.first else { return .failure(AgentInboxError("Type a command, like gh pr view.")) }
+        guard name.wholeMatch(of: #/[\w.\/~+-]+/#) != nil, name != "for",
+              words.dropFirst().allSatisfy({ $0.wholeMatch(of: #/[\w.\/:=@,+-]+/#) != nil }) else {
+            return .failure(AgentInboxError("A rule is a command and its first words, without quotes, pipes, ; or $."))
+        }
+        return .success(AgentRule(kind: .bash, value: words.joined(separator: " ")))
+    }
+
+    /// The WorkTime MCP tools a rule can name: all but those that always ask.
+    static func toolChoices(_ names: [String], builtIn: AgentBuiltIn) -> [String] {
+        names.map { builtIn.mcpPrefix + $0 }.filter { !builtIn.alwaysAsk.contains($0) }
+    }
+
     private static func abbreviated(_ path: String, home: String = NSHomeDirectory()) -> String {
         path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+/// What the sidecar runs without asking, read from `builtin-allowed.json` beside it: the one list its checks use too.
+struct AgentBuiltIn: Decodable, Equatable {
+    struct Command: Decodable, Equatable {
+        let name: String
+        var anyArgs: Bool?
+        var note: String?
+    }
+
+    let tools: [String]
+    let mcpPrefix: String
+    let alwaysAsk: [String]
+    let commands: [Command]
+
+    static let fileName = "builtin-allowed.json"
+
+    static func decode(_ data: Data?) -> AgentBuiltIn? { data.flatMap { try? JSONDecoder().decode(AgentBuiltIn.self, from: $0) } }
+
+    /// The list beside the first built sidecar, from the same places the agent is started from.
+    static func load(sidecars: [URL], fileManager: FileManager = .default) -> AgentBuiltIn? {
+        sidecars.lazy.map { $0.deletingLastPathComponent().appendingPathComponent(fileName) }
+            .compactMap { fileManager.contents(atPath: $0.path) }.compactMap(decode).first
+    }
+
+    /// The commands in one line each: `ls`, or `git — status, log, …`.
+    var lines: [String] {
+        commands.map { command in command.note.map { "\(command.name) \u{2014} \($0)" } ?? command.name }
     }
 }

@@ -18,8 +18,8 @@ enum AgentSessions {
     static let restoreLimit = 200
     static let untitled = "Untitled session"
 
-    static func key(prURL: String?, isMain: Bool, folder: String) -> String {
-        prURL ?? (isMain ? AgentOverview.mainKey : "folder:" + folder)
+    static func key(agent: String?, isMain: Bool, folder: String) -> String {
+        agent ?? (isMain ? AgentOverview.mainKey : "folder:" + folder)
     }
 
     /// What a session is called in the list: its first prompt in one line, with the app's own prompts named.

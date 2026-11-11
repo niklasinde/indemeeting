@@ -115,7 +115,7 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
     ("agent: requests encode as single JSON lines", {
         let prompt = AgentRequest.prompt(text: "hi\nthere", cwd: "/repo", sessionID: "s1").line
         check(prompt.hasSuffix("\n") && prompt.dropLast().contains("\n") == false, "one line")
-        check(prompt == #"{"cwd":"/repo","sessionId":"s1","text":"hi\nthere","type":"prompt"}"# + "\n", "prompt \(prompt)")
+        check(prompt == #"{"cwd":"/repo","permissionMode":"default","sessionId":"s1","text":"hi\nthere","type":"prompt"}"# + "\n", "prompt \(prompt)")
         check(!AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil).line.contains("sessionId"), "no session on a new one")
         check(AgentRequest.permission(id: "4", allow: false).line == #"{"allow":false,"id":"4","type":"permission"}"# + "\n", "permission")
         check(AgentRequest.interrupt.line == #"{"type":"interrupt"}"# + "\n", "interrupt")
