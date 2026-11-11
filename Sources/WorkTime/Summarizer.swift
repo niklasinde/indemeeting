@@ -7,10 +7,10 @@ import FoundationModels
 enum Summarizer {
     /// Tries the engine chosen in Settings, then the others, skipping any that is not available. With none left, the
     /// first failure is thrown, or why Apple Intelligence is unavailable when nothing ran.
-    static func summarise(_ segments: [TranscriptSegment], names: SpeakerNames = [:], language: MeetingLanguage,
+    static func summarise(_ segments: [TranscriptSegment], names: SpeakerNames = [:], language: MeetingLanguage, context: [String] = [],
                           progress: @escaping @MainActor (ProcessingStage) -> Void) async throws
         -> (summary: MeetingSummary, engine: SummaryEngine) {
-        let lines = segments.map { $0.line(language, names: names) }
+        let lines = context + segments.map { $0.line(language, names: names) }
         var failure: Error?
         for engine in SummaryEngine.order(chosen: .stored()) {
             do {

@@ -10,6 +10,9 @@ enum Main {
         if let output = GitHubPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { GitHubPreview.run(to: output) }
         }
+        if let output = InCallPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { InCallPreview.run(to: output) }
+        }
         if let output = NotchPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { NotchPreview.run(to: output) }
         }
@@ -224,6 +227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
         AgentStateWriter.shared.start()
         AgentInboxWatcher.shared.start()
+        InCallHelp.shared.openMeeting = { [weak self] in self?.mainWindow.show(meeting: $0, at: nil) }
+        InCallHelp.shared.start(recorder: recorder, store: store)
         AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker

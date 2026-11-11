@@ -110,7 +110,11 @@ enum MeetingPipeline {
                                   progress: @escaping @MainActor (ProcessingStage) -> Void) async throws -> ProcessingResult {
         let name = audio.lastPathComponent
         do {
-            let (summary, engine) = try await Summarizer.summarise(segments, names: names, language: language, progress: progress)
+            let event = try? store.calendarEvent(of: name)
+            let context = CalendarLogic.summaryContext(title: event?.event.title, attendees: event?.event.attendees.map(\.label) ?? [],
+                                                       agenda: event?.agenda)
+            let (summary, engine) = try await Summarizer.summarise(segments, names: names, language: language, context: context,
+                                                                   progress: progress)
             try store.saveSummary(name, ParsedSummary(summary, engine: engine.model))
             return ProcessingResult(title: summary.title, unavailable: nil)
         } catch let reason as SummaryUnavailable {

@@ -23,7 +23,8 @@ final class AskPanel {
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
         }
         let models = [GitHubModel.shared.objectWillChange, JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange,
-                      SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange, ResumeModel.shared.objectWillChange]
+                      SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange, ResumeModel.shared.objectWillChange,
+                      InCallHelp.shared.objectWillChange]
         lists = Publishers.MergeMany(models).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
@@ -285,6 +286,7 @@ private struct AskPanelView: View {
     @ObservedObject private var panels = NotchPanelsModel.shared
     @ObservedObject private var slack = SlackModel.shared
     @ObservedObject private var resume = ResumeModel.shared
+    @ObservedObject private var inCall = InCallHelp.shared
 
     var body: some View {
         let shown = panels.shown
@@ -298,6 +300,7 @@ private struct AskPanelView: View {
                         marks(wings.middle, height: 22).padding(.bottom, -8)
                     }
                     if let card = resume.card { ResumeCardView(card: card, onClose: panel.collapse) }
+                    if inCall.meeting != nil && !inCall.visible.isEmpty { InCallNotchStack() }
                     if !panel.peeking { AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover) }
                     if !panel.peeking && shown.contains(panel.list) {
                         switch panel.list {
@@ -330,8 +333,12 @@ private struct AskPanelView: View {
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
-            if !panel.expanded && resume.unseen {
-                ResumeNotchDot { panel.peek() }.padding(.top, panel.barHeight)
+            if !panel.expanded && (resume.unseen || inCall.unseen > 0) {
+                HStack(spacing: 6) {
+                    if resume.unseen { ResumeNotchDot { panel.peek() } }
+                    if inCall.meeting != nil && inCall.unseen > 0 { InCallNotchBadge(count: inCall.unseen) { panel.peek(for: 15) } }
+                }
+                .padding(.top, panel.barHeight)
             }
         }
         .background(alignment: .top) {

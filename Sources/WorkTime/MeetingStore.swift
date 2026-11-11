@@ -375,6 +375,27 @@ final class MeetingStore: @unchecked Sendable {
         """,
         "ALTER TABLE meetings ADD COLUMN summary_engine TEXT",
         "ALTER TABLE meetings ADD COLUMN audio_expires_at REAL; ALTER TABLE meetings ADD COLUMN audio_deleted_at REAL;",
+        """
+        CREATE TABLE meeting_mentions (
+            meeting_id INTEGER NOT NULL REFERENCES meetings(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            key TEXT NOT NULL,
+            line TEXT NOT NULL,
+            at REAL NOT NULL,
+            PRIMARY KEY (meeting_id, kind, key)
+        );
+        CREATE INDEX meeting_mentions_key ON meeting_mentions(kind, key);
+        CREATE TABLE meeting_events (
+            meeting_id INTEGER PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
+            event_id TEXT NOT NULL,
+            series_id TEXT,
+            title TEXT NOT NULL,
+            start REAL NOT NULL,
+            end REAL NOT NULL,
+            attendees TEXT NOT NULL,
+            agenda TEXT
+        );
+        """,
     ]
 
     private static let meetingColumns = """

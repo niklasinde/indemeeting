@@ -64,16 +64,23 @@ struct RecordingDetail: View {
     @ObservedObject var library: RecordingLibrary
     @ObservedObject var playback: AudioPlayback
     @StateObject private var editor = MeetingEditor()
+    @ObservedObject private var inCall = InCallHelp.shared
 
     private var language: MeetingLanguage { library.language(of: entry) }
     private var audioUnavailable: String? { library.audioUnavailable(entry) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            content
+        HStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                content
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            if recorder.meeting == entry.audio && inCall.meeting == entry.audio {
+                Divider()
+                InCallSidebar()
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             PlayerBar(playback: playback, fallbackDuration: entry.duration ?? 0, unavailable: audioUnavailable)
         }
@@ -134,6 +141,7 @@ struct RecordingDetail: View {
                 .font(.caption)
                 .padding(.top, 2)
             }
+            MeetingMentionsLine(fileName: entry.fileName).font(.caption).foregroundStyle(.secondary).padding(.top, 2)
             if let version = library.viewedVersion {
                 EarlierVersionBar(entry: entry, version: version, library: library, processor: processor)
             }

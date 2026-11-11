@@ -28,6 +28,8 @@
     <string>WorkTime asks your browser for the address of the front tab, for the local activity log. Nothing leaves this Mac.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>WorkTime lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>WorkTime reads the invitation of the meeting you are recording, so help during the call knows its agenda and people. Nothing leaves this Mac.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
     <string>WorkTime shows your reminders in the top notch bar so you can tick them off and add new ones.</string>
     <key>NSRemindersUsageDescription</key>
