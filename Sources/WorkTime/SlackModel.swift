@@ -22,6 +22,7 @@ final class SlackModel: ObservableObject {
     var makeClient: (String) -> SlackAPI = { SlackClient(token: $0) }
     var transport: SlackTransport = SlackClient.urlSession
     private var names: [String: String] = [:]
+    private var readState = SlackReadState()
     private var pending: SlackSignIn?
     private var renewal: Task<SlackAuth, Error>?
     private var loop: Task<Void, Never>?
@@ -134,7 +135,9 @@ final class SlackModel: ObservableObject {
                 if let identity = self.identity { me = identity } else { me = try await client.identity() }
                 self.identity = me
                 let now = Date()
-                let mentions = try await client.mentions(of: me, now: now)
+                let found = try await client.mentions(of: me, now: now)
+                let (mentions, state) = await client.annotate(found, me: me.userID, marks: self.marks(now: now), cached: self.readState)
+                self.readState = state
                 let direct = try await client.directMessages(of: me, names: self.names, now: now)
                 self.names.merge(direct.names) { $1 }
                 let mentioned = Set((mentions + direct.messages).flatMap { SlackLogic.mentionedUsers(in: $0.text) }).filter { self.names[$0] == nil }
@@ -153,6 +156,26 @@ final class SlackModel: ObservableObject {
             if case .rateLimited(let seconds) = failure { return seconds }
             return nil
         }
+    }
+
+    /// Refreshes when the panel opens and the last fetch is a minute old, so a mention read in Slack meanwhile drops out.
+    func refreshIfStale(after seconds: TimeInterval = 60) {
+        guard ready, !refreshing, let fetched, Date().timeIntervalSince(fetched) > seconds else { return }
+        if case .rateLimited = error { return }
+        Task { await refresh() }
+    }
+
+    /// Hides a mention from Needs me, kept for `SlackLogic.markDays`.
+    func mark(_ message: SlackMessage, _ reason: SlackHandled) {
+        guard message.kind == .mention, message.handled == nil else { return }
+        var marks = marks(now: Date())
+        marks[message.id] = reason
+        UserDefaults.standard.set(SlackLogic.stored(marks), forKey: SlackLogic.marksKey)
+        if let index = messages.firstIndex(where: { $0.id == message.id && $0.kind == .mention }) { messages[index].handled = reason }
+    }
+
+    private func marks(now: Date) -> [String: SlackHandled] {
+        SlackLogic.marks(UserDefaults.standard.dictionary(forKey: SlackLogic.marksKey), now: now)
     }
 
     func test(token: String) async -> Result<SlackIdentity, SlackError> {
@@ -177,7 +200,9 @@ final class SlackModel: ObservableObject {
         return try await task.value
     }
 
+    /// Opens the message in Slack; a mention counts as viewed from then on.
     func open(_ message: SlackMessage) {
+        mark(message, .viewed)
         if let app = SlackLogic.deepLink(message), NSWorkspace.shared.urlForApplication(toOpen: app) != nil {
             NSWorkspace.shared.open(app)
         } else if let web = SlackLogic.webLink(message, workspace: identity?.url) {
@@ -199,6 +224,7 @@ final class SlackModel: ObservableObject {
 
     private func clear() {
         identity = nil
+        readState = SlackReadState()
         messages = []
         badge = 0
         error = nil

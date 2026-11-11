@@ -754,7 +754,13 @@ meeting action items, 30 pull requests, 20 Jira tickets and 40 Slack messages.
 **Slack** shows mentions of you from the last 7 days (`search.messages` for `<@you>`, newest first) and DMs and group DMs with
 unread messages (`conversations.list` for `im,mpim`, then `conversations.info` for the 12 most recent for `unread_count_display`
 or `last_read`, and `conversations.history` for the latest message only where it is needed). When Slack gives no read state, it
-lists the DMs from the last 24 hours instead and says so. Sign in with your own Slack app: give it the user scopes listed in
+lists the DMs from the last 24 hours instead and says so. **Needs me** (the default) leaves out mentions you have handled: you
+replied in the thread or reacted to it, posted in the channel after it (also in a later thread), read past it (the channel's
+`last_read`, or for a thread reply the thread's own `last_read` that `conversations.replies` puts on its parent), or opened or
+dismissed (×) it in WorkTime, remembered for 8 days. Each refresh reads `conversations.history` and `conversations.info` once per
+channel (12 at most) and `conversations.replies` once per thread (8 at most); a failed call keeps the mention, rate limiting
+stops the rest, and the list refreshes when the panel opens if the last fetch is over a minute old. **All** shows every mention
+with why it is handled. The `attention` MCP tool lists the same Needs me mentions. Sign in with your own Slack app: give it the user scopes listed in
 Settings, turn on PKCE under OAuth & Permissions, add `worktime://slack-auth` as a redirect URL and paste its Client ID. Sign in
 uses OAuth v2 with PKCE and no client secret; Slack hands back a rotating user token that the app refreshes before it expires (or
 once when Slack turns it down), and asks you to sign in again when the refresh token has lapsed after 30 days unused. A pasted

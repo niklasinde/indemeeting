@@ -8,7 +8,17 @@ protocol SlackAPI: Sendable {
     func mentions(of identity: SlackIdentity, now: Date) async throws -> [SlackMessage]
     func directMessages(of identity: SlackIdentity, names: [String: String], now: Date) async throws -> SlackDirectMessages
     func userName(_ id: String) async throws -> String
+    func readState(_ plan: SlackReadPlan) async -> SlackReadState
     func revoke() async throws
+}
+
+extension SlackAPI {
+    /// The mentions with why each no longer needs the user, from fresh histories filled in by `cached` where a fetch failed.
+    func annotate(_ mentions: [SlackMessage], me: String, marks: [String: SlackHandled],
+                  cached: SlackReadState = SlackReadState()) async -> (mentions: [SlackMessage], state: SlackReadState) {
+        let state = await readState(SlackLogic.readPlan(mentions, marks: marks)).merged(over: cached)
+        return (SlackLogic.annotated(mentions, me: me, state: state, marks: marks), state)
+    }
 }
 
 /// The Slack Web API with a user token (`xoxp-`, or `xoxe.xoxp-` from a sign-in).
@@ -59,6 +69,29 @@ struct SlackClient: SlackAPI {
 
     func revoke() async throws {
         _ = try await send("auth.revoke")
+    }
+
+    /// One history per channel and one reply list per thread in `plan`. A failed call leaves its entry out; rate limiting stops the rest.
+    func readState(_ plan: SlackReadPlan) async -> SlackReadState {
+        var state = SlackReadState()
+        func fetch<T>(_ method: String, _ parameters: [String: String], _ parse: (Data) throws -> T) async throws -> T? {
+            do { return try parse(await send(method, parameters)) } catch let error as SlackError {
+                if case .rateLimited = error { throw error }
+                return nil
+            } catch { return nil }
+        }
+        do {
+            for channel in plan.channels {
+                guard var history = try await fetch("conversations.history", SlackLogic.historyParameters(channel), SlackLogic.parseReadHistory) else { continue }
+                history.lastRead = try await fetch("conversations.info", ["channel": channel.id], SlackLogic.parseConversationInfo)?.lastRead
+                state.channels[channel.id] = history
+            }
+            for thread in plan.threads {
+                state.threads[SlackLogic.threadKey(thread.channel, thread.ts)] =
+                    try await fetch("conversations.replies", SlackLogic.repliesParameters(thread), SlackLogic.parseReadHistory)
+            }
+        } catch {}
+        return state
     }
 
     func thread(_ link: SlackThreadLink) async throws -> (messages: [SlackRawMessage], more: Bool) {

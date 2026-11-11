@@ -36,6 +36,10 @@ struct SlackMessage: Equatable, Identifiable, Sendable {
     var permalink: String?
     /// Unread messages in a DM; nil when Slack does not say.
     var unread: Int?
+    /// The thread a mention was posted in.
+    var threadTS: String? = nil
+    /// Why a mention no longer needs the user; nil while it does.
+    var handled: SlackHandled? = nil
 
     var id: String { "\(channelID)-\(ts)" }
     var date: Date { Date(timeIntervalSince1970: Double(ts) ?? 0) }
@@ -51,6 +55,60 @@ struct SlackConversation: Equatable, Sendable {
     var lastRead: String?
     var unreadDisplay: Int?
     var latest: SlackRawMessage?
+}
+
+enum SlackHandled: String, Sendable {
+    case dismissed, viewed, replied, reacted, postedAfter, read
+
+    var label: String {
+        switch self {
+        case .dismissed: "dismissed"
+        case .viewed: "viewed"
+        case .replied: "you replied"
+        case .reacted: "you reacted"
+        case .postedAfter: "you posted after"
+        case .read: "read"
+        }
+    }
+}
+
+/// A channel's or thread's messages from `conversations.history` or `conversations.replies`, with the user's read position.
+struct SlackReadHistory: Equatable, Sendable {
+    struct Message: Equatable, Sendable {
+        let ts: String
+        var user: String?
+        var replyUsers: [String] = []
+        var reactors: [String] = []
+    }
+
+    var lastRead: String?
+    var messages: [Message] = []
+}
+
+/// What `SlackLogic.handled` decides from: channel histories by channel id, threads by `SlackLogic.threadKey`.
+struct SlackReadState: Equatable, Sendable {
+    var channels: [String: SlackReadHistory] = [:]
+    var threads: [String: SlackReadHistory] = [:]
+
+    /// Keeps this state's entries and fills the rest from `older`, so a failed fetch reuses the last good answer.
+    func merged(over older: SlackReadState) -> SlackReadState {
+        SlackReadState(channels: channels.merging(older.channels) { new, _ in new }, threads: threads.merging(older.threads) { new, _ in new })
+    }
+}
+
+/// The histories to fetch for a refresh: each channel once from its oldest open mention, and each thread a mention is in.
+struct SlackReadPlan: Equatable, Sendable {
+    struct Channel: Equatable, Sendable {
+        let id: String
+        let oldest: String
+    }
+    struct Thread: Equatable, Sendable {
+        let channel: String
+        let ts: String
+    }
+
+    var channels: [Channel] = []
+    var threads: [Thread] = []
 }
 
 struct SlackRawMessage: Equatable, Sendable {
@@ -150,6 +208,11 @@ enum SlackLogic {
     static let scopes = ["search:read", "im:history", "mpim:history", "channels:history", "groups:history", "users:read",
                          "channels:read", "groups:read", "im:read", "mpim:read"]
     static let mentionDays = 7
+    static let marksKey = "slackMentionMarks"
+    static let markDays = 8
+    static let historyLimit = 50
+    static let readChannelLimit = 12
+    static let readThreadLimit = 8
     static let mentionLimit = 20
     static let conversationLimit = 12
     static let recentWindow: TimeInterval = 24 * 3600
@@ -310,7 +373,8 @@ enum SlackLogic {
                 place = "#" + (channel.name ?? channel.id)
             }
             return SlackMessage(kind: .mention, teamID: match.team ?? teamID, channelID: channel.id, place: place,
-                                author: match.username ?? match.user, text: match.text ?? "", ts: match.ts, permalink: match.permalink, unread: nil)
+                                author: match.username ?? match.user, text: match.text ?? "", ts: match.ts, permalink: match.permalink, unread: nil,
+                                threadTS: match.permalink.flatMap(threadLink)?.threadTS)
         }
     }
 
@@ -437,6 +501,80 @@ enum SlackLogic {
         let all = direct + mentions.filter { !directIDs.contains($0.id) }
         return all.sorted { (Double($0.ts) ?? 0, $0.id) > (Double($1.ts) ?? 0, $1.id) }
     }
+
+    // MARK: Needs me
+
+    static func threadKey(_ channel: String, _ ts: String) -> String { "\(channel)/\(ts)" }
+
+    /// The histories that tell whether the mentions are handled, skipping the ones marked in WorkTime, most recent first within the limits.
+    static func readPlan(_ mentions: [SlackMessage], marks: [String: SlackHandled]) -> SlackReadPlan {
+        let open = mentions.filter { $0.kind == .mention && marks[$0.id] == nil }.sorted { (Double($0.ts) ?? 0) > (Double($1.ts) ?? 0) }
+        var plan = SlackReadPlan()
+        for mention in open {
+            if let index = plan.channels.firstIndex(where: { $0.id == mention.channelID }) {
+                plan.channels[index] = .init(id: mention.channelID, oldest: mention.ts)
+            } else if plan.channels.count < readChannelLimit {
+                plan.channels.append(.init(id: mention.channelID, oldest: mention.ts))
+            }
+            if let thread = mention.threadTS, plan.threads.count < readThreadLimit, !plan.threads.contains(.init(channel: mention.channelID, ts: thread)) {
+                plan.threads.append(.init(channel: mention.channelID, ts: thread))
+            }
+        }
+        return plan
+    }
+
+    static func historyParameters(_ channel: SlackReadPlan.Channel) -> [String: String] {
+        ["channel": channel.id, "oldest": channel.oldest, "inclusive": "true", "limit": "\(historyLimit)"]
+    }
+
+    static func repliesParameters(_ thread: SlackReadPlan.Thread) -> [String: String] {
+        ["channel": thread.channel, "ts": thread.ts, "limit": "\(threadLimit)"]
+    }
+
+    /// Messages with who replied and reacted; for a thread, the user's read position that Slack puts on its first message.
+    static func parseReadHistory(_ data: Data) throws -> SlackReadHistory {
+        let messages = try JSONDecoder().decode(History.self, from: checked(data)).messages
+        return SlackReadHistory(lastRead: messages.first { $0.thread_ts == $0.ts }?.last_read, messages: messages.map {
+            SlackReadHistory.Message(ts: $0.ts, user: $0.user, replyUsers: $0.reply_users ?? [], reactors: ($0.reactions ?? []).flatMap { $0.users ?? [] })
+        })
+    }
+
+    /// Why a mention no longer needs the user, or nil while it does. Without a history for it, it still does.
+    static func handled(_ mention: SlackMessage, me: String, state: SlackReadState, marks: [String: SlackHandled]) -> SlackHandled? {
+        guard mention.kind == .mention else { return nil }
+        if let mark = marks[mention.id] { return mark }
+        let ts = Double(mention.ts) ?? 0
+        let after = { (other: String) in (Double(other) ?? 0) > ts }
+        let thread = mention.threadTS.flatMap { state.threads[threadKey(mention.channelID, $0)] }
+        let channel = state.channels[mention.channelID]
+        let own = (mention.threadTS == nil ? channel : thread)?.messages.first { $0.ts == mention.ts }
+        if own?.replyUsers.contains(me) == true || thread?.messages.contains(where: { $0.user == me && after($0.ts) }) == true { return .replied }
+        if own?.reactors.contains(me) == true { return .reacted }
+        if channel?.messages.contains(where: { after($0.ts) && ($0.user == me || $0.replyUsers.contains(me)) }) == true { return .postedAfter }
+        let lastRead = mention.threadTS == nil ? channel?.lastRead : thread?.lastRead
+        if let lastRead, (Double(lastRead) ?? 0) >= ts { return .read }
+        return nil
+    }
+
+    static func annotated(_ mentions: [SlackMessage], me: String, state: SlackReadState, marks: [String: SlackHandled]) -> [SlackMessage] {
+        mentions.map { mention in
+            var copy = mention
+            copy.handled = handled(mention, me: me, state: state, marks: marks)
+            return copy
+        }
+    }
+
+    /// The mentions dismissed or viewed in WorkTime, as stored by message id, without the ones older than `markDays`.
+    static func marks(_ stored: Any?, now: Date) -> [String: SlackHandled] {
+        let cutoff = now.timeIntervalSince1970 - Double(markDays) * 86400
+        return ((stored as? [String: String]) ?? [:]).reduce(into: [:]) { marks, entry in
+            guard let mark = SlackHandled(rawValue: entry.value), let ts = entry.key.split(separator: "-").last.flatMap({ Double($0) }),
+                  ts >= cutoff else { return }
+            marks[entry.key] = mark
+        }
+    }
+
+    static func stored(_ marks: [String: SlackHandled]) -> [String: String] { marks.mapValues(\.rawValue) }
 
     // MARK: Text
 
@@ -593,6 +731,11 @@ enum SlackLogic {
         let user: String?
         let bot_id: String?
         let username: String?
+        var thread_ts: String? = nil
+        var last_read: String? = nil
+        var reply_users: [String]? = nil
+        var reactions: [Reaction]? = nil
+        struct Reaction: Decodable { let users: [String]? }
     }
 
     private struct ConversationList: Decodable {

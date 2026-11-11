@@ -40,6 +40,30 @@ private func message(_ kind: SlackMessage.Kind, _ channel: String, _ ts: String)
     SlackMessage(kind: kind, teamID: "T0ACME", channelID: channel, place: channel, author: nil, text: "", ts: ts, permalink: nil, unread: nil)
 }
 
+private let historyFixture = Data("""
+{"ok":true,"has_more":false,"messages":[
+ {"ts":"\(ts(100))","user":"U0ANNA","text":"thread started later","reply_count":2,"reply_users":["U0BO","U0ME"]},
+ {"ts":"\(ts(200))","user":"U0BO","text":"follow-up"},
+ {"ts":"\(ts(300))","user":"U0ANNA","text":"<@U0ME> deploy?","reactions":[{"name":"eyes","users":["U0BO"],"count":1}]},
+ {"ts":"\(ts(400))","user":"U0BO","text":"<@U0ME> ping","reactions":[{"name":"+1","users":["U0ME"],"count":1}]},
+ {"ts":"\(ts(500))","user":"U0BO","text":"<@U0ME> question","reply_count":1,"reply_users":["U0ME"]}
+]}
+""".utf8)
+
+private let repliesFixture = Data("""
+{"ok":true,"has_more":false,"messages":[
+ {"ts":"\(ts(3000))","thread_ts":"\(ts(3000))","user":"U0ANNA","text":"root","reply_users":["U0BO"],"subscribed":true,"last_read":"\(ts(2500))"},
+ {"ts":"\(ts(2900))","thread_ts":"\(ts(3000))","user":"U0BO","text":"<@U0ME> before read"},
+ {"ts":"\(ts(2000))","thread_ts":"\(ts(3000))","user":"U0BO","text":"<@U0ME> after read"}
+]}
+""".utf8)
+
+private func mention(_ channel: String, _ ts: String, thread: String? = nil) -> SlackMessage {
+    var copy = message(.mention, channel, ts)
+    copy.threadTS = thread
+    return copy
+}
+
 private final class Calls: @unchecked Sendable {
     var methods: [String] = []
 }
@@ -334,5 +358,97 @@ let slackTests: [(name: String, run: () throws -> Void)] = [
                   error.message)
         }
         check(SecretRedaction.redact("token xoxe.xoxp-1-abc end", key: nil) == "token xox\u{2026} end", "redacted")
+    }),
+
+    ("a mention's thread comes from its permalink", {
+        let search = Data("""
+        {"ok":true,"messages":{"matches":[{"ts":"\(ts(60))","text":"<@U0ME>","user":"U0BO","channel":{"id":"C0DEV","name":"dev"},
+         "permalink":"https://acme.slack.com/archives/C0DEV/p1792999940000000?thread_ts=1792999000.000100&cid=C0DEV"}]}}
+        """.utf8)
+        let mentions = try SlackLogic.parseMentions(search, teamID: "T0ACME", me: "U0ME", now: now)
+        check(mentions.first?.threadTS == "1792999000.000100", "\(String(describing: mentions.first?.threadTS))")
+        check(try SlackLogic.parseMentions(searchFixture, teamID: "T0ACME", me: "U0ME", now: now).allSatisfy { $0.threadTS == nil }, "top level")
+    }),
+
+    ("the read plan fetches each channel once from its oldest open mention and each thread once, skipping marked mentions", {
+        let mentions = [mention("C0DEV", "300.0"), mention("C0DEV", "100.0"), mention("C0OPS", "250.0", thread: "200.0"),
+                        mention("C0OPS", "260.0", thread: "200.0"), mention("C0OLD", "50.0"), message(.direct, "D0ANNA", "400.0")]
+        let plan = SlackLogic.readPlan(mentions, marks: ["C0OLD-50.0": .dismissed])
+        check(plan.channels == [.init(id: "C0DEV", oldest: "100.0"), .init(id: "C0OPS", oldest: "250.0")], "\(plan.channels)")
+        check(plan.threads == [.init(channel: "C0OPS", ts: "200.0")], "\(plan.threads)")
+        check(SlackLogic.historyParameters(plan.channels[0]) == ["channel": "C0DEV", "oldest": "100.0", "inclusive": "true", "limit": "50"], "history")
+        let many = (0..<30).map { mention("C\($0)", "\(1000 + $0).0", thread: "\($0).0") }
+        let capped = SlackLogic.readPlan(many, marks: [:])
+        check(capped.channels.count == SlackLogic.readChannelLimit && capped.threads.count == SlackLogic.readThreadLimit, "limits")
+        check(capped.channels.first?.id == "C29", "most recent first")
+    }),
+
+    ("a mention needs me until I reply, react, post after it, read past it or mark it, and with no history it still does", {
+        let channel = try SlackLogic.parseReadHistory(historyFixture)
+        check(channel.messages.count == 5 && channel.messages[3].reactors == ["U0ME"] && channel.messages[0].replyUsers == ["U0BO", "U0ME"], "parsed")
+        var state = SlackReadState(channels: ["C0DEV": channel])
+        func reason(_ m: SlackMessage, marks: [String: SlackHandled] = [:]) -> SlackHandled? {
+            SlackLogic.handled(m, me: "U0ME", state: state, marks: marks)
+        }
+        check(reason(mention("C0DEV", ts(500))) == .replied, "replied in its thread")
+        check(reason(mention("C0DEV", ts(400))) == .reacted, "reacted")
+        check(reason(mention("C0DEV", ts(300))) == .postedAfter, "replied in a later thread")
+        check(reason(mention("C0DEV", ts(50))) == nil, "nothing after it")
+        check(reason(mention("C0OPS", ts(50))) == nil, "no history fails open")
+        check(reason(mention("C0DEV", ts(50)), marks: ["C0DEV-\(ts(50))": .viewed]) == .viewed, "viewed in WorkTime")
+        check(reason(message(.direct, "C0DEV", ts(500))) == nil, "DMs are not judged")
+        state.channels["C0DEV"]?.lastRead = ts(40)
+        check(reason(mention("C0DEV", ts(50))) == .read, "channel read past it")
+        state.channels["C0DEV"]?.messages.append(.init(ts: ts(10), user: "U0ME"))
+        check(reason(mention("C0DEV", ts(50))) == .postedAfter, "posting beats reading")
+    }),
+
+    ("a mention in a thread is handled by a reply after it or the thread's own read position, not the channel's", {
+        let thread = try SlackLogic.parseReadHistory(repliesFixture)
+        check(thread.lastRead == ts(2500), "the parent carries last_read")
+        var state = SlackReadState(channels: ["C0DEV": SlackReadHistory(lastRead: ts(1), messages: [])],
+                                   threads: [SlackLogic.threadKey("C0DEV", ts(3000)): thread])
+        let before = mention("C0DEV", ts(2900), thread: ts(3000)), after = mention("C0DEV", ts(2000), thread: ts(3000))
+        check(SlackLogic.handled(before, me: "U0ME", state: state, marks: [:]) == .read, "read past it in the thread")
+        check(SlackLogic.handled(after, me: "U0ME", state: state, marks: [:]) == nil, "channel read does not count for a thread")
+        state.threads[SlackLogic.threadKey("C0DEV", ts(3000))]?.messages.append(.init(ts: ts(1500), user: "U0ME"))
+        check(SlackLogic.handled(after, me: "U0ME", state: state, marks: [:]) == .replied, "replied after it")
+        let annotated = SlackLogic.annotated([before, after], me: "U0ME", state: state, marks: [:])
+        check(annotated.map(\.handled) == [.replied, .replied], "a reply after both answers both")
+    }),
+
+    ("marks older than eight days are pruned and the rest read back", {
+        let stored: [String: String] = ["C0DEV-\(ts(3600))": "dismissed", "C0OPS-\(ts(9 * 86400))": "viewed", "C0X-\(ts(60))": "bogus"]
+        let marks = SlackLogic.marks(stored, now: now)
+        check(marks == ["C0DEV-\(ts(3600))": .dismissed], "\(marks)")
+        check(SlackLogic.stored(marks) == ["C0DEV-\(ts(3600))": "dismissed"], "stored")
+        check(SlackLogic.marks(nil, now: now).isEmpty, "nothing stored")
+    }),
+
+    ("a fresh read state keeps its entries and borrows the rest from the last one", {
+        let old = SlackReadState(channels: ["C1": SlackReadHistory(lastRead: "1.0"), "C2": SlackReadHistory(lastRead: "2.0")])
+        let merged = SlackReadState(channels: ["C1": SlackReadHistory(lastRead: "9.0")]).merged(over: old)
+        check(merged.channels["C1"]?.lastRead == "9.0" && merged.channels["C2"]?.lastRead == "2.0", "\(merged)")
+    }),
+
+    ("the client reads one history and info per channel and replies per thread, leaves failures out and stops when rate limited", {
+        let calls = Calls()
+        let client = SlackClient(token: "xoxp-fake", transport: fake(calls) { method, parameters in
+            switch (method, parameters["channel"]) {
+            case ("conversations.history", "C0DEV"): return (200, historyFixture, nil)
+            case ("conversations.info", "C0DEV"): return (200, infoFixture("C0DEV", unread: nil, lastRead: ts(40), latest: nil), nil)
+            case ("conversations.history", "C0OPS"): return (200, Data(#"{"ok":false,"error":"channel_not_found"}"#.utf8), nil)
+            case ("conversations.replies", "C0DEV"): return (200, repliesFixture, nil)
+            default: return (429, Data(), "30")
+            }
+        })
+        let mentions = [mention("C0DEV", ts(50)), mention("C0OPS", ts(60)), mention("C0DEV", ts(2000), thread: ts(3000)), mention("C0RL", ts(70)),
+                        mention("C0LAST", ts(80))]
+        nonisolated(unsafe) var result: (mentions: [SlackMessage], state: SlackReadState)?
+        try blocking { result = await client.annotate(mentions, me: "U0ME", marks: [:]) }
+        check(result?.mentions.map(\.handled) == [.read, nil, .postedAfter, nil, nil], "\(String(describing: result?.mentions.map(\.handled)))")
+        check(result?.state.channels.keys.sorted() == ["C0DEV"], "failures left out")
+        check(calls.methods.filter { $0 == "conversations.history C0DEV" }.count == 1, "one history per channel: \(calls.methods)")
+        check(!calls.methods.contains { $0.contains("C0LAST") || $0.hasPrefix("conversations.replies") }, "stopped after the rate limit: \(calls.methods)")
     }),
 ]

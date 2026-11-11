@@ -72,7 +72,7 @@ extension MCPServer {
             },
             MCPTool(name: "attention",
                     description: "What needs the user right now, in one place: pull requests waiting on them, agents waiting for permission "
-                        + "or with unseen results, Slack mentions and unread DMs (when signed in), and open action items from the last "
+                        + "or with unseen results, Slack mentions they have not answered, read or dismissed and unread DMs (when signed in), and open action items from the last "
                         + "two weeks of meetings. Start here for \u{201C}what do I need to look at\u{201D}.",
                     properties: [:]) { _ in
                 var sections: [String] = []
@@ -133,16 +133,18 @@ extension MCPServer {
         throw MCPToolError("WorkTime did not take the prompt within \(Int(timeout)) seconds. Is the app running?")
     }
 
-    /// Slack mentions and unread DMs with the token the app saved, read without renewing it; nil when Slack is not set up.
+    /// Slack mentions still needing the user and unread DMs, with the token the app saved, read without renewing it; nil when Slack is not set up.
     static func slackAttention(secrets: URL = AppPaths.secrets, now: Date = Date()) -> String? {
         let store = FileSecretStore(folder: secrets, name: TokenStore.slackService)
         guard let stored = store.key(for: TokenStore.slack.account).flatMap({ String(data: $0, encoding: .utf8) }),
               let auth = SlackAuth(stored: stored) else { return nil }
         if SlackLogic.needsRefresh(auth, now: now) { return "The Slack sign-in needs renewing; open the Slack panel in WorkTime.\n" }
         let client = SlackClient(token: auth.accessToken)
-        let fetched = blocking(timeout: 15) { () async throws -> String in
+        let marks = SlackLogic.marks(CFPreferencesCopyAppValue(SlackLogic.marksKey as CFString, appDomain as CFString), now: now)
+        let fetched = blocking(timeout: 25) { () async throws -> String in
             let me = try await client.identity()
-            let mentions = try await client.mentions(of: me, now: now)
+            let mentions = await client.annotate(try await client.mentions(of: me, now: now), me: me.userID, marks: marks).mentions
+                .filter { $0.handled == nil }
             let direct = try await client.directMessages(of: me, names: [:], now: now)
             var names = direct.names
             let wanted = Set((mentions + direct.messages).flatMap { SlackLogic.mentionedUsers(in: $0.text) + [$0.author].compactMap { $0 } })

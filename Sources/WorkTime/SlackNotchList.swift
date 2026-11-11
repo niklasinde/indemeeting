@@ -1,34 +1,27 @@
 import SwiftUI
 
 enum SlackNotchFilter: String, CaseIterable, Identifiable {
-    case all, mentions, direct
+    case needsMe, all
 
-    static let storageKey = "slackNotchFilter"
+    static let storageKey = "slackNotchView"
 
     var id: String { rawValue }
     var title: String {
         switch self {
+        case .needsMe: "Needs me"
         case .all: "All"
-        case .mentions: "Mentions"
-        case .direct: "DMs"
         }
     }
 
-    func includes(_ message: SlackMessage) -> Bool {
-        switch self {
-        case .all: true
-        case .mentions: message.kind == .mention
-        case .direct: message.kind == .direct
-        }
-    }
+    func includes(_ message: SlackMessage) -> Bool { self == .all || message.handled == nil }
 }
 
-/// The notch bar's Slack list: mentions of me from the last week and DMs waiting on me, newest first.
+/// The notch bar's Slack list: unread DMs and the mentions from the last week still waiting on me, newest first; All adds the handled mentions.
 struct SlackNotchList: View {
     static let limit = 40
     let onOpen: () -> Void
     @ObservedObject private var model = SlackModel.shared
-    @AppStorage(SlackNotchFilter.storageKey) private var filter = SlackNotchFilter.all
+    @AppStorage(SlackNotchFilter.storageKey) private var filter = SlackNotchFilter.needsMe
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -38,13 +31,13 @@ struct SlackNotchList: View {
                     Text(error.message).font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
                 } else if model.fetched == nil {
                     Text("Fetching your mentions and DMs\u{2026}").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8)
-                } else if !model.unreadKnown && filter != .mentions {
+                } else if !model.unreadKnown {
                     Text("Slack gave no read state, so DMs are the ones from the last 24 hours.")
                         .font(.caption).foregroundStyle(.tertiary).padding(.horizontal, 8)
                 }
                 let rows = model.messages.filter(filter.includes)
                 if model.fetched != nil && rows.isEmpty {
-                    Text(filter == .mentions ? "No mentions this week." : "Nothing waiting on you.")
+                    Text(filter == .all ? "No mentions or unread DMs this week." : "Nothing waiting on you.")
                         .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.vertical, 4)
                 }
                 NotchScroll {
@@ -62,6 +55,7 @@ struct SlackNotchList: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
+        .onAppear { model.refreshIfStale() }
     }
 
     private var mark: some View { BrandMark.slack.scaledToFit().frame(width: 12, height: 12) }
@@ -99,10 +93,19 @@ struct SlackNotchList: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 5)
-            .padding(.horizontal, 8)
+            .padding(.leading, 8)
+            .padding(.trailing, 28)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            if message.kind == .mention && message.handled == nil {
+                Button { model.mark(message, .dismissed) } label: {
+                    Image(systemName: "xmark").font(.caption2).frame(width: 20, height: 20).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(.tertiary).help("Dismiss").padding(.trailing, 4)
+            }
+        }
         .contextMenu {
             Button("Open in Agent") {
                 onOpen()
@@ -116,6 +119,7 @@ struct SlackNotchList: View {
         if let author = message.author, author != message.place { parts.append(author) }
         parts.append(ClaudePlugin.ago(message.date, now: Date()))
         if message.kind == .direct, let unread = message.unread, unread > 1 { parts.append("\(unread) unread") }
+        if filter == .all, let handled = message.handled { parts.append(handled.label) }
         return parts.joined(separator: " \u{00B7} ")
     }
 
