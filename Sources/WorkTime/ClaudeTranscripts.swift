@@ -4,7 +4,9 @@ import Foundation
 /// listing a folder, so it is tested against a temporary folder.
 enum ClaudeTranscripts {
     /// Replaced by the debug preview, which keeps its transcripts in a scratch folder.
-    static var projectsFolder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/projects", isDirectory: true)
+    static var projectsFolder = (ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true))
+        .appendingPathComponent("projects", isDirectory: true)
 
     /// Claude Code's name for a working folder: every character that is not an ASCII letter or digit becomes "-". So
     /// `/Users/me/git/app` is `-Users-me-git-app`, `Application Support` is `Application-Support` and `.claude` is `-claude`.

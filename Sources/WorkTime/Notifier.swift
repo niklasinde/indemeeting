@@ -53,6 +53,14 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         post(content, identifier: UUID().uuidString)
     }
 
+    /// Says Main handed a pull request's agent a prompt, so it is not missed while that agent works out of sight.
+    static func postAgentMessage(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = String(body.prefix(200))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
     func withdrawMeetingStarted() {
         center.removeDeliveredNotifications(withIdentifiers: [Self.meetingIdentifier])
     }

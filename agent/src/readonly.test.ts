@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isReadOnlyCommand } from "./readonly.js";
+import { isAutoAllowedTool, isReadOnlyCommand } from "./readonly.js";
 
 test("read-only commands are allowed", () => {
   for (const command of [
@@ -69,5 +69,14 @@ test("anything that writes, runs other code or is unclear asks", () => {
     "ls 'unterminated",
   ]) {
     assert.equal(isReadOnlyCommand(command), false, command);
+  }
+});
+
+test("worktime tools run without asking, except send_to_agent", () => {
+  for (const tool of ["Read", "Grep", "Glob", "mcp__worktime__attention", "mcp__worktime__agent_session", "mcp__worktime__github_pr"]) {
+    assert.equal(isAutoAllowedTool(tool), true, tool);
+  }
+  for (const tool of ["mcp__worktime__send_to_agent", "Edit", "Write", "Bash", "mcp__other__read"]) {
+    assert.equal(isAutoAllowedTool(tool), false, tool);
   }
 });

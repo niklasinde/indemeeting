@@ -179,7 +179,8 @@ enum JiraLogic {
 /// An API token in the app's secrets file and nowhere else.
 struct TokenStore {
     static let jira = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.jira"), account: "api-token")
-    static let slack = TokenStore(secrets: AppSecretStore(service: "com.niklasinde.MeetingRecorder.slack"), account: "user-token")
+    static let slackService = "com.niklasinde.MeetingRecorder.slack"
+    static let slack = TokenStore(secrets: AppSecretStore(service: slackService), account: "user-token")
 
     let secrets: PhoneSecretStore
     let account: String

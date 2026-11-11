@@ -47,12 +47,30 @@ final class AgentClient: @unchecked Sendable {
 /// The Agent window: the transcript, the folder it works in and the session it continues.
 @MainActor
 final class AgentModel: ObservableObject {
-    @Published private(set) var items: [AgentItem] = []
-    @Published private(set) var busy = false
+    @Published private(set) var items: [AgentItem] = [] {
+        didSet { touch() }
+    }
+    @Published private(set) var busy = false {
+        didSet { touch() }
+    }
     @Published private(set) var sessionID: String? {
-        didSet { if let prURL, let sessionID { Self.prSessions[prURL] = sessionID } }
+        didSet {
+            if let prURL, let sessionID { Self.prSessions[prURL] = sessionID }
+            if isMain, prURL == nil { UserDefaults.standard.set(sessionID, forKey: AgentLogic.mainSessionKey) }
+            touch()
+        }
     }
     @Published private(set) var prURL: String?
+    /// Whether the user has seen the latest reply: false when a turn ends while no pane shows this agent.
+    @Published private(set) var resultSeen = true {
+        didSet { if oldValue != resultSeen { touch() } }
+    }
+    /// Prompts from Main waiting for the current turn to end.
+    @Published private(set) var queued: [String] = []
+    private(set) var updated: Date?
+    private var visiblePanes = 0
+    /// The overview session of the Agent window, kept across launches.
+    let isMain: Bool
     @Published var model = AgentLogic.storedModel(UserDefaults.standard.string(forKey: AgentLogic.modelKey)) {
         didSet { UserDefaults.standard.set(model, forKey: AgentLogic.modelKey) }
     }
@@ -71,8 +89,30 @@ final class AgentModel: ObservableObject {
     private var lastModel: String?
     private var turnIsAuto = false
 
-    init(folder: String? = nil) {
-        self.folder = folder ?? UserDefaults.standard.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory()
+    init(folder: String? = nil, main: Bool = false) {
+        isMain = main
+        let defaults = UserDefaults.standard
+        self.folder = folder ?? (main ? defaults.string(forKey: AgentLogic.mainFolderKey) ?? GitHubClaudeModel.repositoriesRoot.path
+                                      : defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory())
+        if main, let session = defaults.string(forKey: AgentLogic.mainSessionKey) {
+            sessionID = session
+            items = [AgentItem(id: "status-0", kind: .status("Continuing the earlier session"))]
+        }
+    }
+
+    var waitingForPermission: Bool {
+        busy && items.contains { if case .permission(_, _, _, nil) = $0.kind { true } else { false } }
+    }
+
+    private func touch() {
+        updated = Date()
+        AgentStateWriter.shared.changed()
+    }
+
+    /// A pane showing this agent appeared or went away; showing it counts as seeing its latest reply.
+    func setVisible(_ visible: Bool) {
+        visiblePanes = max(visiblePanes + (visible ? 1 : -1), 0)
+        if visiblePanes > 0 { resultSeen = true }
     }
 
     var mentionMatches: [String] {
@@ -88,7 +128,7 @@ final class AgentModel: ObservableObject {
         guard folder != self.folder else { return }
         prURL = nil
         self.folder = folder
-        UserDefaults.standard.set(folder, forKey: AgentLogic.folderKey)
+        UserDefaults.standard.set(folder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
         newSession()
         loadFiles()
     }
@@ -107,6 +147,7 @@ final class AgentModel: ObservableObject {
         sessionID = nil
         lastModel = nil
         items = []
+        queued = []
         problem = nil
     }
 
@@ -141,8 +182,30 @@ final class AgentModel: ObservableObject {
 
     func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !busy, let client = runningClient() else { return }
-        draft = ""
+        guard !text.isEmpty, !busy else { return }
+        if start(text) { draft = "" }
+    }
+
+    func catchUp() {
+        guard !busy else { return }
+        _ = start(AgentLogic.catchUpPrompt)
+    }
+
+    /// A prompt from Main: started now or after the current turn, or refused while a permission prompt waits.
+    func deliver(fromMain text: String) -> AgentInbox.Decision {
+        let decision = AgentInbox.decide(busy: busy || routing != nil, waitingForPermission: waitingForPermission, queued: queued.count)
+        switch decision {
+        case .start:
+            if !start(AgentInbox.prompt(text)) { return .reject(problem ?? "The agent could not start.") }
+        case .queue: queued.append(AgentInbox.prompt(text))
+        case .reject: break
+        }
+        return decision
+    }
+
+    @discardableResult
+    private func start(_ text: String) -> Bool {
+        guard let client = runningClient() else { return false }
         problem = nil
         items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
@@ -156,8 +219,10 @@ final class AgentModel: ObservableObject {
             routing = nil
             lastModel = picked
             turnIsAuto = auto
-            client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked))
+            client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
+                                appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : nil))
         }
+        return true
     }
 
     /// The built-in model, or Ollama when testing with it; Auto runs on Sonnet when neither answers.
@@ -201,7 +266,14 @@ final class AgentModel: ObservableObject {
         }
     }
 
+    /// Opens a pull request page with its agent; the app delegate sets it, the same as for `worktime://agent` links from outside.
+    static var openAgentLink: ((GitHubLink.Target) -> Void)?
+
     func open(_ url: URL) -> OpenURLAction.Result {
+        if let target = GitHubLink.parseAgent(url.absoluteString), let open = Self.openAgentLink {
+            open(target)
+            return .handled
+        }
         guard let target = AgentLogic.codeTarget(url) else { return .systemAction }
         if reveal?(AgentLogic.relative(target.path, to: folder)) == true { return .handled }
         AgentFiles.open(path: target.path, line: target.line)
@@ -241,14 +313,21 @@ final class AgentModel: ObservableObject {
 
     private func receive(_ line: String) {
         guard let event = AgentEvent.decode(line, cwd: folder) else { return }
-        if case .idle = event { busy = false }
         if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { sessionID = session }
+        if case .idle = event { finishTurn() }
+    }
+
+    private func finishTurn() {
+        busy = false
+        resultSeen = visiblePanes > 0
+        if !queued.isEmpty { start(queued.removeFirst()) }
     }
 
     private func exited(status: Int32, errors: String) {
         client = nil
         guard busy else { return }
         busy = false
+        resultSeen = visiblePanes > 0
         if AgentLogic.needsSignIn(errors) { return AgentLogic.appendSignIn(to: &items) }
         let tail = errors.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
         items.append(AgentItem(id: "error-\(items.count)", kind: .error("The agent stopped (exit \(status)). \(tail)")))

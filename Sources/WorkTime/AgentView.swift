@@ -7,18 +7,16 @@ final class AgentWindow {
 
     private(set) var model: AgentModel?
     private var window: AppWindow?
-    private var activityFolder: () -> String? = { nil }
 
-    func configure(activityFolder: @escaping () -> String?) {
-        self.activityFolder = activityFolder
-        let model = AgentModel()
+    /// The Main agent: one session across launches, in the repositories folder.
+    func configure() {
+        let model = AgentModel(main: true)
         self.model = model
         window = AppWindow(onClose: { model.stopClient() }) { Self.makeWindow(AgentView(model: model)) }
     }
 
     func show() {
         guard let model else { return }
-        if model.items.isEmpty, model.prURL == nil, let folder = activityFolder() { model.choose(folder: folder) }
         model.loadFiles()
         window?.show()
     }
@@ -35,7 +33,7 @@ final class AgentWindow {
 
     static func makeWindow(_ view: AgentView) -> NSWindow {
         let window = NSWindow(contentViewController: NSHostingController(rootView: view))
-        window.title = "Agent"
+        window.title = view.model.isMain ? "Main" : "Agent"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.setContentSize(NSSize(width: 820, height: 640))
         return window
@@ -56,7 +54,7 @@ struct AgentView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            Text("Agent").font(.system(size: 20, weight: .medium))
+            Text(model.isMain && model.prURL == nil ? "Main" : "Agent").font(.system(size: 20, weight: .medium))
             Button { model.chooseFolder() } label: {
                 Label((model.folder as NSString).abbreviatingWithTildeInPath, systemImage: "folder").lineLimit(1).truncationMode(.head)
             }
@@ -68,6 +66,11 @@ struct AgentView: View {
             Spacer()
             if model.sessionID != nil {
                 Text("Continuing session").font(.caption).foregroundStyle(.secondary)
+            }
+            if model.isMain && model.prURL == nil {
+                Button { model.catchUp() } label: { Label("Catch up", systemImage: "sparkles") }
+                    .disabled(model.busy)
+                    .help(AgentLogic.catchUpPrompt)
             }
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model)
@@ -111,15 +114,26 @@ struct AgentPanel: View {
             composer
         }
         .environment(\.openURL, OpenURLAction { model.open($0) })
+        .onAppear { model.setVisible(true) }
+        .onDisappear { model.setVisible(false) }
     }
+
+    private var isMain: Bool { model.isMain && model.prURL == nil }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if model.items.isEmpty {
-                        Text("Ask the agent to read, search or change code in this folder. Type @ to reference a file. Edits and commands ask first.")
+                        Text(isMain ? "Main keeps an eye on everything: pull requests, the agents beside them, Slack and meeting action items. "
+                                + "Ask what needs you, or have it hand a prompt to a pull request\u{2019}s agent. It only reads unless you ask for more."
+                             : "Ask the agent to read, search or change code in this folder. Type @ to reference a file. Edits and commands ask first.")
                             .foregroundStyle(.secondary)
+                        if isMain {
+                            Button { model.catchUp() } label: { Label("Catch up", systemImage: "sparkles") }
+                                .buttonStyle(.borderedProminent)
+                                .help(AgentLogic.catchUpPrompt)
+                        }
                     }
                     ForEach(model.items) { item in
                         AgentItemRow(item: item, folder: model.folder) { model.answer(item, allow: $0) }
@@ -166,7 +180,7 @@ struct AgentPanel: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(radius: 2))
             } else if model.draft.isEmpty && model.items.isEmpty {
                 HStack {
-                    ForEach(AgentLogic.quickActions, id: \.title) { action in
+                    ForEach(isMain ? [] : AgentLogic.quickActions, id: \.title) { action in
                         Button(action.title) { model.draft = action.prompt }.buttonStyle(SuggestionStyle())
                     }
                 }
@@ -205,11 +219,22 @@ private struct AgentItemRow: View {
         case .user(let text):
             HStack {
                 Spacer(minLength: 80)
-                Text(text)
-                    .textSelection(.enabled)
+                if let message = AgentInbox.fromMain(text) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("From Main", systemImage: "sparkles").font(.caption.weight(.medium)).foregroundStyle(.purple)
+                        Text(message).textSelection(.enabled)
+                    }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(Color.purple.opacity(0.12)))
+                    .help("Sent by the Main agent, approved by you there")
+                } else {
+                    Text(text)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
+                }
             }
         case .text(let text):
             AnswerText(text: AgentLogic.linkifiedCodeReferences(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) })

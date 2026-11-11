@@ -5,7 +5,7 @@ import Foundation
 
 let sidebarTests: [(name: String, run: () throws -> Void)] = [
     ("sidebar lists Meetings above Activity, GitHub, Chat, Claude API and Agent", {
-        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Claude API", "Agent"],
+        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Claude API", "Main"],
               "order \(SidebarSection.allCases.map(\.title))")
         check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI, .agent], "chat, Claude API and Agent open their windows")
     }),

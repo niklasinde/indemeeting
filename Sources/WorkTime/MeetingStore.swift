@@ -18,6 +18,10 @@ enum AppPaths {
     static var claudeInbox: URL { support.appendingPathComponent("claude-events.jsonl") }
     static var secrets: URL { support.appendingPathComponent("Secrets", isDirectory: true) }
     static var commandLineFolder: URL { support.appendingPathComponent("bin", isDirectory: true) }
+    /// The agents the app knows, for the MCP server's agent tools.
+    static var agentState: URL { support.appendingPathComponent(AgentOverview.fileName) }
+    /// Prompts the MCP server hands the app for a pull request's agent.
+    static var agentInbox: URL { support.appendingPathComponent("agent-inbox", isDirectory: true) }
 
     private static var support: URL {
         dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]

@@ -13,7 +13,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .gitHub: return "GitHub"
         case .chat: return "Chat"
         case .claudeAPI: return "Claude API"
-        case .agent: return "Agent"
+        case .agent: return "Main"
         }
     }
 
@@ -35,7 +35,7 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .gitHub: return "Your pull requests, read through the GitHub CLI"
         case .chat: return "Ask about your meetings and work (\u{2318}\u{21E7}A)"
         case .claudeAPI: return "Chat with Claude through the Anthropic API, with your own key"
-        case .agent: return "An agent that reads, searches and edits code in a folder, with your API key"
+        case .agent: return "Your overview agent: what needs you across pull requests, their agents, Slack and meetings"
         }
     }
 

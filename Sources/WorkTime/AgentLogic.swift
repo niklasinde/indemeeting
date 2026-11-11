@@ -44,17 +44,18 @@ enum AgentEvent: Equatable {
 
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
-    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil)
+    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil)
     case permission(id: String, allow: Bool)
     case interrupt
 
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model):
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt):
             object = ["type": "prompt", "text": text, "cwd": cwd]
             if let sessionID { object["sessionId"] = sessionID }
             if let model { object["model"] = model }
+            if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
         case .permission(let id, let allow): object = ["type": "permission", "id": id, "allow": allow]
         case .interrupt: object = ["type": "interrupt"]
         }
@@ -434,6 +435,26 @@ enum AgentLogic {
         "Review \(url). Use the worktime github_pr tool and `gh pr diff`; don't check out the branch."
             + (hasCheckout ? "" : " There is no local checkout of \(repo), so read the code with gh.")
     }
+
+    // MARK: Main
+
+    static let mainSessionKey = "agentMainSession"
+    static let mainFolderKey = "agentMainFolder"
+    static let catchUpPrompt = "What do I need to look at right now?"
+
+    static let mainSystemPrompt = """
+        You are Main, the user's overview assistant in WorkTime. The user's repositories are under the working folder, and \
+        every pull request they work on can have its own agent in WorkTime.
+        To answer "what do I need to look at", call the worktime attention tool first (or agents_overview for the agents \
+        alone), then drill in where it matters with agent_session (what an agent did and concluded) and github_pr.
+        Answer with a short prioritised list, most urgent first, one line each with the reason. Link every pull request with \
+        its GitHub url, and link its agent as a Markdown link to the worktime://agent?pr=<url-encoded pull request url> address \
+        agents_overview gives, so the user can jump straight to it.
+        You are read-only by default: do not edit files or run commands that change anything unless the user explicitly asks.
+        When the user asks you to have a pull request's agent do something, delegate with send_to_agent (the user approves \
+        each message), then check back later with agents_overview and agent_session. You cannot answer another agent's \
+        permission prompts; tell the user to open that agent instead.
+        """
 
     // MARK: Models
 

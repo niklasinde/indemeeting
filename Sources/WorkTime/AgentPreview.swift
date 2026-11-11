@@ -37,6 +37,16 @@ enum AgentPreview {
             }
             model.open(pr: GitHubLink.Target(repo: "niklasinde/worktime", number: 42), checkout: URL(fileURLWithPath: repo))
             await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-pr-light.png"))
+            let main = AgentModel(folder: NSHomeDirectory() + "/git", main: true)
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+                main.preview([])
+                await save(main, appearance: appearance, to: output.appendingPathComponent("main-empty-\(name).png"))
+                main.preview(catchUp())
+                await save(main, appearance: appearance, to: output.appendingPathComponent("main-catchup-\(name).png"))
+            }
+            model.preview([AgentItem(id: "user-0", kind: .user(AgentInbox.prompt("Add the missing downgrade to the migration and push.")))]
+                          + Array(sample().dropFirst().prefix(4)))
+            await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-from-main-light.png"))
             exit(0)
         }
         app.run()
@@ -98,6 +108,36 @@ enum AgentPreview {
         try? await Task.sleep(nanoseconds: 900_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    /// Main answering Catch up, then asking to hand a prompt to a pull request's agent.
+    private static func catchUp() -> [AgentItem] {
+        let api = "https://github.com/quiddly-com/finq.api/pull/2591", admin = "https://github.com/quiddly-com/finq.admin-ui/pull/664"
+        let review = "https://github.com/quiddly-com/finq.client-ui/pull/412"
+        var items = [AgentItem(id: "user-0", kind: .user(AgentLogic.catchUpPrompt))]
+        let events: [AgentEvent] = [
+            .toolUse(id: "1", tool: "mcp__worktime__attention", summary: "", detail: ""),
+            .toolResult(id: "1", content: "## Pull requests …", isError: false, auto: false),
+            .toolUse(id: "2", tool: "mcp__worktime__agent_session", summary: "quiddly-com/finq.api#2591", detail: ""),
+            .toolResult(id: "2", content: "Session …", isError: false, auto: false),
+            .text("""
+                Most urgent first:
+
+                1. **finq.admin-ui#664** \u{2014} its agent is waiting for you to allow `npm run lint -- --fix`. [Open the agent](\(GitHubLink.agentLink(for: admin)))
+                2. **finq.api#2591** \u{2014} the review finished 12 min ago and you haven't seen it: the migration has no downgrade and the tests skip the VAT path. [PR](\(api)) \u{00B7} [agent](\(GitHubLink.agentLink(for: api)))
+                3. **finq.client-ui#412** \u{2014} Jessica asked for your review 2 h ago. [PR](\(review))
+                4. **Slack** \u{2014} Anna asked in #release whether 3.14 ships Thursday.
+                5. **Action item** from Tuesday's planning: send the VAT spec to Erik.
+                """),
+            .result(sessionID: "preview-main", isError: false, text: "", turns: 3, model: "claude-sonnet-5-5"),
+        ]
+        events.forEach { AgentLogic.apply($0, to: &items) }
+        items.append(AgentItem(id: "user-\(items.count)", kind: .user("Have the finq.api agent add the downgrade")))
+        AgentLogic.apply(.permissionRequest(id: "9", tool: "mcp__worktime__send_to_agent",
+                                            summary: "quiddly-com/finq.api#2591, Add the missing downgrade to the migration and push.",
+                                            detail: "{\n  \"pr_url\" : \"\(api)\",\n  \"text\" : \"Add the missing downgrade to the migration and push.\"\n}"),
+                         to: &items)
+        return items
     }
 
     private static func sample() -> [AgentItem] {

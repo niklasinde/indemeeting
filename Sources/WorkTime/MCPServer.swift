@@ -5,10 +5,11 @@ struct MCPTool {
     let description: String
     let properties: [String: [String: Any]]
     var required: [String] = []
+    var readOnly = true
     let run: ([String: Any]) throws -> String
 
     var listing: [String: Any] {
-        ["name": name, "description": description, "annotations": ["readOnlyHint": true, "openWorldHint": false],
+        ["name": name, "description": description, "annotations": ["readOnlyHint": readOnly, "openWorldHint": false],
          "inputSchema": ["type": "object", "properties": properties, "additionalProperties": false]
             .merging(required.isEmpty ? [:] : ["required": required]) { $1 }]
     }
@@ -25,7 +26,8 @@ struct MCPServer {
     static let protocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
     static let instructions = """
         Read-only access to WorkTime on this Mac: the user's meetings (summaries, action items, notes, transcripts \
-        with speakers) and tracked activity (apps, repositories, branches, tickets, Claude Code sessions, hours).
+        with speakers), tracked activity (apps, repositories, branches, tickets, Claude Code sessions, hours), cached pull \
+        requests and the app's Claude agents. send_to_agent is the one tool that acts: it hands a prompt to a pull request's agent.
         """
 
     let tools: [MCPTool]
@@ -91,7 +93,8 @@ struct MCPServer {
     static func runFromCommandLine() -> Never {
         let store = Result { try MeetingStore.openReadOnly() }
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
-        let server = MCPServer(tools: meetingTools(store) + githubTools(store), version: version)
+        let github = githubTools(store)
+        let server = MCPServer(tools: meetingTools(store) + github + agentTools(store, github: github), version: version)
         while let line = readLine() {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty, let response = server.handle(line) else { continue }
             FileHandle.standardOutput.write(Data((response + "\n").utf8))

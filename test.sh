@@ -74,6 +74,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/SidebarLogic.swift \
     Sources/WorkTime/UpgradeLogic.swift \
     Sources/WorkTime/AgentLogic.swift \
+    Sources/WorkTime/AgentOverviewLogic.swift \
+    Sources/WorkTime/MCPAgents.swift \
     Tests/WorkTimeTests/Tests.swift \
     Tests/WorkTimeTests/StoreTests.swift \
     Tests/WorkTimeTests/AudioRetentionTests.swift \
@@ -112,6 +114,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/LocalLLMTests.swift \
     Tests/WorkTimeTests/LiveTranscriptTests.swift \
     Tests/WorkTimeTests/AgentTests.swift \
+    Tests/WorkTimeTests/AgentOverviewTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

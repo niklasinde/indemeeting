@@ -217,12 +217,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         ClaudeAPIWindow.shared.configure(store: store)
-        AgentWindow.shared.configure { [tracker] in
-            tracker.current.flatMap { block in
-                (block.key.claude.first { $0.id == block.key.claudeFocus } ?? block.key.claude.first)
-                    .flatMap { ActivityLogic.claudeCheckout(cwd: $0.folder)?.checkout.path }
-            }
-        }
+        AgentWindow.shared.configure()
+        AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
+        AgentStateWriter.shared.start()
+        AgentInboxWatcher.shared.start()
         AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
@@ -287,6 +285,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    func openAgent(_ target: GitHubLink.Target) {
+        mainWindow.showGitHub()
+        GitHubModel.shared.open(target)
+        PRAgents.shared.open(target)
+    }
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where AppURL.accepts(scheme: url.scheme) {
             if SlackLogic.isCallback(url) {
@@ -295,9 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 continue
             }
             if let target = GitHubLink.parseAgent(url.absoluteString) {
-                mainWindow.showGitHub()
-                GitHubModel.shared.open(target)
-                PRAgents.shared.open(target)
+                openAgent(target)
                 continue
             }
             guard let target = GitHubLink.parse(url.absoluteString) else {
@@ -381,7 +383,7 @@ struct MenuContent: View {
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
         Button("Chat\u{2026}") { ChatWindow.shared.show() }
             .keyboardShortcut("a", modifiers: [.command, .shift])
-        Button("Agent\u{2026}") { AgentWindow.shared.show() }
+        Button("Main Agent\u{2026}") { AgentWindow.shared.show() }
         Menu("Languages: \(listened.summary)") {
             ForEach(MeetingLanguage.allCases) { language in
                 Toggle(language.displayName, isOn: listened.isListening(language)).disabled(listened.isOnly(language))

@@ -152,3 +152,10 @@ export function isReadOnlyCommand(command: string): boolean {
   }
   return loops === 0;
 }
+
+/// Tools that run without asking: reading files and the WorkTime MCP tools, except send_to_agent, which hands a prompt to
+/// another agent and so is asked about every time.
+export function isAutoAllowedTool(tool: string): boolean {
+  if (["Read", "Grep", "Glob"].includes(tool)) return true;
+  return tool.startsWith("mcp__worktime__") && tool !== "mcp__worktime__send_to_agent";
+}

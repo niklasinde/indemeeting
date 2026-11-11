@@ -1,15 +1,14 @@
 import { createInterface } from "node:readline";
 import { query, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
-import { isReadOnlyCommand } from "./readonly.js";
+import { isAutoAllowedTool, isReadOnlyCommand } from "./readonly.js";
 
 type Input =
-  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string }
+  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string; appendSystemPrompt?: string }
   | { type: "permission"; id: string; allow: boolean }
   | { type: "interrupt" };
 
 const model = process.env.WORKTIME_AGENT_MODEL ?? "claude-opus-5-5";
 const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
-const readOnly = (tool: string) => ["Read", "Grep", "Glob"].includes(tool) || tool.startsWith("mcp__worktime__");
 const autoAllowed = new Set<string>();
 const resultLimit = 4000;
 const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
@@ -85,13 +84,14 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       cwd: input.cwd,
       resume: input.sessionId,
       tools,
+      ...(input.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.appendSystemPrompt } } : {}),
       permissionMode: "default",
       settingSources: ["project"],
       env,
       mcpServers: mcpServers(),
       abortController: abort,
       canUseTool: (tool, toolInput, { toolUseID }) => new Promise<PermissionResult>((resolve) => {
-        if (readOnly(tool)) return resolve({ behavior: "allow" });
+        if (isAutoAllowedTool(tool)) return resolve({ behavior: "allow" });
         if (tool === "Bash" && typeof toolInput.command === "string" && isReadOnlyCommand(toolInput.command)) {
           autoAllowed.add(toolUseID);
           return resolve({ behavior: "allow" });
