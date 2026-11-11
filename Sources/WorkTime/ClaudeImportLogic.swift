@@ -219,6 +219,14 @@ enum ClaudeSessionFiles {
     }
 
     static func locate(_ id: String, cwd: String?, root: URL = ClaudeTranscripts.projectsFolder) -> ClaudeSessionSummary? {
-        AgentTranscript.url(sessionID: id, cwd: cwd, root: root).flatMap { summary($0) }
+        guard let url = AgentTranscript.url(sessionID: id, cwd: cwd, root: root), var found = summary(url) else { return nil }
+        found.cwd = folder(recorded: found.cwd, hint: cwd, project: url.deletingLastPathComponent().lastPathComponent)
+        return found
+    }
+
+    /// The folder to resume in: Claude Code finds a session by its folder, so a session that moved folders resumes from the one
+    /// whose project folder holds its transcript.
+    static func folder(recorded: String, hint: String?, project: String) -> String {
+        [hint, recorded].compactMap { $0 }.first { ClaudeTranscripts.folderName(cwd: $0) == project } ?? hint ?? recorded
     }
 }

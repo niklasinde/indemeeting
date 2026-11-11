@@ -36,6 +36,12 @@ private func pr(_ url: String, title: String, repo: String = "quiddly-com/finq.a
 }
 
 let claudeImportTests: [(name: String, run: () throws -> Void)] = [
+    ("import folder: a session that moved resumes from the folder holding its transcript", {
+        let project = ClaudeTranscripts.folderName(cwd: "/Users/me/git/app")
+        check(ClaudeSessionFiles.folder(recorded: "/tmp/scratch", hint: "/Users/me/git/app", project: project) == "/Users/me/git/app", "hint matches")
+        check(ClaudeSessionFiles.folder(recorded: "/Users/me/git/app", hint: "/elsewhere", project: project) == "/Users/me/git/app", "recorded matches")
+        check(ClaudeSessionFiles.folder(recorded: "/tmp/scratch", hint: nil, project: project) == "/tmp/scratch", "no match keeps the recorded one")
+    }),
     ("import link: a session id and an optional absolute folder", {
         check(ClaudeImport.parseLink("worktime://agent?session=\(sessionID)") == ClaudeImport.Link(session: sessionID, cwd: nil), "id only")
         check(ClaudeImport.parseLink("worktime://agent?session=\(sessionID.uppercased())&cwd=%2FUsers%2Fme%2Fgit%2Fapp")
