@@ -558,6 +558,14 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   checkout with a review prompt ready, and continues its saved session id. Only the three most recently opened keep their
   sidecar; the others start it again on the next prompt. References to files the pull request changes open their diff on
   the page. The chevron hides the pane, the cross stops the agent and drops its transcript.
+- **Continuing a Claude Code session.** `worktime://agent?session=<id>[&cwd=<folder>]`, **Import Claude Code Session…** in the
+  agents list's footer menu (recent sessions across all projects that no agent has, searchable) and the plugin's
+  `continue-in-worktime` skill hand a Claude Code session to an agent. When the session's folder is a checkout on the branch of
+  an open pull request in the GitHub cache it goes to that pull request's agent; otherwise to a new topic agent named after its
+  first prompt, working in the session's own folder (never deleted with the agent). The transcript shows at once; the first
+  prompt forks the session (`forkSession`), so Claude Code's original transcript is only read. **Open in Claude Code…** (the
+  agent's context menu and header menu) goes the other way: `claude --resume <id>` in the chosen terminal app, after a
+  warning not to use both at once.
 
 `WorkTime --render-agent <folder>` (debug builds) saves PNGs of the window with a made-up transcript;
 `WorkTime --render-github <folder> --agent-embed` the pull request page with the agent in each placement and a long draft in the composer.

@@ -201,7 +201,7 @@ struct BranchIndex: Equatable {
         return ActivityLogic.branch(fromHEAD: head)
     }
 
-    private static func gitFolder(of repo: URL, fileManager: FileManager) -> URL? {
+    static func gitFolder(of repo: URL, fileManager: FileManager = .default) -> URL? {
         let git = repo.appendingPathComponent(".git")
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: git.path, isDirectory: &isDirectory) else { return nil }
@@ -213,7 +213,7 @@ struct BranchIndex: Equatable {
     }
 
     /// A worktree's git folder points at the shared one through its `commondir` file.
-    private static func commonFolder(_ git: URL, fileManager: FileManager) -> URL {
+    static func commonFolder(_ git: URL, fileManager: FileManager = .default) -> URL {
         guard let common = try? String(contentsOf: git.appendingPathComponent("commondir"), encoding: .utf8) else { return git }
         let path = common.trimmingCharacters(in: .whitespacesAndNewlines)
         return path.hasPrefix("/") ? URL(fileURLWithPath: path) : git.appendingPathComponent(path).standardizedFileURL

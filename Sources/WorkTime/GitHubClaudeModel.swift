@@ -375,18 +375,9 @@ final class GitHubClaudeModel: ObservableObject {
         let destination = destination == .inApp ? .terminal : destination
         switch GitHubClaude.plan(destination, cli: ClaudePlugin.findCLI(), checkout: checkout, home: home, prompt: prompt, isInstalled: isInstalled) {
         case .cliMissing:
-            return Note(text: "The Claude CLI was not found. Install it with npm install -g @anthropic-ai/claude-code.",
-                        copy: "npm install -g @anthropic-ai/claude-code")
+            return Self.cliMissing
         case .terminal(let terminal, let directory, let cli):
-            do {
-                let script = try GitHubClaude.writeLaunchFiles(prompt: resume == nil ? prompt : nil, directory: directory, cli: cli,
-                                                               flags: resume?.flags ?? [], folder: GitHubClaude.promptFolder())
-                guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: terminal.bundleID) else { return Note(text: "\(terminal.title) was not found.") }
-                NSWorkspace.shared.open([script], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-                return nil
-            } catch {
-                return Note(text: "Could not start Claude: \(error.localizedDescription)")
-            }
+            return launch(terminal, directory: directory, cli: cli, prompt: resume == nil ? prompt : nil, flags: resume?.flags ?? [])
         case .embedded:
             return nil
         case .appLink(let link):
@@ -398,6 +389,27 @@ final class GitHubClaudeModel: ObservableObject {
                 .map { NSWorkspace.shared.openApplication(at: $0, configuration: NSWorkspace.OpenConfiguration()) }
             return Note(text: "Prompt copied. Paste it in a new chat.")
         }
+    }
+
+    private static let cliMissing = Note(text: "The Claude CLI was not found. Install it with npm install -g @anthropic-ai/claude-code.",
+                                         copy: "npm install -g @anthropic-ai/claude-code")
+
+    private func launch(_ terminal: GitHubClaude.Destination, directory: URL, cli: URL, prompt: String?, flags: [String]) -> Note? {
+        do {
+            let script = try GitHubClaude.writeLaunchFiles(prompt: prompt, directory: directory, cli: cli, flags: flags, folder: GitHubClaude.promptFolder())
+            guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: terminal.bundleID) else { return Note(text: "\(terminal.title) was not found.") }
+            NSWorkspace.shared.open([script], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+            return nil
+        } catch {
+            return Note(text: "Could not start Claude: \(error.localizedDescription)")
+        }
+    }
+
+    /// Runs the Claude CLI with `flags` in `directory` in the chosen terminal app, Terminal when the choice is not one.
+    func runInTerminal(directory: URL, flags: [String]) -> Note? {
+        guard let cli = ClaudePlugin.findCLI() else { return Self.cliMissing }
+        let chosen = destination == .inApp || destination == .claudeApp ? .terminal : destination
+        return launch(isInstalled(chosen) ? chosen : .terminal, directory: directory, cli: cli, prompt: nil, flags: flags)
     }
 
     func dismissNote() { note = nil }

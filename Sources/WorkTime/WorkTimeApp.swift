@@ -308,6 +308,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 openAgent(target)
                 continue
             }
+            if let link = ClaudeImport.parseLink(url.absoluteString) {
+                mainWindow.show(section: .agent)
+                Task { await ClaudeSessionImporter.open(session: link.session, cwd: link.cwd) }
+                continue
+            }
             guard let target = GitHubLink.parse(url.absoluteString) else {
                 mainWindow.show()
                 GitHubModel.shared.showLinkNotice("Couldn't open that link")

@@ -119,6 +119,7 @@ struct AgentDockPane: View {
             AgentPermissionPicker(model: model)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).buttonStyle(.bordered).labelStyle(.titleOnly)
+            AgentOverflowMenu(model: model)
             Divider().frame(height: 14)
             DockPlacementMenu()
             Button { PRAgents.shared.hide(key) } label: { Image(systemName: "chevron.down") }

@@ -103,7 +103,7 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
     case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask,
-                chrome: Bool = false)
+                chrome: Bool = false, fork: Bool = false)
     case permission(id: String, allow: Bool)
     case mode(AgentPermissionMode)
     case rules([AgentRule])
@@ -112,10 +112,13 @@ enum AgentRequest {
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome):
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome, let fork):
             object = ["type": "prompt", "text": text, "cwd": cwd, "permissionMode": mode.rawValue]
             if chrome { object["chrome"] = true }
-            if let sessionID { object["sessionId"] = sessionID }
+            if let sessionID {
+                object["sessionId"] = sessionID
+                if fork { object["forkSession"] = true }
+            }
             if let model { object["model"] = model }
             if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
         case .mode(let mode): object = ["type": "mode", "mode": mode.rawValue]

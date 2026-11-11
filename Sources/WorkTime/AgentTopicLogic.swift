@@ -12,6 +12,8 @@ struct TopicAgent: Codable, Equatable, Identifiable, Sendable {
     var folder: String
     var created: Date
     var archived = false
+    /// The Claude Code session this agent was made to continue; its folder is that session's own.
+    var importedSession: String?
 
     var key: String { TopicAgents.prefix + id }
 
@@ -84,6 +86,11 @@ enum TopicAgents {
         return .success(TopicAgent(id: id, name: String(name.prefix(nameLimit)), jiraKey: key, slackURL: link?.url, folder: folder, created: now))
     }
 
+    /// A topic continuing a Claude Code session, working in the session's own folder.
+    static func imported(name: String, folder: String, session: String, id: String = UUID().uuidString, now: Date) -> TopicAgent {
+        TopicAgent(id: id, name: String(name.prefix(nameLimit)), folder: folder, created: now, importedSession: session)
+    }
+
     static func encode(_ topics: [TopicAgent]) -> Data { AgentInbox.encode(topics) }
 
     static func decode(_ data: Data?) -> [TopicAgent] {
@@ -139,6 +146,10 @@ enum TopicAgents {
     }
 
     static func systemPrompt(_ topic: TopicAgent) -> String {
+        if topic.importedSession != nil {
+            return "You are continuing a Claude Code session in WorkTime for \u{201C}\(topic.name)\u{201D}, in its original working folder "
+                + "\(topic.folder). Carry on where the conversation left off."
+        }
         var links: [String] = []
         if let key = topic.jiraKey { links.append("Linked Jira ticket: \(key). Read it first with the worktime jira_issue tool.") }
         if let url = topic.slackURL { links.append("Linked Slack thread: \(url). Read it first with the worktime slack_thread tool.") }

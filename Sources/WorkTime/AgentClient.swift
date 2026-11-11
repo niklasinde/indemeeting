@@ -224,6 +224,12 @@ final class AgentModel: ObservableObject {
         restore()
     }
 
+    /// Continues a Claude Code session brought in from outside; while a turn runs it only joins the list.
+    func continueImported(_ entry: AgentSessionEntry) {
+        guard busy else { return switchTo(entry) }
+        history = AgentSessionStore.update(historyKey) { AgentSessions.record(entry, in: $0) }
+    }
+
     func forget(_ id: String) {
         guard id != sessionID else { return }
         history = AgentSessionStore.update(historyKey) { AgentSessions.removing(id, from: $0) }
@@ -261,8 +267,9 @@ final class AgentModel: ObservableObject {
     private func restored(_ id: String, items restored: [AgentItem]?, title: String?) {
         guard restoring == id, sessionID == id, !busy else { return }
         restoring = nil
-        replaceItems(restored.flatMap { $0.isEmpty ? nil : $0 }
-            ?? [AgentItem(id: "status-0", kind: .status("Continuing the earlier session; its transcript was not found"))])
+        let note = ClaudeImport.record(for: id, in: Self.importRecords).map { [AgentItem(id: "import-note", kind: .status(ClaudeImport.note($0)))] } ?? []
+        replaceItems(note + (restored.flatMap { $0.isEmpty ? nil : $0 }
+            ?? [AgentItem(id: "status-0", kind: .status("Continuing the earlier session; its transcript was not found"))]))
         updated = history.first { $0.id == id }?.lastUsed ?? updated
         guard let title, history.first(where: { $0.id == id })?.title == AgentSessions.untitled else { return }
         history = AgentSessionStore.update(historyKey) { list in
@@ -318,6 +325,12 @@ final class AgentModel: ObservableObject {
         set { defaults.set(newValue, forKey: AgentLogic.prSessionsKey) }
     }
 
+    /// The Claude Code sessions continued in WorkTime, whose originals are forked rather than written to.
+    static var importRecords: [ClaudeImportRecord] {
+        get { ClaudeImport.decode(defaults.data(forKey: ClaudeImport.recordsKey)) }
+        set { defaults.set(ClaudeImport.encode(newValue), forKey: ClaudeImport.recordsKey) }
+    }
+
     /// Return in the prompt: picks the first file while an `@` mention is being typed, sends otherwise.
     func submit() {
         if let first = mentionMatches.first {
@@ -368,7 +381,7 @@ final class AgentModel: ObservableObject {
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
                                 appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : topic.map(TopicAgents.systemPrompt),
-                                mode: permissionMode, chrome: chrome))
+                                mode: permissionMode, chrome: chrome, fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords)))
         }
         return true
     }
@@ -465,8 +478,17 @@ final class AgentModel: ObservableObject {
     private func receive(_ line: String) {
         guard let event = AgentEvent.decode(line, cwd: folder) else { return }
         if case .chrome(let problem) = event { return chromeProblem = chrome ? problem : nil }
-        if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { sessionID = session }
+        if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { adopt(session) }
         if case .idle = event { finishTurn() }
+    }
+
+    /// The session the sidecar reports; a fork of an imported original replaces it in the list.
+    private func adopt(_ session: String) {
+        let previous = sessionID
+        sessionID = session
+        guard let previous, previous != session, ClaudeImport.shouldFork(previous, records: Self.importRecords) else { return }
+        Self.importRecords = ClaudeImport.forked(previous, into: session, in: Self.importRecords)
+        forget(previous)
     }
 
     private func finishTurn() {

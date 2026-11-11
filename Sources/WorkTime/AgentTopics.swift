@@ -37,6 +37,14 @@ final class TopicAgentStore: ObservableObject {
         return made
     }
 
+    /// A topic continuing a Claude Code session in the session's own folder, which is never removed with the topic.
+    func make(importing session: String, name: String, folder: String) -> TopicAgent {
+        let topic = TopicAgents.imported(name: name, folder: folder, session: session, now: Date())
+        topics.append(topic)
+        save()
+        return topic
+    }
+
     func show(_ key: String) { AgentHub.shared.show(key) }
 
     /// Open in Agent on a Jira ticket: its topic agent, made the first time with the prompt to read the ticket waiting.
@@ -67,7 +75,7 @@ final class TopicAgentStore: ObservableObject {
     func load(_ topic: TopicAgent) -> AgentModel {
         let model = models[topic.key] ?? AgentModel(folder: topic.folder)
         if models[topic.key] == nil {
-            try? FileManager.default.createDirectory(atPath: topic.folder, withIntermediateDirectories: true)
+            if let owned = TopicAgents.ownedFolder(topic, root: root) { try? FileManager.default.createDirectory(at: owned, withIntermediateDirectories: true) }
             model.open(topic: topic)
             models[topic.key] = model
         }
@@ -166,7 +174,7 @@ struct AgentTopicHeader: View {
         }
         Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: topic.folder)]) } label: { Image(systemName: "folder") }
             .buttonStyle(.borderless)
-            .help("The agent\u{2019}s own folder: \((topic.folder as NSString).abbreviatingWithTildeInPath)")
+            .help("\(topic.importedSession == nil ? "The agent\u{2019}s own folder" : "The session\u{2019}s folder"): \((topic.folder as NSString).abbreviatingWithTildeInPath)")
     }
 }
 

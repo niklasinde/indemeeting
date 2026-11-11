@@ -5,7 +5,7 @@
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p .",
-    "test": "tsc -p . && node --test dist/readonly.test.js dist/rules.test.js dist/permissions.test.js dist/chrome.test.js"
+    "test": "tsc -p . && node --test dist/readonly.test.js dist/rules.test.js dist/permissions.test.js dist/chrome.test.js dist/options.test.js"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "0.3.311"

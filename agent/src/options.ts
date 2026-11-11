@@ -4,7 +4,7 @@ import type { Mode } from "./permissions.js";
 
 export const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
 
-export type PromptOptions = { cwd: string; sessionId?: string; appendSystemPrompt?: string; chrome?: boolean };
+export type PromptOptions = { cwd: string; sessionId?: string; forkSession?: boolean; appendSystemPrompt?: string; chrome?: boolean };
 
 /// The session options that come from the prompt; the sidecar adds its environment, MCP servers, hooks and permission callback.
 export function sessionOptions(input: PromptOptions, model: string, mode: Mode): Options {
@@ -12,6 +12,7 @@ export function sessionOptions(input: PromptOptions, model: string, mode: Mode):
     model,
     cwd: input.cwd,
     resume: input.sessionId,
+    ...(input.sessionId && input.forkSession === true ? { forkSession: true } : {}),
     tools,
     ...(input.appendSystemPrompt ? { systemPrompt: { type: "preset", preset: "claude_code", append: input.appendSystemPrompt } } : {}),
     permissionMode: mode,

@@ -55,6 +55,7 @@ struct AgentList: View {
     let rows: [AgentState]
     @ObservedObject var topics = TopicAgentStore.shared
     @State var creating = false
+    @State private var importing = false
     @State private var deleting: TopicAgent?
 
     var body: some View {
@@ -65,7 +66,7 @@ struct AgentList: View {
                     ForEach(rows, id: \.key) { state in
                         Button { hub.selected = state.key } label: { row(state, now: now) }
                             .buttonStyle(.plain)
-                            .contextMenu { if let topic = topics.topic(state.key) { menu(topic) } }
+                            .contextMenu { menu(state) }
                     }
                 }
                 .padding(8)
@@ -80,13 +81,18 @@ struct AgentList: View {
                 if let topic { hub.selected = topic.key }
             }
         }
+        .sheet(isPresented: $importing) { ImportClaudeSessionSheet { importing = false } }
         .confirmationDialog("Delete \u{201C}\(deleting?.name ?? "")\u{201D}?", isPresented: Binding { deleting != nil } set: { if !$0 { deleting = nil } }) {
             Button("Delete Agent and Folder", role: .destructive) {
                 if let deleting { topics.delete(deleting.key) }
             }
         } message: {
-            Text("Removes the agent from the list and deletes its folder \((deleting?.folder ?? "") as NSString).abbreviatingWithTildeInPath). "
-                 + "Claude Code keeps its session transcripts.")
+            if deleting?.importedSession != nil {
+                Text("Removes the agent from the list. Its folder and Claude Code\u{2019}s session transcripts are kept.")
+            } else {
+                Text("Removes the agent from the list and deletes its folder \((deleting?.folder ?? "") as NSString).abbreviatingWithTildeInPath). "
+                     + "Claude Code keeps its session transcripts.")
+            }
         }
     }
 
@@ -95,6 +101,12 @@ struct AgentList: View {
             Button { creating = true } label: { Label("New Agent", systemImage: "plus") }
                 .help("An agent for a support case or other topic, linked to a Jira ticket or Slack thread")
             Spacer()
+            Menu {
+                Button("Import Claude Code Session\u{2026}") { importing = true }
+            } label: { Image(systemName: "ellipsis.circle") }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More")
             if !topics.archived.isEmpty {
                 Menu {
                     ForEach(topics.archived) { topic in
@@ -112,9 +124,16 @@ struct AgentList: View {
     }
 
     @ViewBuilder
-    private func menu(_ topic: TopicAgent) -> some View {
-        Button("Archive") { topics.setArchived(topic.key, true) }
-        Button("Delete\u{2026}", role: .destructive) { deleting = topic }
+    private func menu(_ state: AgentState) -> some View {
+        if let session = state.sessionID,
+           let folder = state.folder ?? AgentSessionStore.list(for: state.key).first(where: { $0.id == session })?.folder {
+            Button("Open in Claude Code\u{2026}") { ClaudeSessionImporter.openInClaudeCode(folder: folder, session: session) }
+        }
+        if let topic = topics.topic(state.key) {
+            Divider()
+            Button("Archive") { topics.setArchived(topic.key, true) }
+            Button("Delete\u{2026}", role: .destructive) { deleting = topic }
+        }
     }
 
     private func row(_ state: AgentState, now: Date) -> some View {
@@ -252,6 +271,7 @@ struct AgentView: View {
             .labelStyle(CompactLabelStyle(compact: compact))
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).labelStyle(CompactLabelStyle(compact: compact))
+            AgentOverflowMenu(model: model)
         }
     }
 
