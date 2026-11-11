@@ -1,15 +1,19 @@
 import { createInterface } from "node:readline";
 import { query, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { isAutoAllowedTool, isReadOnlyCommand } from "./readonly.js";
+import { matchRules, parseRules, suggestRules, type Rule } from "./rules.js";
 
 type Input =
   | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string; appendSystemPrompt?: string }
   | { type: "permission"; id: string; allow: boolean }
-  | { type: "interrupt" };
+  | { type: "interrupt" }
+  | { type: "rules"; rules: unknown };
 
 const model = process.env.WORKTIME_AGENT_MODEL ?? "claude-opus-5-5";
 const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
-const autoAllowed = new Set<string>();
+/// Tool calls allowed without asking, with the rule that allowed them when it was one of the user's.
+const autoAllowed = new Map<string, string | undefined>();
+let rules: Rule[] = [];
 const resultLimit = 4000;
 const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].includes(key)));
@@ -52,9 +56,10 @@ function forward(message: any, model: string) {
       if (!Array.isArray(message.message?.content)) break;
       for (const block of message.message.content) {
         if (block.type === "tool_result") {
+          const rule = autoAllowed.get(block.tool_use_id);
           send({
             type: "tool_result", id: block.tool_use_id, content: resultText(block.content), isError: block.is_error === true,
-            auto: autoAllowed.delete(block.tool_use_id),
+            auto: autoAllowed.delete(block.tool_use_id), rule,
           });
         }
       }
@@ -93,12 +98,17 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       canUseTool: (tool, toolInput, { toolUseID }) => new Promise<PermissionResult>((resolve) => {
         if (isAutoAllowedTool(tool)) return resolve({ behavior: "allow" });
         if (tool === "Bash" && typeof toolInput.command === "string" && isReadOnlyCommand(toolInput.command)) {
-          autoAllowed.add(toolUseID);
+          autoAllowed.set(toolUseID, undefined);
+          return resolve({ behavior: "allow" });
+        }
+        const rule = matchRules(rules, tool, toolInput, input.cwd);
+        if (rule) {
+          autoAllowed.set(toolUseID, rule);
           return resolve({ behavior: "allow" });
         }
         const id = String(++nextPermission);
         pending.set(id, resolve);
-        send({ type: "permission_request", id, tool, input: toolInput });
+        send({ type: "permission_request", id, tool, input: toolInput, offer: suggestRules(tool, toolInput, input.cwd) });
       }),
     },
   });
@@ -136,6 +146,9 @@ function handle(line: string) {
       resolve?.(input.allow ? { behavior: "allow" } : { behavior: "deny", message: "The user denied this tool call." });
       break;
     }
+    case "rules":
+      rules = parseRules(input.rules);
+      break;
     case "interrupt":
       denyPending("The user stopped the agent.");
       if (running) running.query.interrupt().catch(() => running?.abort.abort());

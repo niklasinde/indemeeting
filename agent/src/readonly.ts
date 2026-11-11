@@ -238,13 +238,16 @@ function expand(words: string[], variables: Map<string, string>): string[] {
   });
 }
 
-/// The simple commands of a Bash command line that are not read-only, as they appear in it. Empty when the whole
-/// command only reads: allowed commands joined by pipes, `&&`, `||`, `;`, `{ ...; }` groups and `for` loops, plus plain
-/// variable assignments used in later arguments. When the line cannot be understood at all, the whole line is returned.
-export function nonReadOnlyParts(command: string): string[] {
+export type Part = { text: string; words: string[] };
+
+/// The simple commands of a Bash command line that are not read-only: their text as it appears in the line and their
+/// words with variables set earlier in the line expanded. Empty when the whole command only reads: allowed commands
+/// joined by pipes, `&&`, `||`, `;`, `{ ...; }` groups and `for` loops, plus plain variable assignments used in later
+/// arguments. Undefined when the line cannot be understood.
+export function commandParts(command: string): Part[] | undefined {
   const trimmed = command.trim();
   const tokens = tokenize(trimmed);
-  if (!tokens || tokens.length === 0) return [trimmed];
+  if (!tokens || tokens.length === 0) return undefined;
   const segments: Word[][] = [[]];
   for (const token of tokens) {
     if ("op" in token) segments.push([]);
@@ -256,42 +259,49 @@ export function nonReadOnlyParts(command: string): string[] {
     variables.set(name, value);
     return true;
   };
-  const parts: string[] = [];
+  const parts: Part[] = [];
   let loops = 0, groups = 0;
   for (const segment of segments) {
     let rest = segment;
     while (rest[0]?.word === "{" || rest[0]?.word === "do") {
-      if (rest[0].word === "do" && loops === 0) return [trimmed];
+      if (rest[0].word === "do" && loops === 0) return undefined;
       if (rest[0].word === "{") groups++;
       rest = rest.slice(1);
     }
     if (rest.length === 0) continue;
     const words = rest.map((t) => t.word);
     if (words.length === 1 && words[0] === "}") {
-      if (--groups < 0) return [trimmed];
+      if (--groups < 0) return undefined;
       continue;
     }
     if (words.length === 1 && words[0] === "done") {
-      if (--loops < 0) return [trimmed];
+      if (--loops < 0) return undefined;
       continue;
     }
     if (words[0] === "for") {
-      if (words.length < 3 || words[2] !== "in" || !/^[A-Za-z_]\w*$/.test(words[1])) return [trimmed];
+      if (words.length < 3 || words[2] !== "in" || !/^[A-Za-z_]\w*$/.test(words[1])) return undefined;
       loops++;
-      if (!assign(words[1], expand(words.slice(3), variables).join(" "))) parts.push(trimmed.slice(rest[0].start, rest[rest.length - 1].end));
+      if (!assign(words[1], expand(words.slice(3), variables).join(" "))) parts.push({ text: trimmed.slice(rest[0].start, rest[rest.length - 1].end), words });
       continue;
     }
     const text = trimmed.slice(rest[0].start, rest[rest.length - 1].end);
     if (words.every((w) => assignment.test(w))) {
       for (const w of words) {
         const [, name, value] = assignment.exec(w)!;
-        if (!assign(name, expand([value], variables).join(" "))) parts.push(text);
+        if (!assign(name, expand([value], variables).join(" "))) parts.push({ text, words });
       }
       continue;
     }
-    if (!isReadOnlySimple(expand(words, variables))) parts.push(text);
+    const expanded = expand(words, variables);
+    if (!isReadOnlySimple(expanded)) parts.push({ text, words: expanded });
   }
-  return loops === 0 && groups === 0 ? [...new Set(parts)] : [trimmed];
+  return loops === 0 && groups === 0 ? parts : undefined;
+}
+
+/// The text of `commandParts`, or the whole line when it cannot be understood.
+export function nonReadOnlyParts(command: string): string[] {
+  const parts = commandParts(command);
+  return parts ? [...new Set(parts.map((p) => p.text))] : [command.trim()];
 }
 
 /// Whether a Bash command only reads. Anything it is unsure about is not read-only, so the user is asked.

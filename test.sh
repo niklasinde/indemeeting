@@ -74,6 +74,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/SidebarLogic.swift \
     Sources/WorkTime/UpgradeLogic.swift \
     Sources/WorkTime/AgentLogic.swift \
+    Sources/WorkTime/AgentRules.swift \
     Sources/WorkTime/AgentOverviewLogic.swift \
     Sources/WorkTime/AgentSessionLogic.swift \
     Sources/WorkTime/MCPAgents.swift \

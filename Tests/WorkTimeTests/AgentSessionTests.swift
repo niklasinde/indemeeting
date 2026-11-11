@@ -69,7 +69,7 @@ let agentSessionTests: [(name: String, run: () throws -> Void)] = [
         let items = AgentTranscript.items(jsonl: transcriptFixture, cwd: "/repo")
         check(items.count == 3, "\(items)")
         check(items[0].kind == .user("Review https://github.com/acme/api/pull/7"), "prompt")
-        if case .tool(let name, let summary, _, let result, let isError, _) = items[1].kind {
+        if case .tool(let name, let summary, _, let result, let isError, _, _) = items[1].kind {
             check(items[1].id == "tool-t1" && name == "Read" && summary == "Sources/App.swift" && result == "let body = 1" && !isError, "\(items[1])")
         } else {
             check(false, "\(items[1])")

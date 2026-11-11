@@ -121,6 +121,35 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentRequest.interrupt.line == #"{"type":"interrupt"}"# + "\n", "interrupt")
     }),
 
+    ("agent: always-allow rules decode from the sidecar, are stored and shown with warnings", {
+        let fetch = AgentRule(kind: .bash, value: "git fetch"), test = AgentRule(kind: .bash, value: "npm test")
+        let line = #"{"type":"permission_request","id":"5","tool":"Bash","input":{"command":"git fetch && npm test"},"#
+            + #""offer":[{"kind":"bash","value":"git fetch"},{"kind":"bash","value":"npm test"},{"kind":"nope","value":"x"}]}"#
+        guard case .permissionRequest(_, _, _, _, let offer)? = AgentEvent.decode(line, cwd: cwd) else { return check(false, "decodes") }
+        check(offer == [fetch, test], "offer \(offer)")
+        check(AgentEvent.decode(#"{"type":"tool_result","id":"t","content":"x","auto":true,"rule":"git fetch"}"#, cwd: cwd)
+              == .toolResult(id: "t", content: "x", isError: false, auto: true, rule: "git fetch"), "allowed by a rule")
+        check(AgentRequest.rules([fetch]).line == #"{"rules":[{"kind":"bash","value":"git fetch"}],"type":"rules"}"# + "\n", "rules line")
+
+        let stored = AgentRules.adding([test, fetch, test], to: [fetch])
+        check(stored == [fetch, test], "no duplicates, order kept \(stored)")
+        check(AgentRules.decode(AgentRules.encode(stored)) == stored, "round trip")
+        check(AgentRules.decode(Data("junk".utf8)).isEmpty && AgentRules.decode(nil).isEmpty, "bad data is empty")
+
+        check(AgentRules.offer([fetch, test]) == "Always allow: git fetch, npm test", "bash offer")
+        check(AgentRules.offer([AgentRule(kind: .edits, value: NSHomeDirectory() + "/git/x")]) == "Always allow edits in ~/git/x", "edits offer")
+        check(AgentRules.offer([AgentRule(kind: .tool, value: "mcp__worktime__github_pr")]) == "Always allow WorkTime \u{00B7} GitHub PR", "tool offer")
+        check(AgentRules.offer([]) == nil, "nothing offered")
+        check(AgentRules.label(AgentRule(kind: .edits, value: "/tmp/x")) == "Edits in /tmp/x", "edits label")
+
+        check(AgentRules.warning([fetch, test]) == nil, "safe rules")
+        for value in ["rm", "sudo", "git push", "git reset", "git", "sh", "rm -rf"] {
+            check(AgentRules.warning([fetch, AgentRule(kind: .bash, value: value)])?.hasPrefix(value + " will") == true, "warns for \(value)")
+        }
+        check(AgentRules.warning([AgentRule(kind: .edits, value: "/")]) == nil && AgentRules.warning([AgentRule(kind: .bash, value: "rmdir")]) == nil,
+              "only dangerous bash commands")
+    }),
+
     ("agent: the transcript fills in tool results, answers permissions and keeps the session", {
         var items: [AgentItem] = []
         check(AgentLogic.apply(.session("s1"), to: &items) == "s1" && items.isEmpty, "session is returned, not shown")
@@ -134,6 +163,11 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered")
         AgentLogic.answer(permission.id, allow: true, in: &items)
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered only once")
+        let edits = [AgentRule(kind: .edits, value: "/repo")]
+        AgentLogic.apply(.permissionRequest(id: "10", tool: "Edit", summary: "y", detail: "", offer: edits), to: &items)
+        AgentLogic.answer(items[2].id, allow: true, in: &items)
+        check(items[2].kind == .permission(tool: "Edit", summary: "y", detail: "", offer: edits, allowed: true), "the offer is kept when answered")
+        items.remove(at: 2)
         check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 1, model: nil), to: &items) == "s2", "result session")
         check(items.last?.kind == .status("Done \u{00B7} 1 turn"), "status \(String(describing: items.last))")
         AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 4, model: "claude-sonnet-5-5"), to: &items, auto: true)

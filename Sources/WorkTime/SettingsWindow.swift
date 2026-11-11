@@ -308,6 +308,7 @@ enum SettingsTab: String, CaseIterable {
     case jira = "Jira"
     case slack = "Slack"
     case models = "Models"
+    case agent = "Agent"
     case iphone = "iPhone"
 
     static let storageKey = "settingsTab"
@@ -325,6 +326,7 @@ enum SettingsTab: String, CaseIterable {
         case .jira: return "ticket.fill"
         case .slack: return "number"
         case .models: return "cpu.fill"
+        case .agent: return "sparkles"
         case .iphone: return "iphone"
         }
     }
@@ -340,6 +342,7 @@ enum SettingsTab: String, CaseIterable {
         case .jira: return .teal
         case .slack: return .purple
         case .models: return .indigo
+        case .agent: return .pink
         case .iphone: return .green
         }
     }
@@ -420,6 +423,7 @@ struct SettingsView: View {
         case .jira: JiraSettingsSection(model: .shared).id(SettingsAnchor.jira)
         case .slack: SlackSettingsSection(model: .shared).id(SettingsAnchor.slack)
         case .models: ModelOverview(models: models, whisper: whisper, speakers: speakers, tracker: tracker, show: show)
+        case .agent: AgentSettingsSection(store: .shared)
         case .iphone: PhoneSettingsSection(model: .shared)
         }
     }

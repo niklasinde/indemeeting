@@ -51,6 +51,7 @@ enum AgentPreview {
                           + Array(sample().dropFirst().prefix(4)))
             await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-from-main-light.png"))
             await sessions(to: output)
+            await rules(to: output)
             UserDefaults.standard.removePersistentDomain(forName: suite)
             exit(0)
         }
@@ -121,6 +122,45 @@ enum AgentPreview {
         try? await Task.sleep(nanoseconds: 900_000_000)
         PreviewRenderer.save(window, to: url)
         window.orderOut(nil)
+    }
+
+    /// Permission cards offering Always allow (one with a warning, one for send_to_agent without it), a call allowed by a
+    /// rule, and the Agent page of Settings listing saved rules.
+    @MainActor
+    private static func rules(to output: URL) async {
+        let store = AgentRuleStore.shared
+        let model = AgentModel(folder: repo)
+        let bash = { (values: [String]) in values.map { AgentRule(kind: .bash, value: $0) } }
+        let tests = "git status --short && npm test 2>&1 | tail -5 && ./test.sh", risky = "rm -rf .build && git push --force origin HEAD"
+        var items = [AgentItem(id: "user-0", kind: .user("Fetch, run the tests and push the fix"))]
+        let events: [AgentEvent] = [
+            .toolUse(id: "1", tool: "Bash", summary: "git fetch -q origin", detail: "git fetch -q origin"),
+            .toolResult(id: "1", content: "", isError: false, auto: true, rule: "git fetch"),
+            .toolUse(id: "2", tool: "Bash", summary: "git log --oneline -3", detail: "git log --oneline -3"),
+            .toolResult(id: "2", content: "054fe9e Keep a session history per agent", isError: false, auto: true),
+            .permissionRequest(id: "3", tool: "Bash", summary: tests, detail: tests, offer: bash(["npm test", "./test.sh"])),
+            .permissionRequest(id: "4", tool: "Bash", summary: risky, detail: risky, offer: bash(["rm", "git push"])),
+            .permissionRequest(id: "5", tool: "Edit", summary: "agent/src/rules.ts",
+                               detail: "{\n  \"file_path\" : \"\(repo)/agent/src/rules.ts\"\n}", offer: [AgentRule(kind: .edits, value: repo)]),
+            .permissionRequest(id: "6", tool: "mcp__worktime__send_to_agent", summary: "quiddly-com/finq.api#2591, Push the fix.",
+                               detail: "{\n  \"text\" : \"Push the fix.\"\n}"),
+        ]
+        events.forEach { AgentLogic.apply($0, to: &items) }
+        model.preview(items, busy: true)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            await save(AgentView(model: model), size: NSSize(width: 820, height: 1180), appearance: appearance,
+                       to: output.appendingPathComponent("agent-always-allow-\(name).png"))
+        }
+        store.removeAll()
+        let settings = { AgentSettingsSection(store: store).padding(24).frame(width: 560, alignment: .topLeading) }
+        await save(settings(), size: NSSize(width: 560, height: 220), appearance: .aqua, to: output.appendingPathComponent("settings-agent-empty-light.png"))
+        store.add(bash(["git fetch", "npm test", "./test.sh", "git push"])
+                  + [AgentRule(kind: .edits, value: repo), AgentRule(kind: .tool, value: "mcp__worktime__github_pr")])
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            await save(settings(), size: NSSize(width: 560, height: 520), appearance: appearance,
+                       to: output.appendingPathComponent("settings-agent-\(name).png"))
+        }
+        store.removeAll()
     }
 
     /// The Main page with its agents list and a session restored from a Claude Code transcript, the session list, and a pull

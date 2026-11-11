@@ -6,8 +6,8 @@ enum AgentEvent: Equatable {
     case session(String)
     case text(String)
     case toolUse(id: String, tool: String, summary: String, detail: String)
-    case toolResult(id: String, content: String, isError: Bool, auto: Bool)
-    case permissionRequest(id: String, tool: String, summary: String, detail: String)
+    case toolResult(id: String, content: String, isError: Bool, auto: Bool, rule: String? = nil)
+    case permissionRequest(id: String, tool: String, summary: String, detail: String, offer: [AgentRule] = [])
     case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?)
     case error(String)
     case signIn
@@ -28,10 +28,11 @@ enum AgentEvent: Equatable {
                             detail: AgentLogic.detail(tool: string("tool"), input: input))
         case "tool_result":
             return .toolResult(id: string("id"), content: string("content"), isError: object["isError"] as? Bool ?? false,
-                               auto: object["auto"] as? Bool ?? false)
+                               auto: object["auto"] as? Bool ?? false, rule: object["rule"] as? String)
         case "permission_request":
             return .permissionRequest(id: string("id"), tool: string("tool"), summary: AgentLogic.summary(tool: string("tool"), input: input, cwd: cwd),
-                                      detail: AgentLogic.detail(tool: string("tool"), input: input))
+                                      detail: AgentLogic.detail(tool: string("tool"), input: input),
+                                      offer: (object["offer"] as? [Any] ?? []).compactMap(AgentRule.init))
         case "result":
             return .result(sessionID: object["sessionId"] as? String, isError: object["isError"] as? Bool ?? false, text: string("text"),
                            turns: object["turns"] as? Int, model: object["model"] as? String)
@@ -46,6 +47,7 @@ enum AgentEvent: Equatable {
 enum AgentRequest {
     case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil)
     case permission(id: String, allow: Bool)
+    case rules([AgentRule])
     case interrupt
 
     var line: String {
@@ -57,6 +59,7 @@ enum AgentRequest {
             if let model { object["model"] = model }
             if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
         case .permission(let id, let allow): object = ["type": "permission", "id": id, "allow": allow]
+        case .rules(let rules): object = ["type": "rules", "rules": rules.map(\.json)]
         case .interrupt: object = ["type": "interrupt"]
         }
         let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
@@ -68,8 +71,10 @@ struct AgentItem: Identifiable, Equatable {
     enum Kind: Equatable {
         case user(String)
         case text(String)
-        case tool(name: String, summary: String, detail: String, result: String?, isError: Bool, auto: Bool)
-        case permission(tool: String, summary: String, detail: String, allowed: Bool?)
+        /// `rule` names the user's rules that allowed an `auto` call, nil when it was allowed for only reading.
+        case tool(name: String, summary: String, detail: String, result: String?, isError: Bool, auto: Bool, rule: String? = nil)
+        /// `offer` is what Always allow saves; empty when the call is asked about every time.
+        case permission(tool: String, summary: String, detail: String, offer: [AgentRule] = [], allowed: Bool?)
         case status(String)
         case error(String)
         case signIn
@@ -96,12 +101,13 @@ enum AgentLogic {
             items.append(AgentItem(id: "text-\(items.count)", kind: .text(text)))
         case .toolUse(let id, let tool, let summary, let detail):
             items.append(AgentItem(id: "tool-\(id)", kind: .tool(name: tool, summary: summary, detail: detail, result: nil, isError: false, auto: false)))
-        case .toolResult(let id, let content, let isError, let auto):
+        case .toolResult(let id, let content, let isError, let auto, let rule):
             guard let index = items.firstIndex(where: { $0.id == "tool-\(id)" }),
-                  case .tool(let name, let summary, let detail, _, _, _) = items[index].kind else { return nil }
-            items[index].kind = .tool(name: name, summary: summary, detail: detail, result: content, isError: isError, auto: auto)
-        case .permissionRequest(let id, let tool, let summary, let detail):
-            items.append(AgentItem(id: "permission-\(id)-\(items.count)", kind: .permission(tool: tool, summary: summary, detail: detail, allowed: nil)))
+                  case .tool(let name, let summary, let detail, _, _, _, _) = items[index].kind else { return nil }
+            items[index].kind = .tool(name: name, summary: summary, detail: detail, result: content, isError: isError, auto: auto, rule: rule)
+        case .permissionRequest(let id, let tool, let summary, let detail, let offer):
+            items.append(AgentItem(id: "permission-\(id)-\(items.count)",
+                                   kind: .permission(tool: tool, summary: summary, detail: detail, offer: offer, allowed: nil)))
         case .result(let sessionID, let isError, let text, let turns, let model):
             if isError, needsSignIn(text) {
                 appendSignIn(to: &items)
@@ -127,8 +133,8 @@ enum AgentLogic {
     /// Marks a permission prompt answered so its buttons go away.
     static func answer(_ itemID: String, allow: Bool, in items: inout [AgentItem]) {
         guard let index = items.firstIndex(where: { $0.id == itemID }),
-              case .permission(let tool, let summary, let detail, nil) = items[index].kind else { return }
-        items[index].kind = .permission(tool: tool, summary: summary, detail: detail, allowed: allow)
+              case .permission(let tool, let summary, let detail, let offer, nil) = items[index].kind else { return }
+        items[index].kind = .permission(tool: tool, summary: summary, detail: detail, offer: offer, allowed: allow)
     }
 
     /// The sidecar's id for a permission prompt item (`permission-<id>-<n>`).

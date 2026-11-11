@@ -49,8 +49,8 @@ enum AgentOverview {
             return nil
         }
         if let last = reply.last { state.lastResult = ActivityLogic.truncate(last, to: resultLimit) }
-        if busy, let pending = items.last(where: { if case .permission(_, _, _, nil) = $0.kind { true } else { false } }),
-           case .permission(let tool, let summary, _, _) = pending.kind {
+        if busy, let pending = items.last(where: { if case .permission(_, _, _, _, nil) = $0.kind { true } else { false } }),
+           case .permission(let tool, let summary, _, _, _) = pending.kind {
             state.status = .waiting
             state.pendingTool = tool
             state.pendingInput = summary

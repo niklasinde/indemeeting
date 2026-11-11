@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// The agent sidecar: `node agent/dist/main.js`, spoken to in JSON lines over stdin and stdout.
@@ -92,6 +93,7 @@ final class AgentModel: ObservableObject {
     private var routing: Task<Void, Never>?
     private var lastModel: String?
     private var turnIsAuto = false
+    private var rulesChanged: AnyCancellable?
 
     /// Replaced by the debug preview, so it never writes the app's own settings.
     static var defaults = UserDefaults.standard
@@ -102,6 +104,7 @@ final class AgentModel: ObservableObject {
         self.folder = folder ?? (main ? defaults.string(forKey: AgentLogic.mainFolderKey) ?? GitHubClaudeModel.repositoriesRoot.path
                                       : defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory())
         history = AgentSessionStore.list(for: historyKey)
+        rulesChanged = AgentRuleStore.shared.$rules.dropFirst().sink { [weak self] in self?.client?.send(.rules($0)) }
         if main, let session = defaults.string(forKey: AgentLogic.mainSessionKey) {
             sessionID = session
             remember(session)
@@ -112,7 +115,7 @@ final class AgentModel: ObservableObject {
     var historyKey: String { AgentSessions.key(prURL: prURL, isMain: isMain, folder: folder) }
 
     var waitingForPermission: Bool {
-        busy && items.contains { if case .permission(_, _, _, nil) = $0.kind { true } else { false } }
+        busy && items.contains { if case .permission(_, _, _, _, nil) = $0.kind { true } else { false } }
     }
 
     private func touch() {
@@ -321,8 +324,10 @@ final class AgentModel: ObservableObject {
                                                keepAlive: "10m", timeout: AgentLogic.routeTimeout)
     }
 
-    func answer(_ item: AgentItem, allow: Bool) {
+    /// `always` first saves the rules the card offers, so this and later calls of every agent that match them run without asking.
+    func answer(_ item: AgentItem, allow: Bool, always: Bool = false) {
         guard let id = AgentLogic.permissionID(of: item.id) else { return }
+        if always, case .permission(_, _, _, let offer, nil) = item.kind { AgentRuleStore.shared.add(offer) }
         AgentLogic.answer(item.id, allow: allow, in: &items)
         client?.send(.permission(id: id, allow: allow))
     }
@@ -389,6 +394,7 @@ final class AgentModel: ObservableObject {
                 Task { @MainActor [weak self] in self?.exited(status: status, errors: SecretRedaction.redact(errors, key: nil)) }
             })
             self.client = client
+            client.send(.rules(AgentRuleStore.shared.rules))
             return client
         } catch {
             problem = "The agent could not start: \(error.localizedDescription)"
@@ -418,6 +424,25 @@ final class AgentModel: ObservableObject {
         let tail = errors.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")
         items.append(AgentItem(id: "error-\(items.count)", kind: .error("The agent stopped (exit \(status)). \(tail)")))
     }
+}
+
+/// The calls the user always allows, shared by every agent and sent to each sidecar when it starts and when they change.
+@MainActor
+final class AgentRuleStore: ObservableObject {
+    static let shared = AgentRuleStore()
+
+    @Published private(set) var rules = AgentRules.decode(AgentModel.defaults.data(forKey: AgentRules.key)) {
+        didSet { AgentModel.defaults.set(AgentRules.encode(rules), forKey: AgentRules.key) }
+    }
+
+    func add(_ new: [AgentRule]) {
+        let added = AgentRules.adding(new, to: rules)
+        if added != rules { rules = added }
+    }
+
+    func remove(_ rule: AgentRule) { rules.removeAll { $0 == rule } }
+
+    func removeAll() { rules = [] }
 }
 
 /// The session history of every agent, in the app's settings.

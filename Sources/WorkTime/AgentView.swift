@@ -329,7 +329,7 @@ struct AgentPanel: View {
                         }
                     }
                     ForEach(model.items) { item in
-                        AgentItemRow(item: item, folder: model.folder) { model.answer(item, allow: $0) }
+                        AgentItemRow(item: item, folder: model.folder) { model.answer(item, allow: $0, always: $1) }
                     }
                     if model.busy {
                         HStack(spacing: 8) {
@@ -405,7 +405,7 @@ struct AgentPanel: View {
 private struct AgentItemRow: View {
     let item: AgentItem
     let folder: String
-    let answer: (Bool) -> Void
+    let answer: (_ allow: Bool, _ always: Bool) -> Void
 
     var body: some View {
         switch item.kind {
@@ -431,10 +431,10 @@ private struct AgentItemRow: View {
             }
         case .text(let text):
             AnswerText(text: AgentLogic.linkifiedCodeReferences(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) })
-        case .tool(let name, let summary, let detail, let result, let isError, let auto):
-            AgentToolRow(name: name, summary: summary, detail: detail, result: result, isError: isError, auto: auto)
-        case .permission(let tool, let summary, let detail, let allowed):
-            AgentPermissionRow(tool: tool, summary: summary, detail: detail, allowed: allowed, answer: answer)
+        case .tool(let name, let summary, let detail, let result, let isError, let auto, let rule):
+            AgentToolRow(name: name, summary: summary, detail: detail, result: result, isError: isError, auto: auto, rule: rule)
+        case .permission(let tool, let summary, let detail, let offer, let allowed):
+            AgentPermissionRow(tool: tool, summary: summary, detail: detail, offer: offer, allowed: allowed, answer: answer)
         case .status(let text):
             Text(text).font(.caption).foregroundStyle(.secondary)
         case .error(let text):
@@ -454,6 +454,7 @@ private struct AgentToolRow: View {
     let result: String?
     let isError: Bool
     let auto: Bool
+    let rule: String?
     @State private var expanded = false
 
     var body: some View {
@@ -466,13 +467,13 @@ private struct AgentToolRow: View {
                     Text(AgentLogic.displayName(name)).fontWeight(.medium)
                     Text(summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                     if auto {
-                        Text("auto")
+                        Text(rule == nil ? "auto" : "auto \u{00B7} rule")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1)
                             .background(Capsule().fill(Color.primary.opacity(0.08)))
-                            .help("Allowed without asking: a read-only command")
+                            .help(rule.map { "Allowed without asking by your rule: \($0)" } ?? "Allowed without asking: a read-only command")
                     }
                 }
                 .font(.callout)
@@ -490,8 +491,9 @@ private struct AgentPermissionRow: View {
     let tool: String
     let summary: String
     let detail: String
+    let offer: [AgentRule]
     let allowed: Bool?
-    let answer: (Bool) -> Void
+    let answer: (_ allow: Bool, _ always: Bool) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -507,15 +509,57 @@ private struct AgentPermissionRow: View {
             if let allowed {
                 Text(allowed ? "Allowed" : "Denied").font(.caption).foregroundStyle(.secondary)
             } else {
+                if let always = AgentRules.offer(offer) {
+                    Text(always).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+                if let warning = AgentRules.warning(offer) {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
-                    Button("Allow") { answer(true) }
-                    Button("Deny") { answer(false) }
+                    Button("Allow once") { answer(true, false) }
+                    if !offer.isEmpty {
+                        Button("Always allow") { answer(true, true) }
+                            .help("Saved in Settings \u{203A} Agent, for every agent")
+                    }
+                    Button("Deny") { answer(false, false) }
                 }
             }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 10).strokeBorder(allowed == nil ? Color.orange.opacity(0.6) : Color.primary.opacity(0.1)))
+    }
+}
+
+/// The calls the user chose to always allow, with Remove for each and Remove all.
+struct AgentSettingsSection: View {
+    @ObservedObject var store: AgentRuleStore
+
+    var body: some View {
+        SettingsSection("Always allowed", footer: "Saved with Always allow on a permission prompt and used by every agent. A command is "
+                        + "allowed when each part that is not read-only starts with one of these; send to agent is always asked.") {
+            if store.rules.isEmpty {
+                SettingsRow("Nothing yet", detail: "Choose Always allow when an agent asks to run something") {}
+            }
+            ForEach(Array(store.rules.enumerated()), id: \.element) { index, rule in
+                if index > 0 { Divider().padding(.leading, 14) }
+                SettingsRow(AgentRules.label(rule), detail: AgentRules.warning([rule]).map { _ in "Runs with any arguments, also destructive ones" }) {
+                    if AgentRules.warning([rule]) != nil {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    Button("Remove") { store.remove(rule) }
+                }
+            }
+            if store.rules.count > 1 {
+                Divider().padding(.leading, 14)
+                SettingsRow("\(store.rules.count) rules") {
+                    Button("Remove all", role: .destructive) { store.removeAll() }
+                }
+            }
+        }
     }
 }
 
