@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 struct SlackIdentity: Equatable, Sendable {
@@ -54,9 +55,45 @@ struct SlackDirectMessages: Equatable, Sendable {
     var names: [String: String] = [:]
 }
 
+/// What is kept in the secrets file: the access token, and for a sign-in its refresh token and expiry. A pasted token is stored as is.
+struct SlackAuth: Codable, Equatable, Sendable {
+    var accessToken: String
+    var refreshToken: String?
+    var expires: Date?
+
+    init(accessToken: String, refreshToken: String? = nil, expires: Date? = nil) {
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expires = expires
+    }
+
+    init?(stored: String) {
+        if stored.hasPrefix("{") {
+            guard let auth = try? JSONDecoder().decode(SlackAuth.self, from: Data(stored.utf8)) else { return nil }
+            self = auth
+        } else {
+            guard !stored.isEmpty else { return nil }
+            self.init(accessToken: stored)
+        }
+    }
+
+    var stored: String {
+        guard refreshToken != nil || expires != nil, let data = try? JSONEncoder().encode(self) else { return accessToken }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// The verifier and state of a sign-in waiting for its callback.
+struct SlackSignIn: Equatable, Sendable {
+    let state: String
+    let verifier: String
+}
+
 enum SlackError: Error, Equatable {
     case notConfigured
     case unauthorized
+    case signInAgain
+    case signIn(String)
     case missingScope(String)
     case rateLimited(retryAfter: Int)
     case offline
@@ -64,12 +101,14 @@ enum SlackError: Error, Equatable {
 
     var message: String {
         switch self {
-        case .notConfigured: return "Add a Slack user token in Settings."
+        case .notConfigured: return "Sign in with Slack in Settings."
         case .unauthorized: return "Slack did not accept the token. Check it in Settings."
+        case .signInAgain: return "Slack signed you out. Sign in again in Settings."
+        case .signIn(let detail): return "Slack sign-in failed: \(SecretRedaction.redact(detail, key: nil))."
         case .missingScope(let scope): return "The Slack token lacks the \(scope) scope. Add it to your Slack app and reinstall it."
         case .rateLimited: return "Slack is rate limiting requests. Trying again shortly."
         case .offline: return "Slack cannot be reached. Check your connection."
-        case .failed(let detail): return "Slack returned an error: \(detail)"
+        case .failed(let detail): return "Slack returned an error: \(SecretRedaction.redact(detail, key: nil))"
         }
     }
 
@@ -103,7 +142,100 @@ enum SlackLogic {
     static let conversationLimit = 12
     static let recentWindow: TimeInterval = 24 * 3600
 
+    static let clientIDKey = "slackClientID"
+    static let authorizePage = "https://slack.com/oauth/v2/authorize"
+    static let redirect = "\(AppURL.scheme)://slack-auth"
+    static let refreshMargin: TimeInterval = 300
+
     static func isUserToken(_ token: String) -> Bool { token.hasPrefix("xoxp-") }
+
+    // MARK: Sign in
+
+    static func randomBase64URL(bytes count: Int = 32) -> String {
+        base64URL(Data((0..<count).map { _ in UInt8.random(in: .min ... .max) }))
+    }
+
+    static func base64URL(_ data: Data) -> String {
+        data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// The S256 code challenge: the verifier's SHA-256, base64url without padding.
+    static func challenge(_ verifier: String) -> String {
+        base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
+    }
+
+    static func newSignIn() -> SlackSignIn {
+        SlackSignIn(state: randomBase64URL(bytes: 16), verifier: randomBase64URL())
+    }
+
+    static func authorizeURL(clientID: String, signIn: SlackSignIn) -> URL {
+        var components = URLComponents(string: authorizePage)!
+        components.queryItems = [
+            URLQueryItem(name: "client_id", value: clientID),
+            URLQueryItem(name: "user_scope", value: scopes.joined(separator: ",")),
+            URLQueryItem(name: "redirect_uri", value: redirect),
+            URLQueryItem(name: "state", value: signIn.state),
+            URLQueryItem(name: "code_challenge", value: challenge(signIn.verifier)),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+        ]
+        return components.url!
+    }
+
+    static func isCallback(_ url: URL) -> Bool {
+        AppURL.accepts(scheme: url.scheme) && url.host?.lowercased() == "slack-auth"
+    }
+
+    /// The code in a `worktime://slack-auth` callback, once its state matches the sign-in that is waiting.
+    static func callbackCode(_ url: URL, expecting signIn: SlackSignIn?) throws -> String {
+        let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        let value = { (name: String) in query.first { $0.name == name }?.value }
+        if let error = value("error") { throw SlackError.signIn(error == "access_denied" ? "you cancelled it" : error) }
+        guard let signIn, value("state") == signIn.state else { throw SlackError.signIn("the reply did not match this sign-in. Try again") }
+        guard let code = value("code"), !code.isEmpty else { throw SlackError.signIn("Slack sent no code") }
+        return code
+    }
+
+    static func tokenRequest(clientID: String, code: String, verifier: String) -> URLRequest {
+        form("oauth.v2.access", ["client_id": clientID, "code": code, "code_verifier": verifier, "redirect_uri": redirect,
+                                 "grant_type": "authorization_code"])
+    }
+
+    static func refreshRequest(clientID: String, refreshToken: String) -> URLRequest {
+        form("oauth.v2.access", ["client_id": clientID, "grant_type": "refresh_token", "refresh_token": refreshToken])
+    }
+
+    private static func form(_ method: String, _ fields: [String: String]) -> URLRequest {
+        let unreserved = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-._~"))
+        var request = URLRequest(url: URL(string: base + method)!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(fields.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: unreserved) ?? "")" }
+            .joined(separator: "&").utf8)
+        request.timeoutInterval = 30
+        return request
+    }
+
+    /// The user token from `oauth.v2.access`, for a sign-in or a refresh; a refresh that sends no new refresh token keeps the old one.
+    static func parseAuth(_ data: Data, now: Date, previous: SlackAuth? = nil) throws -> SlackAuth {
+        let response = try JSONDecoder().decode(TokenResponse.self, from: checked(data))
+        if let user = response.authed_user, let token = user.access_token {
+            return SlackAuth(accessToken: token, refreshToken: user.refresh_token ?? previous?.refreshToken,
+                             expires: user.expires_in.map { now.addingTimeInterval(Double($0)) })
+        }
+        guard let token = response.access_token, response.token_type == "user" || token.contains("xoxp-") else {
+            throw SlackError.signIn("Slack sent no user token")
+        }
+        return SlackAuth(accessToken: token, refreshToken: response.refresh_token ?? previous?.refreshToken,
+                         expires: response.expires_in.map { now.addingTimeInterval(Double($0)) })
+    }
+
+    /// True when a signed-in token runs out within the margin; a pasted token never expires.
+    static func needsRefresh(_ auth: SlackAuth, now: Date) -> Bool {
+        guard auth.refreshToken != nil, let expires = auth.expires else { return false }
+        return expires.timeIntervalSince(now) < refreshMargin
+    }
 
     static func request(method: String, token: String, parameters: [String: String] = [:]) -> URLRequest {
         var components = URLComponents(string: base + method)!
@@ -328,6 +460,19 @@ enum SlackLogic {
         let ok: Bool
         let error: String?
         let needed: String?
+    }
+
+    private struct TokenResponse: Decodable {
+        let access_token: String?
+        let token_type: String?
+        let refresh_token: String?
+        let expires_in: Int?
+        let authed_user: User?
+        struct User: Decodable {
+            let access_token: String?
+            let refresh_token: String?
+            let expires_in: Int?
+        }
     }
 
     private struct AuthTest: Decodable {

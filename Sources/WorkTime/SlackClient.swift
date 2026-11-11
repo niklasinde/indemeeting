@@ -8,9 +8,10 @@ protocol SlackAPI: Sendable {
     func mentions(of identity: SlackIdentity, now: Date) async throws -> [SlackMessage]
     func directMessages(of identity: SlackIdentity, names: [String: String], now: Date) async throws -> SlackDirectMessages
     func userName(_ id: String) async throws -> String
+    func revoke() async throws
 }
 
-/// The Slack Web API with a user token (`xoxp-`).
+/// The Slack Web API with a user token (`xoxp-`, or `xoxe.xoxp-` from a sign-in).
 struct SlackClient: SlackAPI {
     let token: String
     var transport: SlackTransport = SlackClient.urlSession
@@ -56,8 +57,21 @@ struct SlackClient: SlackAPI {
         try SlackLogic.parseUserName(await send("users.info", ["user": id]))
     }
 
+    func revoke() async throws {
+        _ = try await send("auth.revoke")
+    }
+
+    /// Exchanges a sign-in code, or a refresh token, for a user token.
+    static func authorize(_ request: URLRequest, now: Date, previous: SlackAuth? = nil,
+                          transport: SlackTransport = urlSession) async throws -> SlackAuth {
+        try SlackLogic.parseAuth(await perform(request, transport: transport), now: now, previous: previous)
+    }
+
     private func send(_ method: String, _ parameters: [String: String] = [:]) async throws -> Data {
-        let request = SlackLogic.request(method: method, token: token, parameters: parameters)
+        try await Self.perform(SlackLogic.request(method: method, token: token, parameters: parameters), transport: transport)
+    }
+
+    private static func perform(_ request: URLRequest, transport: SlackTransport) async throws -> Data {
         let (data, status, retryAfter): (Data, Int, String?)
         do { (data, status, retryAfter) = try await transport(request) } catch { throw SlackError.from(error) }
         if status == 429 { throw SlackError.rateLimited(retryAfter: SlackLogic.retryAfter(retryAfter)) }

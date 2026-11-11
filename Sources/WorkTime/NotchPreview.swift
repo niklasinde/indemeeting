@@ -59,15 +59,19 @@ enum NotchPreview {
                                 task: "Action item \(index + 1) from the meeting, long enough to fill the row")
                 })
             await notch("todo-many-meeting-items", setup: standard, list: .todo)
-            slack.showSample(messages: messages, badge: 3)
+            panels.showSample(swapped)
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
                 let suffix = appearance == .aqua ? "light" : "dark"
-                let settings = VStack(spacing: 22) {
+                let page = { (view: AnyView) in view.padding(24).frame(width: 520).background(Color(nsColor: .windowBackgroundColor)) }
+                slack.showSample(messages: messages, badge: 3, account: "Niklas Inde \u{00B7} Acme")
+                await shot("notch-settings-\(suffix)", page(AnyView(VStack(spacing: 22) {
                     NotchBarSettingsSection(model: panels)
                     SlackSettingsSection(model: slack)
-                }
-                panels.showSample(swapped)
-                await shot("notch-settings-\(suffix)", settings.padding(24).frame(width: 520).background(Color(nsColor: .windowBackgroundColor)), appearance: appearance)
+                })), appearance: appearance)
+                slack.showSample(messages: [], hasToken: false, clientID: "1234567890.9876543210")
+                await shot("slack-settings-signed-out-\(suffix)", page(AnyView(SlackSettingsSection(model: slack))), appearance: appearance)
+                slack.showSample(messages: [], error: .signInAgain, account: "Niklas Inde \u{00B7} Acme", clientID: "1234567890.9876543210")
+                await shot("slack-settings-sign-in-again-\(suffix)", page(AnyView(SlackSettingsSection(model: slack))), appearance: appearance)
             }
             exit(0)
         }

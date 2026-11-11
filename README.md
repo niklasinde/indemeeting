@@ -754,8 +754,11 @@ meeting action items, 30 pull requests, 20 Jira tickets and 40 Slack messages.
 **Slack** shows mentions of you from the last 7 days (`search.messages` for `<@you>`, newest first) and DMs and group DMs with
 unread messages (`conversations.list` for `im,mpim`, then `conversations.info` for the 12 most recent for `unread_count_display`
 or `last_read`, and `conversations.history` for the latest message only where it is needed). When Slack gives no read state, it
-lists the DMs from the last 24 hours instead and says so. It needs a user token (`xoxp-`) from your own Slack app with the scopes
-listed in Settings; the token is kept in the app's secrets file like the Jira token. Rows open the message in the Slack app
+lists the DMs from the last 24 hours instead and says so. Sign in with your own Slack app: give it the user scopes listed in
+Settings, turn on PKCE under OAuth & Permissions, add `worktime://slack-auth` as a redirect URL and paste its Client ID. Sign in
+uses OAuth v2 with PKCE and no client secret; Slack hands back a rotating user token that the app refreshes before it expires (or
+once when Slack turns it down), and asks you to sign in again when the refresh token has lapsed after 30 days unused. A pasted
+user token (`xoxp-`) still works under "Use a token instead". Tokens are kept in the app's secrets file like the Jira token. Rows open the message in the Slack app
 (`slack://channel?team=&id=&message=`), or on the web without it. Rate limits back off for Slack's Retry-After.
 
 In a debug build `--render-notch <folder>` saves previews of the bar in several panel setups, the Slack list and its settings.

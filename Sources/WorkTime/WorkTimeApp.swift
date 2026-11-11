@@ -289,6 +289,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where AppURL.accepts(scheme: url.scheme) {
+            if SlackLogic.isCallback(url) {
+                SettingsWindow.shared.show(tab: .slack, anchor: .slack)
+                Task { await SlackModel.shared.finishSignIn(url) }
+                continue
+            }
             if let target = GitHubLink.parseAgent(url.absoluteString) {
                 mainWindow.showGitHub()
                 GitHubModel.shared.open(target)

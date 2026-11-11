@@ -56,6 +56,7 @@ enum SecretRedaction {
         var result = text
         if let key, !key.isEmpty { result = result.replacingOccurrences(of: key, with: "sk-ant-\u{2026}") }
         return result.replacingOccurrences(of: "sk-ant-[A-Za-z0-9_\\-]+", with: "sk-ant-\u{2026}", options: .regularExpression)
+            .replacingOccurrences(of: "xox[a-z](\\.xox[a-z])?-[A-Za-z0-9\\-]+", with: "xox\u{2026}", options: .regularExpression)
     }
 }
 

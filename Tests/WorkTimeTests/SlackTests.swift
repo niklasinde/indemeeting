@@ -230,4 +230,109 @@ let slackTests: [(name: String, run: () throws -> Void)] = [
             check(!error.message.contains("xoxp"), "no token in \(error)")
         }
     }),
+    ("the PKCE challenge is the verifier's SHA-256 in base64url, and each sign-in gets a fresh state and verifier", {
+        check(SlackLogic.challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "RFC 7636 vector")
+        let first = SlackLogic.newSignIn(), second = SlackLogic.newSignIn()
+        check(first != second, "random")
+        check(first.verifier.count == 43 && first.state.count == 22, "lengths \(first.verifier.count) \(first.state.count)")
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        check(first.verifier.unicodeScalars.allSatisfy(allowed.contains), "unreserved characters only")
+    }),
+
+    ("the authorize link asks for the user scopes with PKCE and the app's redirect, and no bot scopes", {
+        let signIn = SlackSignIn(state: "st4te", verifier: "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+        let url = SlackLogic.authorizeURL(clientID: "123.456", signIn: signIn)
+        let items = URLComponents(url: url, resolvingAgainstBaseURL: false)!.queryItems!
+        let query = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        check(url.absoluteString.hasPrefix("https://slack.com/oauth/v2/authorize?"), "page")
+        check(query == ["client_id": "123.456", "user_scope": SlackLogic.scopes.joined(separator: ","), "redirect_uri": "worktime://slack-auth",
+                        "state": "st4te", "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method": "S256"],
+              "\(query)")
+    }),
+
+    ("the callback gives its code only when the state matches the waiting sign-in", {
+        let signIn = SlackSignIn(state: "abc", verifier: "v")
+        let mismatch = SlackError.signIn("the reply did not match this sign-in. Try again")
+        func code(_ link: String, _ waiting: SlackSignIn? = signIn) -> Result<String, SlackError> {
+            Result { try SlackLogic.callbackCode(URL(string: link)!, expecting: waiting) }.mapError { $0 as! SlackError }
+        }
+        check(SlackLogic.isCallback(URL(string: "worktime://slack-auth?code=1")!), "callback")
+        check(SlackLogic.isCallback(URL(string: "meetingrecorder://slack-auth")!), "legacy scheme")
+        check(!SlackLogic.isCallback(URL(string: "worktime://pr?url=x")!) && !SlackLogic.isCallback(URL(string: "https://slack-auth/")!), "others")
+        check(try code("worktime://slack-auth?code=c0de&state=abc").get() == "c0de", "match")
+        check(code("worktime://slack-auth?code=c0de&state=evil") == .failure(mismatch), "state mismatch")
+        check(code("worktime://slack-auth?code=c0de") == .failure(mismatch), "no state")
+        check(code("worktime://slack-auth?code=c0de&state=abc", nil) == .failure(mismatch), "nothing waiting")
+        check(code("worktime://slack-auth?error=access_denied&state=abc") == .failure(.signIn("you cancelled it")), "cancelled")
+        check(code("worktime://slack-auth?state=abc") == .failure(.signIn("Slack sent no code")), "no code")
+    }),
+
+    ("the code and refresh requests are form posts to oauth.v2.access with the client id and no secret", {
+        func fields(_ request: URLRequest) -> [String: String] {
+            var components = URLComponents()
+            components.percentEncodedQuery = String(data: request.httpBody ?? Data(), encoding: .utf8)
+            return Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+        }
+        let exchange = SlackLogic.tokenRequest(clientID: "123.456", code: "c/d+e", verifier: "ver")
+        check(exchange.httpMethod == "POST" && exchange.url?.absoluteString == "https://slack.com/api/oauth.v2.access", "endpoint")
+        check(exchange.value(forHTTPHeaderField: "Content-Type") == "application/x-www-form-urlencoded", "form")
+        check(exchange.value(forHTTPHeaderField: "Authorization") == nil, "no bearer")
+        check(fields(exchange) == ["client_id": "123.456", "code": "c/d+e", "code_verifier": "ver", "redirect_uri": "worktime://slack-auth",
+                                   "grant_type": "authorization_code"], "\(fields(exchange))")
+        let refresh = SlackLogic.refreshRequest(clientID: "123.456", refreshToken: "xoxe-1-r")
+        check(fields(refresh) == ["client_id": "123.456", "grant_type": "refresh_token", "refresh_token": "xoxe-1-r"], "\(fields(refresh))")
+        check(!String(decoding: exchange.httpBody!, as: UTF8.self).contains("client_secret"), "no secret")
+    }),
+
+    ("the token response gives the user's rotating token, and a refresh keeps the refresh token when Slack sends none", {
+        let signedIn = Data(#"{"ok":true,"app_id":"A1","team":{"id":"T0ACME","name":"Acme"},"authed_user":{"id":"U0ME","scope":"search:read","access_token":"xoxe.xoxp-1-abc","expires_in":43200,"refresh_token":"xoxe-1-ref","token_type":"user"}}"#.utf8)
+        let auth = try SlackLogic.parseAuth(signedIn, now: now)
+        check(auth == SlackAuth(accessToken: "xoxe.xoxp-1-abc", refreshToken: "xoxe-1-ref", expires: now.addingTimeInterval(43200)), "\(auth)")
+        let topLevel = Data(#"{"ok":true,"access_token":"xoxe.xoxp-1-new","token_type":"user","expires_in":43200}"#.utf8)
+        let renewed = try SlackLogic.parseAuth(topLevel, now: now, previous: auth)
+        check(renewed.accessToken == "xoxe.xoxp-1-new" && renewed.refreshToken == "xoxe-1-ref", "kept refresh token")
+        let bot = Data(#"{"ok":true,"access_token":"xoxb-1","token_type":"bot"}"#.utf8)
+        check((try? SlackLogic.parseAuth(bot, now: now)) == nil, "a bot token is refused")
+        var caught: Error?
+        do { _ = try SlackLogic.parseAuth(Data(#"{"ok":false,"error":"invalid_code_verifier"}"#.utf8), now: now) } catch { caught = error }
+        check(caught as? SlackError == .failed("invalid_code_verifier"), "\(String(describing: caught))")
+    }),
+
+    ("a signed-in token is refreshed five minutes before it runs out; a pasted token never is", {
+        let auth = SlackAuth(accessToken: "xoxe.xoxp-1", refreshToken: "xoxe-1-r", expires: now.addingTimeInterval(600))
+        check(!SlackLogic.needsRefresh(auth, now: now), "ten minutes left")
+        check(SlackLogic.needsRefresh(auth, now: now.addingTimeInterval(400)), "three minutes left")
+        check(SlackLogic.needsRefresh(auth, now: now.addingTimeInterval(9000)), "expired")
+        check(!SlackLogic.needsRefresh(SlackAuth(accessToken: "xoxp-1"), now: now), "pasted")
+    }),
+
+    ("the stored value is the plain token for a pasted one and JSON for a sign-in, and both read back", {
+        check(SlackAuth(stored: "xoxp-1-2") == SlackAuth(accessToken: "xoxp-1-2"), "token saved before sign-in existed")
+        check(SlackAuth(accessToken: "xoxp-1-2").stored == "xoxp-1-2", "pasted stays plain")
+        let auth = SlackAuth(accessToken: "xoxe.xoxp-1", refreshToken: "xoxe-1-r", expires: now)
+        check(auth.stored.hasPrefix("{") && SlackAuth(stored: auth.stored) == auth, "round trip")
+        check(SlackAuth(stored: "") == nil && SlackAuth(stored: "{broken") == nil, "nothing")
+    }),
+
+    ("a code is exchanged through the transport without a bearer token", {
+        let sent = Calls()
+        let transport: SlackTransport = { request in
+            sent.methods.append("\(request.httpMethod ?? "") \(request.url!.lastPathComponent) \(request.value(forHTTPHeaderField: "Authorization") ?? "-")")
+            return (Data(#"{"ok":true,"authed_user":{"access_token":"xoxe.xoxp-9","refresh_token":"xoxe-1-9","expires_in":60}}"#.utf8), 200, nil)
+        }
+        try blocking {
+            let auth = try await SlackClient.authorize(SlackLogic.tokenRequest(clientID: "1.2", code: "c", verifier: "v"), now: now, transport: transport)
+            check(auth.accessToken == "xoxe.xoxp-9" && auth.expires == now.addingTimeInterval(60), "\(auth)")
+        }
+        check(sent.methods == ["POST oauth.v2.access -"], "\(sent.methods)")
+    }),
+
+    ("no error message carries a Slack token", {
+        let detail = "bad xoxp-1-2-3 and xoxe.xoxp-1-abc and xoxe-1-ref and xoxb-9"
+        for error in [SlackError.failed(detail), .signIn(detail)] {
+            check(!error.message.contains("xoxp-1") && !error.message.contains("abc") && !error.message.contains("ref") && !error.message.contains("xoxb-9"),
+                  error.message)
+        }
+        check(SecretRedaction.redact("token xoxe.xoxp-1-abc end", key: nil) == "token xox\u{2026} end", "redacted")
+    }),
 ]
