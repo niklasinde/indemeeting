@@ -29,9 +29,9 @@
     <key>NSLocalNetworkUsageDescription</key>
     <string>WorkTime lets your iPhone read your meetings from this Mac over your local network when you turn on iPhone access. Nothing goes through a server.</string>
     <key>NSRemindersFullAccessUsageDescription</key>
-    <string>WorkTime shows your reminders in the notch bar so you can tick them off and add new ones.</string>
+    <string>WorkTime shows your reminders in the top notch bar so you can tick them off and add new ones.</string>
     <key>NSRemindersUsageDescription</key>
-    <string>WorkTime shows your reminders in the notch bar so you can tick them off and add new ones.</string>
+    <string>WorkTime shows your reminders in the top notch bar so you can tick them off and add new ones.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>WorkTime transcribes your recordings on this Mac. Audio never leaves the device.</string>
 </dict>

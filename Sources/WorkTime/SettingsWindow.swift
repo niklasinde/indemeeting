@@ -312,6 +312,8 @@ enum SettingsTab: String, CaseIterable {
 
     static let storageKey = "settingsTab"
 
+    var title: String { self == .notchBar ? "Top notch bar" : rawValue }
+
     var symbol: String {
         switch self {
         case .meetings: return "waveform"
@@ -368,7 +370,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             List(SettingsTab.allCases, id: \.self, selection: Binding(get: { tab }, set: { if let tab = $0 { self.tab = tab } })) { tab in
                 Label {
-                    Text(tab.rawValue)
+                    Text(tab.title)
                 } icon: {
                     Image(systemName: tab.symbol)
                         .font(.system(size: 11, weight: .semibold))
@@ -383,7 +385,7 @@ struct SettingsView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
-                        Text(tab.rawValue).font(.title2.bold()).id(tab)
+                        Text(tab.title).font(.title2.bold()).id(tab)
                         page { reveal($0, proxy: proxy) }
                     }
                     .padding(24)

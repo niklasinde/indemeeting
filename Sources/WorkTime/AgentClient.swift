@@ -64,19 +64,13 @@ final class AgentModel: ObservableObject {
         didSet { if oldValue.isEmpty, !draft.isEmpty, model == AgentLogic.auto, !OllamaSummarizer.isForced() { LocalLLM.shared.prepare() } }
     }
 
-    private let tokens: TokenStore
     private var client: AgentClient?
     private var routing: Task<Void, Never>?
     private var lastModel: String?
     private var turnIsAuto = false
 
-    init(folder: String? = nil, tokens: TokenStore = .claudeOAuth) {
-        self.tokens = tokens
+    init(folder: String? = nil) {
         self.folder = folder ?? UserDefaults.standard.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory()
-        guard let didChange = tokens.didChange else { return }
-        NotificationCenter.default.addObserver(forName: didChange, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.stopClient() }
-        }
     }
 
     var mentionMatches: [String] {
@@ -226,14 +220,13 @@ final class AgentModel: ObservableObject {
             problem = "The agent sidecar is not built. Run `npm ci && npm run build` in the agent folder of the WorkTime checkout."
             return nil
         }
-        let token = tokens.token()
-        let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path, token: token,
+        let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path,
                                                            mcpCommand: Bundle.main.executablePath)
         do {
             let client = try AgentClient(node: node, script: script, environment: childEnvironment, onLine: { [weak self] line in
                 Task { @MainActor [weak self] in self?.receive(line) }
             }, onExit: { [weak self] status, errors in
-                Task { @MainActor [weak self] in self?.exited(status: status, errors: SecretRedaction.redact(errors, key: token)) }
+                Task { @MainActor [weak self] in self?.exited(status: status, errors: SecretRedaction.redact(errors, key: nil)) }
             })
             self.client = client
             return client

@@ -571,12 +571,10 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   was built from. `node` is looked for on the PATH, in `/opt/homebrew/bin`, `/usr/local/bin` and the newest `~/.nvm` version.
 - **Auth.** The Claude API key is not used: `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are removed from the sidecar's
   environment (by the app and again by the sidecar), so an exported key cannot take over. Sign-in comes from your Claude
-  subscription, in this order: a long-lived token from `claude setup-token`, pasted under Settings > Models > Claude sign-in,
-  kept in the app's secrets file like the Jira and Slack tokens and passed as `CLAUDE_CODE_OAUTH_TOKEN`; otherwise the Claude
-  Code sign-in already on this Mac (`claude` then `/login`), which the SDK's bundled Claude Code reads from the Keychain item
-  `Claude Code-credentials` or `~/.claude/.credentials.json` itself (`settingSources` only picks settings files, not auth). The
-  app never reads those credentials. If neither works, the window says how to sign in, with an Open Settings button. Saving or
-  removing the token restarts the sidecar. The token is never logged; the sidecar's stderr is redacted before it is shown.
+  subscription: the Claude Code sign-in already on this Mac (`claude` then `/login`), which the SDK's bundled Claude Code reads
+  from the Keychain item `Claude Code-credentials` or `~/.claude/.credentials.json` itself (`settingSources` only picks settings
+  files, not auth). The app never reads those credentials. Without a sign-in the window says to run `claude` in Terminal and use
+  /login once. The sidecar's stderr is redacted before it is shown.
   The SDK's cost estimate is not shown, since a plan is not charged per token.
 - **Context.** The sidecar registers WorkTime's own read-only MCP server (`WorkTime --mcp`) as `worktime`, so the agent can read
   meetings and activity.
@@ -602,7 +600,7 @@ latest 30 closed or merged ones you created) and `gh auth status` checks the sig
 search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@me`) go to GitHub.
 
 - **Tabs:** Created, Review requested, Assigned and Mentioned. The header counts the rows ("47 created") with a Mergeable pill
-  beside it, and under it the same status pills as the notch bar (All, My turn, Waiting, Approved, Draft, On hold, with
+  beside it, and under it the same status pills as the top notch bar (All, My turn, Waiting, Approved, Draft, On hold, with
   counts; empty ones are hidden), then a search field. Rows are sorted by last update.
 - **Filters menu:** right of the search, one menu holds the rest: the state (Open by default, Merged, Closed, All), the
   repository, the sort (Updated, Needs attention, Most discussed, Unresolved first, Failing checks first) and the activity
@@ -611,7 +609,7 @@ search terms (`author:@me`, `review-requested:@me`, `assignee:@me`, `mentions:@m
 - **Needs attention** adds one weight per thing on a pull request, in the order of how much it asks of you: a review waiting
   on you 50, new feedback from people 40, changes requested 30, failing checks 20, unresolved threads 10, plus the number of
   new comments and unresolved threads (each at most 9) to tell equals apart; the last update decides the rest.
-- **Rows:** the same row as the notch bar: a status dot, a quiet `owner/repo #number` line, the title (two lines at most, one in a
+- **Rows:** the same row as the top notch bar: a status dot, a quiet `owner/repo #number` line, the title (two lines at most, one in a
   narrow list), Open in Claude Code and the checks mark at the right. Merge is on the pull request page and in the row's menu.
   The page header carries what the rows used to: the Jira ticket, the review decision, Waiting on you, "3 unresolved" (the
   first 20 review threads are looked at, so "20+" is a lower bound, until the comments load), "2 new comments", "2 from bots"
@@ -758,9 +756,9 @@ threads of one pull request look like (no UI uses it).
 all pages of its comments and prints the parsed structure and the cost.
 In a debug build `--render-github <folder>` saves previews of the page, its error states and its settings.
 
-## Notch bar panels
+## Top notch bar panels
 
-The icons along the notch bar are panels: Jira, Reminders, GitHub and Slack. Settings > Activity > Notch bar turns each on or off
+The icons along the top notch bar are panels: Jira, Reminders, GitHub and Slack. Settings > Top notch bar turns each on or off
 and moves it up or down. The shown icons split in that order: the first half on the left wing, the second half on the right wing,
 an odd one out in the middle (below the notch on a notched screen). Turning GitHub off and Slack on therefore puts Slack where
 GitHub was. The default is Jira, Reminders and GitHub, with Slack off. Panels that are off fetch nothing (GitHub still refreshes

@@ -143,16 +143,10 @@ enum AgentLogic {
 
     // MARK: Sign-in
 
-    static let signInMessage = "Sign in to Claude: run `claude setup-token` and paste the token in Settings \u{2192} Models, "
-        + "or run `claude` and /login once."
+    static let signInMessage = "Sign in to Claude: run `claude` in Terminal and use /login once."
 
     private static let signInPatterns = ["not logged in", "/login", "invalid api key", "authentication_failed", "authentication_error",
                                          "oauth token", "oauth_org_not_allowed", "invalid bearer token"]
-
-    /// What `claude setup-token` prints: a long-lived OAuth token for the Pro or Max plan.
-    static func isSetupToken(_ token: String) -> Bool {
-        token.hasPrefix("sk-ant-oat") && !token.contains(where: \.isWhitespace)
-    }
 
     /// Whether a sidecar error or failed result means Claude Code has no usable subscription sign-in.
     static func needsSignIn(_ text: String) -> Bool {
@@ -160,13 +154,12 @@ enum AgentLogic {
         return signInPatterns.contains { lowered.contains($0) }
     }
 
-    /// The sidecar's environment: the app's, with `node` first on the PATH, never an API key, and the setup token when one is saved.
-    static func childEnvironment(_ base: [String: String], nodeFolder: String, token: String?, mcpCommand: String?) -> [String: String] {
+    /// The sidecar's environment: the app's, with `node` first on the PATH and never an API key.
+    static func childEnvironment(_ base: [String: String], nodeFolder: String, mcpCommand: String?) -> [String: String] {
         var environment = base
         environment["ANTHROPIC_API_KEY"] = nil
         environment["ANTHROPIC_AUTH_TOKEN"] = nil
         environment["PATH"] = [nodeFolder, base["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"].compactMap { $0 }.joined(separator: ":")
-        if let token { environment["CLAUDE_CODE_OAUTH_TOKEN"] = token }
         environment["WORKTIME_MCP_COMMAND"] = mcpCommand
         return environment
     }

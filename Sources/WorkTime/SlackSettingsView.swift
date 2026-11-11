@@ -7,7 +7,7 @@ struct SlackSettingsSection: View {
     @State private var testing = false
 
     var body: some View {
-        SettingsSection("Slack", footer: "Shows your mentions from the last week and your unread DMs in the notch bar. Create a Slack app, "
+        SettingsSection("Slack", footer: "Shows your mentions from the last week and your unread DMs in the top notch bar. Create a Slack app, "
                         + "add the scopes above as User Token Scopes under OAuth & Permissions, install it to your workspace and paste its "
                         + "User OAuth Token. The token is kept in the app's private secrets file, like the Jira token, and only sent to Slack.") {
             SettingsRow("Scopes") {

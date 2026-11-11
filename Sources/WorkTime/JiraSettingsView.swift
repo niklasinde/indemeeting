@@ -9,7 +9,7 @@ struct JiraSettingsSection: View {
     @State private var testing = false
 
     var body: some View {
-        SettingsSection("Jira", footer: "Reads the open Jira Cloud tickets assigned to you, for the list in the notch bar. The API token "
+        SettingsSection("Jira", footer: "Reads the open Jira Cloud tickets assigned to you, for the list in the top notch bar. The API token "
                         + "is stored in your Keychain only. Nothing is uploaded anywhere but your Jira site.") {
             SettingsRow("Show my Jira tickets", detail: model.error?.message) {
                 Toggle("Show my Jira tickets", isOn: Binding(get: { model.enabled }, set: model.setEnabled))

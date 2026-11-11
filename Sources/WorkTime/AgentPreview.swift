@@ -15,7 +15,7 @@ enum AgentPreview {
         app.setActivationPolicy(.accessory)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
         let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
-        let model = AgentModel(folder: repo, tokens: TokenStore(secrets: MemorySecretStore(), account: "preview"))
+        let model = AgentModel(folder: repo)
         let files = ["Sources/WorkTime/AgentLogic.swift", "Sources/WorkTime/AgentClient.swift", "Sources/WorkTime/AgentView.swift",
                      "Sources/WorkTime/ChatLogic.swift", "agent/src/main.ts"]
 

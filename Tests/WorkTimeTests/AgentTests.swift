@@ -149,38 +149,23 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentEvent.decode(#"{"type":"error","message":"Not logged in · Please run /login","auth":true}"#, cwd: cwd) == .signIn, "auth flag")
         check(AgentEvent.decode(#"{"type":"error","message":"Invalid API key · Please run /login"}"#, cwd: cwd) == .signIn, "auth text")
         check(AgentEvent.decode(#"{"type":"error","message":"The agent is still working."}"#, cwd: cwd) == .error("The agent is still working."), "other")
-        check(AgentLogic.needsSignIn("OAuth token has expired. Please obtain a new token"), "expired setup token")
+        check(AgentLogic.needsSignIn("OAuth token has expired. Please obtain a new token"), "expired sign-in")
         check(!AgentLogic.needsSignIn("Rate limit reached"), "rate limit is not a sign-in")
         var items: [AgentItem] = []
         AgentLogic.apply(.signIn, to: &items)
         AgentLogic.apply(.result(sessionID: "s", isError: true, text: "Not logged in · Please run /login", turns: 1, model: nil), to: &items)
         check(items.map(\.kind) == [.signIn], "one sign-in item \(items)")
-        check(AgentLogic.signInMessage.contains("claude setup-token") && AgentLogic.signInMessage.contains("/login"), "message")
+        check(AgentLogic.signInMessage == "Sign in to Claude: run `claude` in Terminal and use /login once.", "message")
     }),
 
-    ("agent: the sidecar never gets an API key, and gets the setup token when one is saved", {
+    ("agent: the sidecar never gets an API key and uses the Claude Code sign-in on this Mac", {
         let base = ["PATH": "/usr/bin", "ANTHROPIC_API_KEY": "sk-ant-api03-x", "ANTHROPIC_AUTH_TOKEN": "y", "HOME": "/Users/me"]
-        let plain = AgentLogic.childEnvironment(base, nodeFolder: "/opt/node/bin", token: nil, mcpCommand: "/App/WorkTime")
+        let plain = AgentLogic.childEnvironment(base, nodeFolder: "/opt/node/bin", mcpCommand: "/App/WorkTime")
         check(plain["ANTHROPIC_API_KEY"] == nil && plain["ANTHROPIC_AUTH_TOKEN"] == nil, "keys removed")
-        check(plain["CLAUDE_CODE_OAUTH_TOKEN"] == nil && plain["HOME"] == "/Users/me", "falls back to the Claude Code sign-in")
+        check(plain["CLAUDE_CODE_OAUTH_TOKEN"] == nil && plain["HOME"] == "/Users/me", "the Claude Code sign-in")
         check(plain["PATH"]?.hasPrefix("/opt/node/bin:/usr/bin:") == true && plain["WORKTIME_MCP_COMMAND"] == "/App/WorkTime", "path and mcp")
-        let signed = AgentLogic.childEnvironment(base, nodeFolder: "/n", token: "sk-ant-oat01-abc", mcpCommand: nil)
-        check(signed["CLAUDE_CODE_OAUTH_TOKEN"] == "sk-ant-oat01-abc" && signed["ANTHROPIC_API_KEY"] == nil, "setup token")
-        check(AgentLogic.isSetupToken("sk-ant-oat01-abc") && !AgentLogic.isSetupToken("sk-ant-api03-abc"), "setup token shape")
         let redacted = SecretRedaction.redact("401 for sk-ant-oat01-SECRET-part", key: nil)
-        check(!redacted.contains("SECRET"), "setup tokens are redacted: \(redacted)")
-    }),
-
-    ("agent: saving or removing the setup token announces it so the sidecar restarts", {
-        let name = Notification.Name("AgentTestTokenDidChange")
-        let tokens = TokenStore(secrets: MemorySecretStore(), account: "t", didChange: name)
-        var posts = 0
-        let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { _ in posts += 1 }
-        defer { NotificationCenter.default.removeObserver(observer) }
-        try tokens.save(" sk-ant-oat01-abc\n")
-        check(tokens.token() == "sk-ant-oat01-abc" && posts == 1, "saved trimmed")
-        tokens.remove()
-        check(tokens.token() == nil && posts == 2, "removed")
+        check(!redacted.contains("SECRET"), "OAuth tokens are redacted: \(redacted)")
     }),
 
     ("agent: node is looked for on the PATH, Homebrew, then the newest nvm", {

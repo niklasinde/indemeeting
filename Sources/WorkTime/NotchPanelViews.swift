@@ -68,11 +68,11 @@ struct NotchBarSettingsSection: View {
     @AppStorage(AskPanel.shownKey) private var showsBar = true
 
     var body: some View {
-        SettingsSection("Notch bar", footer: "The icons are split over the bar in this order: the first half left of the notch, the "
+        SettingsSection("Top notch bar", footer: "The icons are split over the bar in this order: the first half left of the notch, the "
                         + "second half right of it, and an odd one out in the middle, below the notch. To put one panel in another's "
                         + "place, turn the old one off and the new one on, then move it with the arrows. Panels that are off fetch nothing.") {
-            SettingsRow("Show the notch bar") {
-                Toggle("Show the notch bar", isOn: $showsBar).labelsHidden().toggleStyle(.switch)
+            SettingsRow("Show the top notch bar") {
+                Toggle("Show the top notch bar", isOn: $showsBar).labelsHidden().toggleStyle(.switch)
             }
             ForEach(Array(model.setup.order.enumerated()), id: \.element) { index, id in
                 Divider().padding(.leading, 14)
