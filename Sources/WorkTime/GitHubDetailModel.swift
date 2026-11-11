@@ -11,6 +11,8 @@ final class GitHubDetailModel: ObservableObject {
     @Published private(set) var loading = false
     /// Set when the list's chip or the toolbar asks for the comments; the page scrolls to them and clears it.
     @Published var scrollPending = false
+    /// A changed file the agent beside the page pointed at; the page opens its diff, scrolls to it and clears it.
+    @Published var revealedFile: String?
     let comments: GitHubCommentsModel
     private let store: MeetingStore?
     private var poll: Task<Void, Never>?
@@ -40,6 +42,12 @@ final class GitHubDetailModel: ObservableObject {
         scope.map(comments.show)
         comments.start()
         scrollPending = true
+    }
+
+    func reveal(file path: String) -> Bool {
+        guard detail?.files.contains(where: { $0.path == path }) == true else { return false }
+        revealedFile = path
+        return true
     }
 
     func stop() {

@@ -3,7 +3,8 @@ import AppKit
 import SwiftUI
 
 /// Debug builds only: `WorkTime --render-github <folder>` saves PNGs of the GitHub page with sample pull requests,
-/// its empty and error states and its settings, from a scratch database in the folder.
+/// its empty and error states and its settings, from a scratch database in the folder. With `--agent-embed` it renders only the
+/// page with the Agent beside it and below it.
 enum GitHubPreview {
     static func outputFolder(_ arguments: [String]) -> URL? {
         guard let index = arguments.firstIndex(of: "--render-github"), index + 1 < arguments.count else { return nil }
@@ -29,6 +30,14 @@ enum GitHubPreview {
         window.orderBack(nil)
         var directory = TicketDirectory()
         directory.sites["QDLY"] = "quiddly.atlassian.net"
+        if CommandLine.arguments.contains("--agent-embed") {
+            Task { @MainActor in
+                await AgentPreview.embedded(window: window, model: model, directory: directory, output: output)
+                exit(0)
+            }
+            NSApplication.shared.run()
+            exit(0)
+        }
         if CommandLine.arguments.contains("--terminal-check") {
             Task { @MainActor in
                 await TerminalCheck.run(window: window, model: model, directory: directory, output: output)

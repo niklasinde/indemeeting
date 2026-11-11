@@ -44,17 +44,14 @@ final class AgentWindow {
 
 struct AgentView: View {
     @ObservedObject var model: AgentModel
-    @State private var height: CGFloat = 26
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
-            transcript
-            composer
+            AgentPanel(model: model)
         }
         .frame(minWidth: 600, minHeight: 440)
-        .environment(\.openURL, OpenURLAction { model.open($0) })
     }
 
     private var header: some View {
@@ -72,17 +69,48 @@ struct AgentView: View {
             if model.sessionID != nil {
                 Text("Continuing session").font(.caption).foregroundStyle(.secondary)
             }
-            Picker("Model", selection: $model.model) {
-                ForEach(AgentLogic.models, id: \.id) { Text($0.name).tag($0.id) }
-            }
-            .labelsHidden()
-            .fixedSize()
-            .help("The Claude model for the next prompt. Auto asks the local Ministral model to pick one.")
-            Button("New Session") { model.newSession() }.disabled(model.items.isEmpty && model.sessionID == nil)
+            AgentModelPicker(model: model)
+            AgentNewSessionButton(model: model)
         }
         .padding(.horizontal, RecordingDetail.gutter)
         .padding(.top, 20)
         .padding(.bottom, 12)
+    }
+}
+
+struct AgentModelPicker: View {
+    @ObservedObject var model: AgentModel
+
+    var body: some View {
+        Picker("Model", selection: $model.model) {
+            ForEach(AgentLogic.models, id: \.id) { Text($0.name).tag($0.id) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help("The Claude model for the next prompt. Auto asks the local Ministral model to pick one.")
+    }
+}
+
+struct AgentNewSessionButton: View {
+    @ObservedObject var model: AgentModel
+
+    var body: some View {
+        Button("New Session") { model.newSession() }.disabled(model.items.isEmpty && model.sessionID == nil)
+    }
+}
+
+/// The transcript, the permission prompts and the composer, in the Agent window and beside a pull request.
+struct AgentPanel: View {
+    @ObservedObject var model: AgentModel
+    var gutter = RecordingDetail.gutter
+    @State private var height: CGFloat = 26
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            transcript
+            composer
+        }
+        .environment(\.openURL, OpenURLAction { model.open($0) })
     }
 
     private var transcript: some View {
@@ -109,7 +137,7 @@ struct AgentView: View {
                 }
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, RecordingDetail.gutter)
+                .padding(.horizontal, gutter)
                 .padding(.vertical, 14)
             }
             .onChange(of: model.items) { proxy.scrollTo("end") }
@@ -162,7 +190,7 @@ struct AgentView: View {
         }
         .frame(maxWidth: 760)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, RecordingDetail.gutter - 14)
+        .padding(.horizontal, max(gutter - 14, 6))
         .padding(.bottom, 16)
     }
 }

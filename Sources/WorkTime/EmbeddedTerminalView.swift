@@ -67,8 +67,8 @@ extension EmbeddedTerminal.Activity {
     }
 }
 
-/// The page with its terminal: beside it in a wide window, and below it otherwise, where the terminal is the bottom part of the
-/// column and shows its start while no session is open. A handle resizes it.
+/// The page with its terminal or its agent, one at a time: beside it in a wide window, and below it otherwise, where the pane is the
+/// bottom part of the column and shows how to start one while none is open. A handle resizes it.
 struct TerminalSplit<Page: View>: View {
     let page: GitHubDetailModel?
     let width: Double
@@ -76,6 +76,7 @@ struct TerminalSplit<Page: View>: View {
     var stacked = false
     @ViewBuilder let content: Page
     @ObservedObject private var model = EmbeddedTerminalModel.shared
+    @ObservedObject private var agents = PRAgents.shared
     @AppStorage(EmbeddedTerminal.rightSizeKey) private var rightSize = EmbeddedTerminal.defaultRight
     @AppStorage(EmbeddedTerminal.belowSizeKey) private var belowSize = EmbeddedTerminal.defaultBelow
     @State private var dragStart: Double?
@@ -87,8 +88,16 @@ struct TerminalSplit<Page: View>: View {
     private func docked(_ page: GitHubDetailModel) -> some View {
         let key = page.pr.url
         let placement = stacked ? EmbeddedTerminal.Placement.below : EmbeddedTerminal.placement(width: width)
+        let agent = agents.isShown(key) ? agents.model(for: key) : nil
         return GeometryReader { proxy in
-            if placement == .right, model.isShown(key), let session = model.session(for: key) {
+            if placement == .right, let agent {
+                let length = EmbeddedTerminal.paneLength(rightSize, placement: .right, available: proxy.size.width)
+                HStack(spacing: 0) {
+                    content.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    handle(horizontal: true, current: length)
+                    AgentDockPane(key: key, model: agent, page: page).id(key).frame(width: length)
+                }
+            } else if placement == .right, model.isShown(key), let session = model.session(for: key) {
                 let length = EmbeddedTerminal.paneLength(rightSize, placement: .right, available: proxy.size.width)
                 HStack(spacing: 0) {
                     content.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -100,7 +109,10 @@ struct TerminalSplit<Page: View>: View {
                 VStack(spacing: 0) {
                     content.frame(maxWidth: .infinity, maxHeight: .infinity)
                     handle(horizontal: false, current: length)
-                    TerminalDock(page: page, model: model).frame(height: length)
+                    Group {
+                        if let agent { AgentDockPane(key: key, model: agent, page: page).id(key) } else { TerminalDock(page: page, model: model) }
+                    }
+                    .frame(height: length)
                 }
             } else {
                 content
@@ -134,6 +146,7 @@ struct TerminalDock: View {
     @ObservedObject var page: GitHubDetailModel
     @ObservedObject var model: EmbeddedTerminalModel
     @ObservedObject private var claude = GitHubClaudeModel.shared
+    @ObservedObject private var agents = PRAgents.shared
 
     var body: some View {
         let key = page.pr.url
@@ -149,6 +162,9 @@ struct TerminalDock: View {
                     if model.hasSession(key) { Button("Show Terminal") { model.setShown(key, true) } }
                     OpenInClaudeMenu(pr: page.pr, detail: page.detail, model: claude)
                     AskClaudeMenu(pr: page.pr, detail: page.detail, model: claude)
+                    Button(agents.model(for: key) == nil ? "Open in Agent" : "Show Agent") {
+                        PRAgents.shared.open(GitHubLink.Target(repo: page.pr.repo, number: page.pr.number))
+                    }
                 }
                 .controlSize(.small)
             }

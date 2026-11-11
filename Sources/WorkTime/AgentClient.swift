@@ -64,6 +64,8 @@ final class AgentModel: ObservableObject {
         didSet { if oldValue.isEmpty, !draft.isEmpty, model == AgentLogic.auto, !OllamaSummarizer.isForced() { LocalLLM.shared.prepare() } }
     }
 
+    /// Beside a pull request: shows a referenced file in the pull request's diff, false when it is not one of its files.
+    var reveal: ((String) -> Bool)?
     private var client: AgentClient?
     private var routing: Task<Void, Never>?
     private var lastModel: String?
@@ -201,6 +203,7 @@ final class AgentModel: ObservableObject {
 
     func open(_ url: URL) -> OpenURLAction.Result {
         guard let target = AgentLogic.codeTarget(url) else { return .systemAction }
+        if reveal?(AgentLogic.relative(target.path, to: folder)) == true { return .handled }
         AgentFiles.open(path: target.path, line: target.line)
         return .handled
     }

@@ -147,7 +147,7 @@ struct WaitingPullRequests: View {
 
     private func open(_ pr: GitHubPR) {
         onOpen()
-        SessionsModel.shared.showGitHub?(GitHubLink.Target(repo: pr.repo, number: pr.number))
+        GitHubModel.shared.showInWindow?(GitHubLink.Target(repo: pr.repo, number: pr.number))
     }
 }
 

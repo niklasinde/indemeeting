@@ -30,6 +30,8 @@ final class GitHubModel: ObservableObject {
     @Published private(set) var marked = Set<String>()
     /// A pull request opened from a link that is not in the list; it stays selected through a refresh.
     var linkedURL: String?
+    /// Shows a pull request in the main window's GitHub section; set by the window.
+    var showInWindow: ((GitHubLink.Target) -> Void)?
     @Published private(set) var linkNotice: String?
 
     var store: MeetingStore?

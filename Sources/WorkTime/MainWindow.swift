@@ -15,8 +15,7 @@ final class MainWindow {
         activity = ActivityModel(store: store, tracker: tracker)
         let view = MainView(recorder: recorder, processor: processor, library: library, activity: activity, playback: playback)
         window = AppWindow(onClose: { [playback] in playback.pause() }) { Self.makeWindow(view) }
-        SessionsModel.shared.reveal = { [weak self] in self?.showSessions() }
-        SessionsModel.shared.showGitHub = { [weak self] target in
+        GitHubModel.shared.showInWindow = { [weak self] target in
             self?.showGitHub()
             GitHubModel.shared.open(target)
         }
@@ -54,12 +53,6 @@ final class MainWindow {
         window.show()
     }
 
-    func showSessions() {
-        library.start()
-        library.showsSessions = true
-        window.show()
-    }
-
     static func makeWindow(_ view: MainView) -> NSWindow {
         let controller = NSHostingController(rootView: view)
         controller.sceneBridgingOptions = [.toolbars]
@@ -88,15 +81,11 @@ final class RecordingLibrary: ObservableObject {
     @Published var confirmingDelete = false
     /// The Activity page is shown instead of the selected meeting.
     @Published var showsActivity = false {
-        didSet { if showsActivity { showsGitHub = false; showsSessions = false } }
+        didSet { if showsActivity { showsGitHub = false } }
     }
     /// The GitHub page is shown instead of the selected meeting.
     @Published var showsGitHub = false {
-        didSet { if showsGitHub { showsActivity = false; showsSessions = false } }
-    }
-    /// The Sessions page is shown instead of the selected meeting.
-    @Published var showsSessions = false {
-        didSet { if showsSessions { showsActivity = false; showsGitHub = false } }
+        didSet { if showsGitHub { showsActivity = false } }
     }
     /// A moment in the selected meeting that the transcript should scroll to.
     @Published var seekTarget: TimeInterval?
@@ -125,14 +114,13 @@ final class RecordingLibrary: ObservableObject {
         self.folder = folder
     }
 
-    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub, sessions: showsSessions) }
+    var section: SidebarSection { SidebarLogic.section(activity: showsActivity, gitHub: showsGitHub) }
 
     var selected: RecordingEntry? { section == .meetings ? recordings.first { $0.id == selection } : nil }
 
     func show(_ section: SidebarSection) {
         showsActivity = section == .activity
         showsGitHub = section == .gitHub
-        showsSessions = section == .sessions
     }
 
     func select(_ entry: RecordingEntry) {
@@ -450,7 +438,7 @@ struct MainView: View {
             }
         }
         .background {
-            Button(library.section == .sessions ? "New Session" : "New Meeting") { startNew() }
+            Button("New Meeting") { newMeeting() }
                 .keyboardShortcut("n")
                 .opacity(0)
                 .frame(width: 0, height: 0)
@@ -472,7 +460,6 @@ struct MainView: View {
         switch library.section {
         case .activity: ActivityView(model: activity, tracker: activity.tracker)
         case .gitHub: GitHubView(model: .shared)
-        case .sessions: SessionsView()
         default: MeetingsView(recorder: recorder, processor: processor, library: library, playback: playback) { newMeeting() }
         }
     }
@@ -511,22 +498,17 @@ struct MainView: View {
             }
             .help("Stop Recording")
         } else {
-            let sessions = library.section == .sessions
-            Button { startNew() } label: {
+            Button { newMeeting() } label: {
                 Label {
-                    Text(sessions ? "New Session" : "New Meeting")
+                    Text("New Meeting")
                 } icon: {
-                    Image(systemName: sessions ? "terminal" : "circle.fill").foregroundStyle(sessions ? Color.primary : Color.red)
+                    Image(systemName: "circle.fill").foregroundStyle(Color.red)
                 }
                 .labelStyle(.titleAndIcon)
             }
-            .disabled(recorder.isBusy && !sessions)
-            .help(sessions ? "Start a Claude session in a folder (\u{2318}N)" : "Record a new meeting (\u{2318}N)")
+            .disabled(recorder.isBusy)
+            .help("Record a new meeting (\u{2318}N)")
         }
-    }
-
-    private func startNew() {
-        if library.section == .sessions { SessionsModel.shared.newSession() } else { newMeeting() }
     }
 
     private var liveTranscriptButton: some View {

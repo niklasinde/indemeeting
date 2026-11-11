@@ -36,13 +36,14 @@ struct GitHubDetailView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     GitHubDetailContent(pr: page.pr, detail: page.detail, comments: page.comments, directory: model.directory, ask: { model.ask(about: page.pr) },
-                                        showComments: { page.showComments($0) })
+                                        showComments: { page.showComments($0) }, revealedFile: page.revealedFile)
                         .padding(.horizontal, RecordingDetail.gutter)
                         .padding(.bottom, 28)
                 }
                 .onAppear { scrollToComments(proxy) }
                 .onChange(of: page.scrollPending) { scrollToComments(proxy) }
                 .onChange(of: page.detail != nil) { scrollToComments(proxy) }
+                .onChange(of: page.revealedFile) { scrollToFile(proxy) }
             }
         }
         .frame(maxWidth: GitHubLayout.pageWidth, maxHeight: .infinity, alignment: .topLeading)
@@ -68,37 +69,13 @@ extension GitHubDetailView {
             page.scrollPending = false
         }
     }
-}
 
-/// The Claude sessions on this pull request, running, waiting, saved or done; a click opens the session on the Sessions section.
-private struct PullRequestSessions: View {
-    let url: String
-    @ObservedObject private var terminals = EmbeddedTerminalModel.shared
-    @ObservedObject private var claude = GitHubClaudeModel.shared
-
-    var body: some View {
-        let rows = SessionList.sessions(for: url, in: SessionsModel.shared.rows(now: Date()))
-        if !rows.isEmpty {
-            DetailSection("Sessions", trailing: "\(rows.count)") {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(rows) { row in
-                        Button { SessionsModel.shared.show(row.id) } label: {
-                            HStack(spacing: 8) {
-                                Circle().fill(row.state.color).frame(width: 7, height: 7)
-                                Text(row.title).lineLimit(1)
-                                Spacer(minLength: 8)
-                                Text(row.state.title).foregroundStyle(.secondary)
-                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
-                            }
-                            .padding(.vertical, 6)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .help("Open this session in Sessions")
-                        Divider()
-                    }
-                }
-            }
+    private func scrollToFile(_ proxy: ScrollViewProxy) {
+        guard let path = page.revealedFile else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            withAnimation { proxy.scrollTo(GitHubDetailContent.fileAnchor(path), anchor: .top) }
+            page.revealedFile = nil
         }
     }
 }
@@ -130,7 +107,9 @@ struct GitHubDetailContent: View {
     /// Off in the previews, which render the whole page at once.
     var lazyComments = true
     var showComments: (GitHubCommentsFilter.Scope) -> Void = { _ in }
+    var revealedFile: String?
     static let commentsAnchor = "comments"
+    static func fileAnchor(_ path: String) -> String { "file:" + path }
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
     @ObservedObject private var pageActions = GitHubActionsModel.shared
@@ -144,7 +123,6 @@ struct GitHubDetailContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header.readingWidth()
-            PullRequestSessions(url: pr.url).readingWidth()
             ClaudeReviewPanel(pr: pr, detail: detail, model: claude).readingWidth()
             if let detail {
                 people(detail).readingWidth()
@@ -361,6 +339,7 @@ struct GitHubDetailContent: View {
                 ForEach(shown, id: \.path) { file in
                     GitHubFileDiff(file: file, diffs: diffs, source: source, url: "\(detail.url)/files",
                                    threads: threads.filter { $0.path == file.path }, comments: comments)
+                        .id(Self.fileAnchor(file.path))
                     Divider()
                 }
                 if shown.isEmpty { Text("No file matches").foregroundStyle(.tertiary).padding(.top, 6) }
@@ -370,6 +349,11 @@ struct GitHubDetailContent: View {
             }
         }
         .task(id: source) { diffs.load(source) }
+        .onChange(of: revealedFile) {
+            guard let path = revealedFile else { return }
+            fileQuery = ""
+            if !diffs.expanded.contains(path) { diffs.expand([path], from: source) }
+        }
     }
 }
 
@@ -516,9 +500,9 @@ struct PageActionBar: View {
         }
     }
 
-    private func openInAgent() { AgentWindow.shared.show(pr: GitHubLink.Target(repo: pr.repo, number: pr.number)) }
+    private func openInAgent() { PRAgents.shared.open(GitHubLink.Target(repo: pr.repo, number: pr.number)) }
 
-    private let openInAgentHelp = "Open the Agent window in this repository's checkout with a review prompt ready to send"
+    private let openInAgentHelp = "Open the Agent beside this pull request, in its repository's checkout, with a review prompt ready to send"
 
     @ViewBuilder private var copyItems: some View {
         Button("Copy Link") { GitHubModel.copy(pr.url) }

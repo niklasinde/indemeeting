@@ -10,9 +10,6 @@ enum Main {
         if let output = GitHubPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { GitHubPreview.run(to: output) }
         }
-        if let output = SessionsPreview.outputFolder(CommandLine.arguments) {
-            MainActor.assumeIsolated { SessionsPreview.run(to: output) }
-        }
         if let output = NotchPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { NotchPreview.run(to: output) }
         }
@@ -246,6 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
+        PRAgents.shared.stopAll()
         LocalLLM.shared.unload(wait: true)
         tracker.flush()
         AppUpgrade.shared.relaunchIfRequested()
@@ -292,7 +290,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where AppURL.accepts(scheme: url.scheme) {
             if let target = GitHubLink.parseAgent(url.absoluteString) {
-                AgentWindow.shared.show(pr: target)
+                mainWindow.showGitHub()
+                GitHubModel.shared.open(target)
+                PRAgents.shared.open(target)
                 continue
             }
             guard let target = GitHubLink.parse(url.absoluteString) else {

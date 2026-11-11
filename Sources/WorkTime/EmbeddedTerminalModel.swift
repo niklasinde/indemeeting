@@ -152,19 +152,6 @@ final class TerminalSession: NSObject, ObservableObject, LocalProcessTerminalVie
 
     var lastOutput: Date? { outputClock.last }
 
-    /// The last lines Claude printed, for the check whether it waits for an answer.
-    var screenTail: String {
-        view.allOutput.split(whereSeparator: \.isNewline).suffix(WaitingPrompt.screenLines).joined(separator: "\n")
-    }
-
-    /// The only place that writes to the session's terminal: the send box and the Yes and No answers come here.
-    @discardableResult
-    func submit(_ text: String) -> Bool {
-        guard isRunning, let payload = SessionInput.submission(text) else { return false }
-        view.send(data: ArraySlice(payload.utf8))
-        return true
-    }
-
     var hasEnded: Bool {
         switch state {
         case .exited, .unavailable: return true
@@ -302,14 +289,20 @@ final class EmbeddedTerminalModel: ObservableObject {
         return window.makeFirstResponder(view)
     }
 
+    /// The terminal and the agent share the pane, so showing the terminal hides the agent.
     func setShown(_ key: String, _ shown: Bool) {
-        if shown { hidden.remove(key) } else { hidden.insert(key) }
+        if shown {
+            hidden.remove(key)
+            PRAgents.shared.hide(key)
+        } else {
+            hidden.insert(key)
+        }
     }
 
     /// Opens the pull request's terminal and starts Claude in it. When Claude already runs there, that session is shown instead of a second one.
     func open(_ key: String, title: String, directory: URL, prompt: String, cli: URL?, hint: GitHubClaudeModel.Note?,
               preset: GitHubClaude.Preset? = nil, resume: GitHubClaude.Resume? = nil) {
-        hidden.remove(key)
+        setShown(key, true)
         if isRunning(key) { return }
         close(key)
         let session = registry.attach(key) {

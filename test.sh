@@ -71,8 +71,6 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/OllamaSummarizer.swift \
     Sources/WorkTime/LocalLLMLogic.swift \
     Sources/WorkTime/SidebarLogic.swift \
-    Sources/WorkTime/SessionTranscript.swift \
-    Sources/WorkTime/ClaudeSessions.swift \
     Sources/WorkTime/UpgradeLogic.swift \
     Sources/WorkTime/AgentLogic.swift \
     Tests/WorkTimeTests/Tests.swift \
@@ -106,7 +104,6 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/RecordingDeviceTests.swift \
     Tests/WorkTimeTests/ClaudeAPITests.swift \
     Tests/WorkTimeTests/SidebarTests.swift \
-    Tests/WorkTimeTests/SessionsTests.swift \
     Tests/WorkTimeTests/UpgradeTests.swift \
     Tests/WorkTimeTests/TodoTests.swift \
     Tests/WorkTimeTests/ASRBenchmarkTests.swift \

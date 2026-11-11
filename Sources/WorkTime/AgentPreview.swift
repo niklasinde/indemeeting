@@ -14,7 +14,6 @@ enum AgentPreview {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         try? FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
-        let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
         let model = AgentModel(folder: repo)
         let files = ["Sources/WorkTime/AgentLogic.swift", "Sources/WorkTime/AgentClient.swift", "Sources/WorkTime/AgentView.swift",
                      "Sources/WorkTime/ChatLogic.swift", "agent/src/main.ts"]
@@ -42,6 +41,36 @@ enum AgentPreview {
         }
         app.run()
         exit(0)
+    }
+
+    private static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+
+    /// The pull request page with the agent in the terminal's place: beside the page in a wide window, below it otherwise.
+    @MainActor
+    static func embedded(window: NSWindow, model: GitHubModel, directory: TicketDirectory, output: URL) async {
+        let pr = GitHubPreview.samples[.created]![1]
+        model.showSample(prs: GitHubPreview.samples, directory: directory)
+        model.showSample(selecting: pr, detail: GitHubPreview.detailSamples[0].detail)
+        let agent = AgentModel(folder: repo)
+        agent.open(pr: GitHubLink.Target(repo: pr.repo, number: pr.number), checkout: URL(fileURLWithPath: repo))
+        agent.preview(sample())
+        agent.draft = ""
+        PRAgents.shared.showSample(pr.url, model: agent)
+        for (name, size) in [("right", NSSize(width: 1960, height: 860)), ("below", NSSize(width: 1240, height: 860)),
+                             ("stacked", NSSize(width: 1440, height: 960))] {
+            window.setContentSize(size)
+            for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+                window.appearance = NSAppearance(named: appearance)
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                PreviewRenderer.save(window, to: output.appendingPathComponent("agent-embed-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
+            }
+        }
+        agent.preview([])
+        agent.open(pr: GitHubLink.Target(repo: pr.repo, number: pr.number), checkout: URL(fileURLWithPath: repo))
+        window.appearance = NSAppearance(named: .aqua)
+        window.setContentSize(NSSize(width: 1960, height: 860))
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        PreviewRenderer.save(window, to: output.appendingPathComponent("agent-embed-new-light.png"))
     }
 
     @MainActor
