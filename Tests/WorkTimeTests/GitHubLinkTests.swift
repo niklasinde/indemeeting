@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 private func parsed(_ text: String) -> GitHubLink.Target? { GitHubLink.parse(text) }
 

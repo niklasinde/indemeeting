@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
     ("the list keeps its range and leaves the page its minimum", {

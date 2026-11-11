@@ -1,4 +1,7 @@
 import CoreGraphics
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 private func builtIn(width: CGFloat, height: CGFloat, notch: CGFloat, at origin: CGPoint = .zero, globalAreas: Bool = false)
     -> (screen: CGRect, left: CGRect, right: CGRect) {

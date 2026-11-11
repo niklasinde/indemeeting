@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 private func temporaryFolder() throws -> URL {
     let folder = FileManager.default.temporaryDirectory.appendingPathComponent("githubclaude-\(UUID().uuidString)", isDirectory: true)

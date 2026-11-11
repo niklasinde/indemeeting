@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 private func row(_ number: Int) -> GitHubPR {
     GitHubPR(url: "https://github.com/acme/api/pull/\(number)", number: number, title: "T\(number)", repo: "acme/api", state: .open, updated: Date())

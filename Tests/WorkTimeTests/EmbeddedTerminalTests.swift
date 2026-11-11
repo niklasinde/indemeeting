@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(WorkTime)
+@testable import WorkTime
+#endif
 
 private final class FakeSession { var running: Bool; init(_ running: Bool) { self.running = running } }
 
