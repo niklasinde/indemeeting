@@ -4,7 +4,6 @@ import Foundation
 #endif
 
 private let fakeKey = "sk-ant-api03-FAKE-TEST-KEY-0123456789"
-private let now = Date(timeIntervalSince1970: 1_792_300_000)
 
 private func json(_ object: [String: Any]) -> String {
     "data: " + String(decoding: (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data(), as: UTF8.self)
@@ -78,13 +77,6 @@ private func parsed(_ request: URLRequest) -> [String: Any] {
     (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any] ?? [:]
 }
 
-private func withStore(_ body: (MeetingStore, URL) throws -> Void) throws {
-    let folder = FileManager.default.temporaryDirectory.appendingPathComponent("claude-api-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: folder) }
-    try body(try MeetingStore.open(at: folder.appendingPathComponent("meetings.sqlite")), folder)
-}
-
 private let sourceFolder: URL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     .appendingPathComponent("Sources", isDirectory: true)
 
@@ -110,14 +102,6 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
         check(object["tools"] == nil, "no tools in the request body")
         check(Set(object.keys) == ["model", "max_tokens", "stream", "system", "messages"], "only the expected fields: \(Set(object.keys))")
         check(!String(decoding: body, as: UTF8.self).contains("tools"), "the word tools does not appear in the body")
-    }),
-
-    ("a body built with pull request context still has no tools field", {
-        let context = ClaudeAPIContext.text(for: ClaudeAPIContext.PullRequest(title: "T", url: "https://github.com/a/b/pull/1", repo: "a/b", checks: "No checks", description: "Body"))
-        let body = try ClaudeAPIRequest.body(model: "claude-haiku-5-5", system: ClaudeAPIRequest.system(context: context), messages: [ClaudeAPIMessage(role: .user, text: "Hi")])
-        let object = (try JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
-        check(object["tools"] == nil, "no tools")
-        check((object["system"] as? String)?.contains("<pull_request>") == true, "context sits in the system prompt as data")
     }),
 
     ("turns with the same role are joined, leading assistant turns dropped and only the newest turns kept", {
@@ -313,77 +297,14 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
         check(live?.keychain.service == "com.niklasinde.MeetingRecorder.anthropic", "service name: \(String(describing: live?.keychain.service))")
     }),
 
-    ("pull request context shows the read-only fields, leaves out a missing description and is capped", {
-        let pr = ClaudeAPIContext.PullRequest(title: "Fix the merge button", url: "https://github.com/acme/app/pull/9", repo: "acme/app",
-                                              checks: "3 passed", description: "Makes merge work.")
-        let text = ClaudeAPIContext.text(for: pr)
-        check(text.contains("Title: Fix the merge button") && text.contains("URL: https://github.com/acme/app/pull/9"), "title and URL")
-        check(text.contains("Checks: 3 passed") && text.contains("Makes merge work."), "checks and description")
-        let bare = ClaudeAPIContext.text(for: ClaudeAPIContext.PullRequest(title: "T", url: "u", repo: "r", checks: "No checks", description: "  "))
-        check(!bare.contains("Description:"), "blank description left out")
-        let long = ClaudeAPIContext.text(for: ClaudeAPIContext.PullRequest(title: "T", url: "u", repo: "r", checks: "c",
-                                                                           description: String(repeating: "word ", count: 3000)))
-        check(long.count <= ClaudeAPIContext.limit + 20, "capped near \(ClaudeAPIContext.limit): \(long.count)")
-        check(ClaudeAPIRequest.system(context: nil) == ClaudeAPIRequest.instructions, "no context, no data block")
-    }),
-
-    ("the models offered are the Messages API IDs, with Sonnet as the default and unknown values falling back to it", {
-        check(ClaudeAPIModel.allCases.map(\.rawValue) == ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"], "IDs")
-        check(ClaudeAPIModel.defaultModel == .sonnet, "Sonnet is the default")
-        check(ClaudeAPIModel.stored(nil) == .sonnet && ClaudeAPIModel.stored("claude-old-1") == .sonnet, "fallback")
-        check(ClaudeAPIModel.stored("claude-haiku-5-5") == .haiku, "stored choice kept")
-    }),
-
-    ("chat titles come from the first line of the first question", {
-        check(ClaudeAPIChat.title(for: "  How do I ship?\nMore detail") == "How do I ship?", "first line")
-        check(ClaudeAPIChat.title(for: String(repeating: "a", count: 100)).count == 60, "capped at 60")
-        check(ClaudeAPIChat.title(for: "   \n") == "New chat", "blank gives New chat")
-    }),
-
-    ("Claude API chats are stored apart from Claude Code chats, and delete removes only Claude API chats", {
-        try withStore { store, _ in
-            let api = try store.createClaudeAPIChat(title: "Ship it", now: now)
-            try store.addClaudeAPIMessage(chat: api, role: .user, text: "Question", now: now)
-            try store.addClaudeAPIMessage(chat: api, role: .assistant, text: "Answer", usage: ClaudeAPIUsage(inputTokens: 10, outputTokens: 3), now: now)
-            let messages = try store.claudeAPIMessages(chat: api)
-            check(messages.map(\.role) == [.user, .assistant], "order kept")
-            check(messages.last?.usage == ClaudeAPIUsage(inputTokens: 10, outputTokens: 3), "usage round trip")
-            check(messages.first?.usage == nil, "no usage on a question")
-            _ = try store.createChat(title: "Claude Code chat", scope: .general, now: now)
-            check(try store.claudeAPIChats().map(\.title) == ["Ship it"], "Claude API list has only its chats")
-            check(try store.chats().map(\.title) == ["Claude Code chat"], "Claude Code list untouched by the API chats")
-            try store.deleteClaudeAPIChat(api)
-            check(try store.claudeAPIMessages(chat: api).isEmpty, "messages go with their chat")
-            let second = try store.createClaudeAPIChat(title: "One", now: now)
-            _ = try store.createClaudeAPIChat(title: "Two", now: now)
-            try store.addClaudeAPIMessage(chat: second, role: .user, text: "x", now: now)
-            check(try store.deleteAllClaudeAPIChats() == 2, "delete all counts the chats")
-            check(try store.claudeAPIChats().isEmpty, "none left")
-            check(try store.chats().count == 1, "Claude Code chat still there after delete all")
-        }
-    }),
-
-    ("the database holds the questions and answers and never a key", {
-        try withStore { store, folder in
-            let chat = try store.createClaudeAPIChat(title: "Check", now: now)
-            try store.addClaudeAPIMessage(chat: chat, role: .user, text: "Hello", now: now)
-            try store.addClaudeAPIMessage(chat: chat, role: .assistant, text: "Hi", now: now)
-            let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-            for file in files {
-                let contents = String(decoding: (try? Data(contentsOf: file)) ?? Data(), as: UTF8.self)
-                check(!contents.contains("sk-ant-"), "no key-shaped text in \(file.lastPathComponent)")
-            }
-        }
-    }),
-
-    ("the Claude API chat is reachable only from the app window: the MCP server and the phone API never mention it", {
-        let allowed: Set<String> = ["MainWindow.swift", "SettingsWindow.swift", "WorkTimeApp.swift", "MeetingStore.swift", "ClaudeSummarizer.swift"]
+    ("only Settings, the summariser and the command-line check use the Claude API: the MCP server and the phone API never mention it", {
+        let allowed: Set<String> = ["SettingsWindow.swift", "WorkTimeApp.swift", "ClaudeSummarizer.swift"]
         for file in try sourceFiles() {
             let name = file.lastPathComponent
             guard !name.hasPrefix("ClaudeAPI") else { continue }
             let text = try String(contentsOf: file, encoding: .utf8)
             if text.contains("ClaudeAPI") || text.contains("api.anthropic.com") || text.contains("AnthropicClient") {
-                check(allowed.contains(name) || name == "ClaudeAPI.swift", "\(name) must not reach the Claude API chat")
+                check(allowed.contains(name) || name == "ClaudeAPI.swift", "\(name) must not reach the Claude API")
             }
             if name.hasPrefix("MCP") || name.hasPrefix("Phone") || name.hasPrefix("ChatToolbox") || name == "PhoneAPI.swift" || name == "PhoneFormat.swift" || name == "PhoneTransport.swift" {
                 check(!text.contains("ClaudeAPI") && !text.contains("api.anthropic.com"), "\(name) must not reach the Claude API")

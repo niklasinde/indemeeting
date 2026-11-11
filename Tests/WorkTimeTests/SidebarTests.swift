@@ -4,10 +4,11 @@ import Foundation
 #endif
 
 let sidebarTests: [(name: String, run: () throws -> Void)] = [
-    ("sidebar lists Meetings above Activity, GitHub, Chat, Claude API and Agent", {
-        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Claude API", "Main"],
+    ("sidebar lists Meetings above Activity, GitHub, Chat and Agent, with no Claude API row", {
+        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Main"],
               "order \(SidebarSection.allCases.map(\.title))")
-        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat, .claudeAPI], "chat and Claude API open their windows, Main is a page")
+        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat], "chat opens its window, Main is a page")
+        check(SidebarSection(rawValue: "claudeAPI") == nil, "the removed Claude API row no longer exists")
         check(SidebarLogic.defaultSection == .meetings, "default section")
     }),
 

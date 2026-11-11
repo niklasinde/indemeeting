@@ -1,8 +1,8 @@
 import Foundation
 
-/// The sections of the main window's sidebar, top to bottom. Chat, Claude API and Agent open their own windows.
+/// The sections of the main window's sidebar, top to bottom. Chat opens its own window.
 enum SidebarSection: String, CaseIterable, Identifiable {
-    case meetings, activity, gitHub, chat, claudeAPI, agent
+    case meetings, activity, gitHub, chat, agent
 
     var id: String { rawValue }
 
@@ -12,7 +12,6 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .activity: return "Activity"
         case .gitHub: return "GitHub"
         case .chat: return "Chat"
-        case .claudeAPI: return "Claude API"
         case .agent: return "Main"
         }
     }
@@ -23,7 +22,6 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .activity: return "clock"
         case .gitHub: return "arrow.triangle.branch"
         case .chat: return "bubble.left.and.text.bubble.right"
-        case .claudeAPI: return "sparkles"
         case .agent: return "chevron.left.forwardslash.chevron.right"
         }
     }
@@ -34,12 +32,11 @@ enum SidebarSection: String, CaseIterable, Identifiable {
         case .activity: return "What you worked on, by day and week"
         case .gitHub: return "Your pull requests, read through the GitHub CLI"
         case .chat: return "Ask about your meetings and work (\u{2318}\u{21E7}A)"
-        case .claudeAPI: return "Chat with Claude through the Anthropic API, with your own key"
         case .agent: return "Your overview agent: what needs you across pull requests, their agents, Slack and meetings"
         }
     }
 
-    var opensWindow: Bool { [.chat, .claudeAPI].contains(self) }
+    var opensWindow: Bool { self == .chat }
 }
 
 enum SidebarLogic {

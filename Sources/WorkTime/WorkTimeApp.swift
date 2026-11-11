@@ -25,9 +25,6 @@ enum Main {
         if let output = PreviewRenderer.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PreviewRenderer.run(to: output) }
         }
-        if let output = ClaudeAPIPreview.outputFolder(CommandLine.arguments) {
-            MainActor.assumeIsolated { ClaudeAPIPreview.run(to: output) }
-        }
         if let output = AgentPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { AgentPreview.run(to: output) }
         }
@@ -222,7 +219,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         TodoModel.shared.start(store: store, reminders: RemindersStore())
         PhoneAccess.shared.configure(store: store)
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
-        ClaudeAPIWindow.shared.configure(store: store)
         AgentHub.shared.showPage = { [weak self] in self?.mainWindow.show(section: .agent) }
         AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
         AgentStateWriter.shared.start()

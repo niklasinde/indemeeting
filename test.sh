@@ -67,7 +67,6 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/PhoneEndpoints.swift \
     Sources/WorkTime/ClaudeAPILogic.swift \
     Sources/WorkTime/ClaudeAPIClient.swift \
-    Sources/WorkTime/ClaudeAPIStore.swift \
     Sources/WorkTime/ClaudeSummarizer.swift \
     Sources/WorkTime/OllamaSummarizer.swift \
     Sources/WorkTime/LocalLLMLogic.swift \

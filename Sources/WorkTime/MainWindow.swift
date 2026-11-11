@@ -606,7 +606,6 @@ struct SectionSidebar: View {
     private func open(_ section: SidebarSection) {
         switch section {
         case .chat: ChatWindow.shared.show()
-        case .claudeAPI: ClaudeAPIWindow.shared.show()
         default: library.show(section)
         }
     }

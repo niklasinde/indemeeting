@@ -108,9 +108,9 @@ Quitting while paused saves the recording like Stop.
 
 "Open WorkTime" (Cmd-O) at the top of the menu, or opening the app again from Finder or Spotlight, shows the
 main window (with a Dock icon while it is open). The sidebar holds the sections: **Meetings** (first), Activity, GitHub,
-Chat, Claude API and Agent. Meetings shows the recordings in `~/Library/Application Support/MeetingRecorder/Recordings` in a list beside the selected meeting,
+Chat and Agent. Meetings shows the recordings in `~/Library/Application Support/MeetingRecorder/Recordings` in a list beside the selected meeting,
 grouped by Today, Yesterday, This week and Earlier; below 780 points the list and the meeting take turns, with a back
-button. Chat, Claude API and Agent open their own windows. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
+button. Chat opens its own window. The sidebar toggle in the toolbar (or **⌃⌘S** / View > Hide Sidebar)
 hides the sidebar so the content takes the full width; the choice is remembered between launches. Each row shows the meeting title (a rename, else the title of the
 summary, else "Meeting") and the time and length. The search field at the top searches titles, transcripts, summaries
 and notes in the database (every word has to match as the start of a word, ignoring case and accents); the arrow keys
@@ -505,27 +505,19 @@ folder:
 WorkTime --data-dir /tmp/copy --meeting 7 --chat "Vilka beslut fattades?"
 ```
 
-## Claude API chat
+## Claude API key
 
-A chat that calls the Anthropic Messages API directly with your own API key. It is separate from the on-device chat and from
-Claude Code. Open it from the **Claude API** row in the main window's sidebar.
+Settings > Claude API holds an Anthropic API key. The meeting summariser uses it to summarise with `claude-opus-5-5` through
+the Messages API; without a key it falls back to the Claude CLI. There is no Claude API chat; the on-device **Chat** is the chat.
 
-- **Key.** Settings > Claude API has a key field. The key must start with `sk-ant-` and contain no spaces. It is stored in the
-  macOS Keychain (service `com.niklasinde.MeetingRecorder.anthropic`, account `api-key`, available after first unlock on this
-  device only). Only a masked form (`sk-ant-…abcd`) is ever shown. Remove deletes it.
-- **Model.** Settings > Claude API picks the model. The default is Claude Sonnet 5.5. The IDs, from the Models table of the
-  Anthropic docs (`claude-api` skill reference, cached 2026-10-06): `claude-sonnet-5-5`, `claude-opus-5-5`, `claude-haiku-5-5`.
-- **Chat.** Replies stream in as Markdown. Return sends, Shift+Return starts a new line, the stop button ends a reply and keeps
-  what arrived. Each answer shows its input and output tokens. Requests use `max_tokens` 4096 and a short system prompt.
-- **Include the current PR.** When a pull request is selected in GitHub, the chip adds its title, URL, repository, checks
-  summary and cached description (capped at 4,000 characters) to that message as data. No file contents and no secrets.
-- **Stored chats.** Chats and messages are in `meetings.sqlite` (`api_chats`, `api_messages`), apart from the Claude Code and
-  on-device chats. Delete a chat from its right-click menu, or **Delete All Claude API Chats** in Settings. The key is never written to the
-  database, a log or an error message.
-- **Limits.** This stage has no tools: the request never contains a `tools` field, and the chat cannot read files, run commands
-  or reach the MCP server or the iPhone API. Nothing is sent anywhere except `api.anthropic.com`.
-- **Errors.** No key, invalid key (401), rate limit (429, with the retry-after when given), overloaded (529), no credit
-  (billing), network, and an incomplete reply each show a plain message.
+- **Key.** The key must start with `sk-ant-` and contain no spaces. It is stored in the macOS Keychain (service
+  `com.niklasinde.MeetingRecorder.anthropic`, account `api-key`, available after first unlock on this device only). Only a
+  masked form (`sk-ant-…abcd`) is ever shown. Remove deletes it. The key is never written to the database, a log or an error
+  message.
+- **Limits.** Requests never contain a `tools` field, and nothing is sent anywhere except `api.anthropic.com`. The MCP server
+  and the iPhone API never reach the client.
+- **Errors.** Invalid key (401), rate limit (429, with the retry-after when given), overloaded (529), no credit (billing),
+  network, and an incomplete reply each show a plain message.
 
 To check the client without the real API, `WorkTime --claude-api-check http://127.0.0.1:<port>/v1/messages` runs it with
 a fake key against a loopback stub. It refuses any other host.

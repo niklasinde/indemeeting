@@ -86,7 +86,7 @@ enum ClaudeSummarizer {
                                "topics": ["type": "array", "items": topic]]]
     }()
 
-    /// The Messages API fields beyond the chat's: medium effort, the summary's JSON schema and the server-side fallback.
+    /// The Messages API fields beyond the basic request: medium effort, the summary's JSON schema and the server-side fallback.
     static var requestFields: [String: Any] {
         ["output_config": ["effort": "medium", "format": ["type": "json_schema", "schema": schema]], "fallbacks": "default"]
     }

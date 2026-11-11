@@ -19,7 +19,7 @@ struct ClaudeAPIClient {
     var endpoint = ClaudeAPIRequest.endpoint
     var transport: ClaudeTransport = ClaudeAPIClient.urlSession
 
-    /// Extra request fields, beta headers and a longer timeout, for requests other than the chat's.
+    /// Extra request fields, beta headers and a longer timeout.
     struct Options {
         var maxTokens = ClaudeAPIRequest.maxTokens
         var extra: [String: Any] = [:]
@@ -124,7 +124,7 @@ enum ClaudeAPICheck {
             for attempt in [key, key.replacingOccurrences(of: "api03", with: "bad03")] {
                 do {
                     var text = ""
-                    for try await event in client.reply(key: attempt, model: ClaudeAPIModel.defaultModel.rawValue, system: nil, messages: message) {
+                    for try await event in client.reply(key: attempt, model: ClaudeSummarizer.model, system: nil, messages: message) {
                         switch event {
                         case .text(let piece): text += piece
                         case .finished(let usage): print("finished usage=\(usage.map { "\($0.inputTokens)/\($0.outputTokens)" } ?? "none")")
