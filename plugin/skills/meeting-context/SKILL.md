@@ -16,6 +16,8 @@ Pick the tool:
   speakers. Quote the transcript when the user asks what someone said.
 - `activity_context` with `hours` for what the user worked on lately: apps, repositories, branches, tickets, Claude
   sessions and the meetings in that time.
+- `resume_context` with an optional `repo`, `branch` or `ticket` for "where was I on X": when the user was last there, their last
+  Claude prompts, what changed on the pull request and Jira ticket since, meetings that mentioned it and its agent.
 - `time_report` with an optional `week_start` (YYYY-MM-DD) for hours per day, project, branch and ticket.
 - `github_needs_attention` for "what is waiting on me" or "which PRs need a reply"; `github_prs` with `kind` (created,
   review_requested, assigned, mentioned) and `state` for the user's pull requests; `github_pr` with a URL or

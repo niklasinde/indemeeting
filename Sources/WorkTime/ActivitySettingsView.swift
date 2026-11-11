@@ -120,6 +120,7 @@ struct ActivitySettingsView: View {
                     .labelsHidden().fixedSize()
                 }
             }
+            ResumeSettingsSection()
             SettingsSection("Stored activity", footer: nil) {
                 if !storePrompts, projects.storedPrompts > 0 || clearedPrompts != nil {
                     SettingsRow("Stored prompts", detail: clearedPrompts.map { "Removed from \($0) block\($0 == 1 ? "" : "s")." }

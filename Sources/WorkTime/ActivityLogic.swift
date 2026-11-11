@@ -650,7 +650,7 @@ enum ActivityLogic {
         return ClaudeSession(id: id, folder: folder, title: truncate(chosen ?? "Untitled session", to: titleLimit))
     }
 
-    private static func userText(_ content: Any?) -> String? {
+    static func userText(_ content: Any?) -> String? {
         if let text = content as? String { return text }
         guard let parts = content as? [[String: Any]] else { return nil }
         let texts = parts.filter { $0["type"] as? String == "text" }.compactMap { $0["text"] as? String }

@@ -47,7 +47,7 @@ struct JiraClient: Sendable {
         do { return try JiraLogic.parseSearch(data) } catch { throw JiraError.failed("unexpected response") }
     }
 
-    private func send(path: String, body: [String: Any]? = nil) async throws -> Data {
+    func send(path: String, body: [String: Any]? = nil) async throws -> Data {
         let request = JiraLogic.request(site: site, path: path, email: email, token: token, body: body)
         let (data, status): (Data, Int)
         do { (data, status) = try await transport(request) } catch { throw JiraError.from(error) }

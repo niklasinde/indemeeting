@@ -262,7 +262,7 @@ enum JiraLogic {
         }.joined(separator: "\n") + "\n"
     }
 
-    private static func date(_ text: String) -> Date? {
+    static func date(_ text: String) -> Date? {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss.SSSZ"

@@ -80,7 +80,7 @@ enum NotchPreview {
     }
 
     @MainActor
-    private static func render(_ view: some View, appearance: NSAppearance.Name, to url: URL) async {
+    static func render(_ view: some View, appearance: NSAppearance.Name, to url: URL) async {
         let controller = NSHostingController(rootView: view)
         controller.sizingOptions = .preferredContentSize
         let window = NSWindow(contentViewController: controller)

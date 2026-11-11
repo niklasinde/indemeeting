@@ -23,12 +23,18 @@ final class AskPanel {
             MainActor.assumeIsolated { AskPanel.shared.refresh() }
         }
         let models = [GitHubModel.shared.objectWillChange, JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange,
-                      SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange]
+                      SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange, ResumeModel.shared.objectWillChange]
         lists = Publishers.MergeMany(models).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
         rebuild()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.screensChanged() }
+    }
+
+    /// Opens the bar on the main screen on the resume card alone, for a few seconds unless the pointer comes over it.
+    func peekResume() {
+        guard UserDefaults.standard.bool(forKey: Self.shownKey) else { return }
+        (bars.first { $0.screen == NSScreen.main } ?? bars.first)?.peek()
     }
 
     private func screensChanged() {
@@ -65,6 +71,7 @@ final class NotchBar: ObservableObject {
     private var resign: NSObjectProtocol?
     private var resized: NSObjectProtocol?
     @Published private(set) var openedByHover = false
+    @Published private(set) var peeking = false
     private var typing = false
     private var held = false
     private var pendingCollapse: DispatchWorkItem?
@@ -86,6 +93,7 @@ final class NotchBar: ObservableObject {
         } else if !shown.contains(self.list), let first = shown.first {
             self.list = first
         }
+        peeking = false
         if expanded && revealed {
             if !byHover { openedByHover = false }
             return
@@ -95,6 +103,16 @@ final class NotchBar: ObservableObject {
         expanded = true
         position { withAnimation(Self.opening) { self.revealed = true } }
         if byHover { panel.orderFrontRegardless() } else { panel.makeKeyAndOrderFront(nil) }
+    }
+
+    func peek(for seconds: TimeInterval = 8) {
+        guard !expanded else { return }
+        expand(byHover: true)
+        peeking = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self, self.peeking, self.openedByHover, !self.panel.frame.contains(NSEvent.mouseLocation) else { return }
+            self.collapse()
+        }
     }
 
     /// A click inside makes the panel key, so the field, the hotkeys and Esc work; it then stays open until Esc or a click outside.
@@ -108,6 +126,7 @@ final class NotchBar: ObservableObject {
         pendingCollapse?.cancel()
         typing = false
         held = false
+        peeking = false
         withAnimation(Self.closing) {
             revealed = false
         } completion: { [weak self] in
@@ -222,13 +241,14 @@ final class NotchBar: ObservableObject {
 
     #if DEBUG
     /// The bar's view in a given state, for the previews; the panel itself stays hidden.
-    func sample(list: NotchPanelID?, hasNotch: Bool) -> AnyView {
+    func sample(list: NotchPanelID?, hasNotch: Bool, peeking: Bool = false) -> AnyView {
+        self.peeking = peeking
         self.hasNotch = hasNotch
         notchWidth = hasNotch ? 188 : 200
         barHeight = 32
         listCap = NotchLayout.listCap(visibleHeight: screen.visibleFrame.height)
-        expanded = list != nil
-        revealed = list != nil
+        expanded = list != nil || peeking
+        revealed = list != nil || peeking
         openedByHover = true
         if let list { self.list = list }
         return AnyView(AskPanelView(panel: self))
@@ -264,6 +284,7 @@ private struct AskPanelView: View {
     @ObservedObject var panel: NotchBar
     @ObservedObject private var panels = NotchPanelsModel.shared
     @ObservedObject private var slack = SlackModel.shared
+    @ObservedObject private var resume = ResumeModel.shared
 
     var body: some View {
         let shown = panels.shown
@@ -276,8 +297,9 @@ private struct AskPanelView: View {
                     if panel.hasNotch && !wings.middle.isEmpty {
                         marks(wings.middle, height: 22).padding(.bottom, -8)
                     }
-                    AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover)
-                    if shown.contains(panel.list) {
+                    if let card = resume.card { ResumeCardView(card: card, onClose: panel.collapse) }
+                    if !panel.peeking { AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover) }
+                    if !panel.peeking && shown.contains(panel.list) {
                         switch panel.list {
                         case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)
                         case .jira: AssignedTickets(onOpen: panel.collapse)
@@ -308,6 +330,9 @@ private struct AskPanelView: View {
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
+            if !panel.expanded && resume.unseen {
+                ResumeNotchDot { panel.peek() }.padding(.top, panel.barHeight)
+            }
         }
         .background(alignment: .top) {
             GeometryReader { geo in

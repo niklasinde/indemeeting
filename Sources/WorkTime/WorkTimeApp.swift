@@ -13,6 +13,9 @@ enum Main {
         if let output = NotchPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { NotchPreview.run(to: output) }
         }
+        if let output = ResumePreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { ResumePreview.run(to: output) }
+        }
         if let output = PhonePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { PhonePreview.run(to: output) }
         }

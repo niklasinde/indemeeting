@@ -163,6 +163,7 @@ final class ActivityTracker: ObservableObject {
             save(open)
         }
         current = open
+        ResumeModel.shared.observe(open, store: store)
     }
 
     private func setAway(_ away: Bool) {
