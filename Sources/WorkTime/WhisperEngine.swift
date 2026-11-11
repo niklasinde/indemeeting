@@ -72,8 +72,12 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
 
     deinit { whisper_free(context) }
 
+    /// Cancelling the task stops this engine for good, within a second, as whisper.cpp checks between its steps.
     func transcribe(_ audio: URL, progress: @escaping TranscriptionProgress) async throws -> Transcript {
-        let segments = try await transcribe(samples: try Self.samples(of: audio), progress: progress)
+        let segments = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await transcribe(samples: try Self.samples(of: audio), progress: progress)
+        } onCancel: { cancel() }
         guard !segments.isEmpty else { throw TranscriptionError.noSpeech(audio.lastPathComponent) }
         return Transcript(segments: segments, engine: id)
     }
@@ -100,6 +104,7 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
     private func chunks(of samples: [Float], progress: @escaping TranscriptionProgress) throws -> [WhisperChunk] {
         let ranges = SpeechChunks.ranges(of: samples, sampleRate: Self.sampleRate)
         return try ranges.enumerated().map { index, range in
+            guard !isCancelled else { throw CancellationError() }
             let piece = Array(samples[range])
             let language = options.languages.count == 1 ? options.languages[0]
                 : WhisperLogic.language(probabilities(of: piece), allowed: options.languages, fallback: options.fallback)

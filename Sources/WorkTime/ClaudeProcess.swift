@@ -14,8 +14,16 @@ final class ClaudeProcess: @unchecked Sendable {
     private var cancelled = false
     private var timedOut = false
 
+    /// Cancelling the task stops the process too.
     func run(cli: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
              onLine: @escaping @Sendable (String) -> Void) async -> Outcome {
+        await withTaskCancellationHandler {
+            await start(cli: cli, arguments: arguments, directory: directory, environment: environment, timeout: timeout, onLine: onLine)
+        } onCancel: { cancel() }
+    }
+
+    private func start(cli: URL, arguments: [String], directory: URL, environment: [String: String], timeout: TimeInterval,
+                       onLine: @escaping @Sendable (String) -> Void) async -> Outcome {
         await withCheckedContinuation { continuation in
             let process = Process()
             process.executableURL = cli

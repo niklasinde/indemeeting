@@ -43,15 +43,18 @@ final class LocalLLM: @unchecked Sendable {
                   temperature: Float = LocalLLMLogic.temperature, urgent: Bool = false) async throws -> Reply {
         let grammar = schema.map(LocalLLMLogic.grammar)
         let pace = WhisperLogic.currentPace(quiet: !urgent && TranscriptionEngine.quiet())
-        return try await withCheckedThrowingContinuation { continuation in
-            queue.async(qos: pace.qos, flags: .enforceQoS) {
-                continuation.resume(with: Result {
-                    defer { self.scheduleUnload() }
-                    return try self.run(system: system, prompt: prompt, grammar: grammar, maxTokens: maxTokens,
-                                        temperature: temperature, threads: pace.threads)
-                })
+        let stop = StopFlag()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                queue.async(qos: pace.qos, flags: .enforceQoS) {
+                    continuation.resume(with: Result {
+                        defer { self.scheduleUnload() }
+                        return try self.run(system: system, prompt: prompt, grammar: grammar, maxTokens: maxTokens,
+                                            temperature: temperature, threads: pace.threads, stop: stop)
+                    })
+                }
             }
-        }
+        } onCancel: { stop.set() }
     }
 
     /// Loads the model ahead of a request that needs a quick answer.
@@ -120,7 +123,8 @@ final class LocalLLM: @unchecked Sendable {
     }
 
     private func run(system: String, prompt: String, grammar: String?, maxTokens: Int?, temperature: Float,
-                     threads: Int32) throws -> Reply {
+                     threads: Int32, stop: StopFlag) throws -> Reply {
+        if stop.isSet { throw CancellationError() }
         try load()
         guard let model, let context, let vocab = llama_model_get_vocab(model) else { throw LocalLLMError.notInstalled }
         llama_set_n_threads(context, threads, threads)
@@ -137,6 +141,7 @@ final class LocalLLM: @unchecked Sendable {
         let started = Date()
         var input = tokens
         for start in stride(from: 0, to: input.count, by: Self.batch) {
+            if stop.isSet { throw CancellationError() }
             let count = min(Self.batch, input.count - start)
             let status = input.withUnsafeMutableBufferPointer { llama_decode(context, llama_batch_get_one($0.baseAddress! + start, Int32(count))) }
             guard status == 0 else { throw NSError(domain: "llama", code: Int(status)) }
@@ -149,7 +154,7 @@ final class LocalLLM: @unchecked Sendable {
         var finished = false
         var piece = [CChar](repeating: 0, count: 256)
         while generated < limit {
-            if lock.withLock({ stopping }) { throw CancellationError() }
+            if stop.isSet || lock.withLock({ stopping }) { throw CancellationError() }
             var token = llama_sampler_sample(sampler, context, -1)
             if llama_vocab_is_eog(vocab, token) {
                 finished = true
@@ -217,7 +222,7 @@ final class LocalLLM: @unchecked Sendable {
     private func free() {}
 
     private func run(system: String, prompt: String, grammar: String?, maxTokens: Int?, temperature: Float,
-                     threads: Int32) throws -> Reply {
+                     threads: Int32, stop: StopFlag) throws -> Reply {
         throw LocalLLMError.unavailable
     }
     #endif

@@ -387,6 +387,7 @@ struct MenuContent: View {
         }
         Divider()
         if let status = processor.status { Text(status) }
+        if let audio = processor.processing { Button("Stop Transcribing") { processor.stop(audio) } }
         if let message = processor.errorMessage { Text(message) }
         if let meeting = processor.latestMeeting {
             Button("Open summary") { openApp(meeting) }

@@ -276,12 +276,28 @@ private struct RetranscribeButton: View {
     let unavailable: String?
 
     var body: some View {
-        Button { processor.process(entry.audio) } label: {
-            Label("Re-transcribe", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
+        if processor.busyFiles.contains(entry.audio.lastPathComponent) {
+            StopProcessingButton(entry: entry, processor: processor)
+        } else {
+            Button { processor.process(entry.audio) } label: {
+                Label("Re-transcribe", systemImage: "arrow.clockwise").labelStyle(.titleAndIcon)
+            }
+            .disabled(recorder.meeting == entry.audio || unavailable != nil)
+            .help(unavailable.map { "Cannot re-transcribe. \($0)." }
+                  ?? "Transcribe, recognise speakers and summarise again with the current transcription settings")
         }
-        .disabled(processor.processing == entry.audio || recorder.meeting == entry.audio || unavailable != nil)
-        .help(unavailable.map { "Cannot re-transcribe. \($0)." }
-              ?? "Transcribe, recognise speakers and summarise again with the current transcription settings")
+    }
+}
+
+private struct StopProcessingButton: View {
+    let entry: RecordingEntry
+    @ObservedObject var processor: MeetingProcessor
+
+    var body: some View {
+        Button { processor.stop(entry.audio) } label: {
+            Label("Stop", systemImage: "stop.fill").labelStyle(.titleAndIcon)
+        }
+        .help("Stop transcribing and summarising this meeting. The audio is kept so you can run it again.")
     }
 }
 
@@ -475,8 +491,7 @@ struct TranscriptView: View {
         if let content, let current = library.comparedContent(of: entry) {
             ComparedTranscript(version: content, current: current, playback: playback, audioUnavailable: audioUnavailable)
         } else if rows.isEmpty {
-            EmptyState(entry: entry, processor: processor, notice: SummaryNotice(
-                title: "No transcript yet", message: "Transcribe this recording on this Mac. Nothing leaves your computer."))
+            EmptyState(entry: entry, processor: processor, notice: .transcript(status: content?.meeting.status))
         } else {
             LazyVStack(alignment: .leading, spacing: 18) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
@@ -644,12 +659,17 @@ struct EmptyState: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(processor.status ?? "Working\u{2026}").foregroundStyle(.secondary)
+                    StopProcessingButton(entry: entry, processor: processor)
                 }
                 .padding(.top, 6)
             } else if notice.showsSettings || notice.canSummarise {
                 HStack(spacing: 8) {
                     if let settings = notice.settings { Button(settings.title) { Permissions.open(settings) } }
-                    if notice.canSummarise { Button("Summarise") { processor.summarise(entry.audio) } }
+                    if notice.canSummarise {
+                        Button(notice.action.rawValue) {
+                            notice.action == .transcribe ? processor.process(entry.audio) : processor.summarise(entry.audio)
+                        }
+                    }
                 }
                 .padding(.top, 6)
             }

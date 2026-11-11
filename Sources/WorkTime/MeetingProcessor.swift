@@ -22,6 +22,7 @@ enum MeetingPipeline {
                 Task { @MainActor in progress(.transcribing(progress: fraction)) }
             }
             let recognised = await recogniseSpeakers(transcript.segments, in: audio, store: store, progress: progress)
+            try Task.checkCancellation()
             try store.saveTranscript(audio.lastPathComponent, segments: recognised.segments, language: language.language,
                                      detected: language.detected, engine: transcript.engine, transcribedAt: Date(),
                                      speakers: recognised.speakers, keepingPrevious: true)
@@ -66,6 +67,7 @@ enum MeetingPipeline {
             let recognised = try await Diarizer.recognise(content.segments, in: audio, known: try store.knownVoices()) { fraction in
                 Task { @MainActor in progress(.recognisingSpeakers(progress: fraction)) }
             }
+            try Task.checkCancellation()
             let meeting = content.meeting
             try store.saveTranscript(meeting.audioFile, segments: recognised.segments, language: meeting.language ?? .current,
                                      detected: meeting.languageDetected, engine: meeting.transcriptEngine ?? "transcription",
@@ -115,6 +117,7 @@ enum MeetingPipeline {
                                                        agenda: event?.agenda)
             let (summary, engine) = try await Summarizer.summarise(segments, names: names, language: language, context: context,
                                                                    progress: progress)
+            try Task.checkCancellation()
             try store.saveSummary(name, ParsedSummary(summary, engine: engine.model))
             return ProcessingResult(title: summary.title, unavailable: nil)
         } catch let reason as SummaryUnavailable {
@@ -128,6 +131,10 @@ enum MeetingPipeline {
         let name = audio.lastPathComponent
         do {
             return try await body()
+        } catch where Task.isCancelled {
+            log("\(name) stopped")
+            try? store.setStopped(name)
+            throw CancellationError()
         } catch {
             let details = ProcessingLogic.errorDetails(error)
             log("\(name) failed: \(details)")
@@ -180,6 +187,9 @@ final class MeetingProcessor: ObservableObject {
     private let store: MeetingStore
     private var queue: Task<Void, Never>?
     private var queued: [URL: Int] = [:]
+    /// How often each meeting was stopped; a job queued before the latest stop is skipped.
+    private var stops: [URL: Int] = [:]
+    private var current: Task<ProcessingResult, Error>?
     private var modelWatch: Task<Void, Never>?
 
     init(notifier: Notifier?, store: MeetingStore) {
@@ -249,9 +259,22 @@ final class MeetingProcessor: ObservableObject {
     private func enqueue(_ audio: URL, _ job: @escaping Job) {
         queued[audio, default: 0] += 1
         let previous = queue
+        let stop = stops[audio, default: 0]
         queue = Task {
             await previous?.value
-            await run(audio, job)
+            await run(audio, stop: stop, job)
+        }
+    }
+
+    /// Stops the meeting's running job and drops those queued for it; it stays as it is until processed again.
+    func stop(_ audio: URL) {
+        guard busyFiles.contains(audio.lastPathComponent) else { return }
+        stops[audio, default: 0] += 1
+        if processing == audio {
+            status = "Stopping\u{2026}"
+            current?.cancel()
+        } else {
+            try? store.setStopped(audio.lastPathComponent)
         }
     }
 
@@ -283,17 +306,23 @@ final class MeetingProcessor: ObservableObject {
         process(url)
     }
 
-    private func run(_ audio: URL, _ job: Job) async {
+    private func run(_ audio: URL, stop: Int, _ job: @escaping Job) async {
         let name = audio.lastPathComponent
-        errorMessage = nil
-        processing = audio
         defer {
             let left = (queued[audio] ?? 1) - 1
             queued[audio] = left > 0 ? left : nil
+        }
+        guard stops[audio, default: 0] == stop else { return }
+        errorMessage = nil
+        processing = audio
+        let work = Task { [weak self] in try await job { self?.status = $0.text(for: name) } }
+        current = work
+        defer {
+            current = nil
             processing = nil
         }
         do {
-            let result = try await job { [weak self] in self?.status = $0.text(for: name) }
+            let result = try await work.value
             latestMeeting = audio
             if let speakers = result.speakers {
                 status = "\(speakers) speaker\(speakers == 1 ? "" : "s") recognised: \(name)"
@@ -306,6 +335,8 @@ final class MeetingProcessor: ObservableObject {
                 status = "Summary ready: \(name)"
                 notifier?.postProcessed(title: "Meeting summary ready", body: result.title ?? name, meeting: audio)
             }
+        } catch where work.isCancelled {
+            status = "Stopped: \(name)"
         } catch {
             status = nil
             errorMessage = "\(name): \(error.localizedDescription)"

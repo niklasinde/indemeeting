@@ -17,6 +17,8 @@ enum Summarizer {
                 if let summary = try await summarise(lines, with: engine, language: language, progress: progress) {
                     return (summary, engine)
                 }
+            } catch where Task.isCancelled {
+                throw CancellationError()
             } catch {
                 log("Summarising with \(engine.displayName) failed: \(ProcessingLogic.errorDetails(error))")
                 failure = failure ?? error

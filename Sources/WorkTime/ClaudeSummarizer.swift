@@ -142,6 +142,7 @@ enum ClaudeSummarizer {
         let outcome = await ClaudeProcess().run(cli: cli, arguments: cliArguments(system: system, prompt: prompt),
                                                 directory: FileManager.default.temporaryDirectory,
                                                 environment: ClaudePluginModel.environment(for: cli), timeout: timeout) { box.consume($0) }
+        if outcome.cancelled { throw CancellationError() }
         let stream = box.stream
         if outcome.timedOut { throw Failure.failed(GitHubClaude.Failure.timedOut.message) }
         guard let result = stream.result, !result.isError, !result.text.isEmpty else {

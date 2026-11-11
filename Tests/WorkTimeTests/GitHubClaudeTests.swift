@@ -246,6 +246,24 @@ let githubClaudeTests: [(name: String, run: () throws -> Void)] = [
         check(outcome.status == 3 && outcome.stderr.contains("oops") && !outcome.cancelled && !outcome.timedOut, "\(outcome)")
     }),
 
+    ("cancelling the task that runs the CLI stops it within a second", {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let cli = try script("sleep 30\n", in: folder)
+        let done = DispatchSemaphore(value: 0)
+        let task = Task {
+            let outcome = await ClaudeProcess().run(cli: cli, arguments: [], directory: folder,
+                                                    environment: ProcessInfo.processInfo.environment, timeout: 20) { _ in }
+            done.signal()
+            return outcome
+        }
+        Thread.sleep(forTimeInterval: 0.3)
+        let started = Date()
+        task.cancel()
+        check(done.wait(timeout: .now() + 3) == .success, "stopped")
+        check(Date().timeIntervalSince(started) < 1.5, "quickly")
+    }),
+
     ("cancelling stops the run and what it started", {
         let folder = try temporaryFolder()
         defer { try? FileManager.default.removeItem(at: folder) }

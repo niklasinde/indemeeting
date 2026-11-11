@@ -620,6 +620,17 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(notice(.summarised, reason: .appleIntelligenceOff).title == "No summary yet", "reason only for unavailable")
     }),
 
+    ("a stopped meeting offers to run the step it stopped in again", {
+        let untranscribed = SummaryNotice.make(status: .stopped, statusMessage: nil, hasTranscript: false, currentReason: nil)
+        check(untranscribed.title == "Transcription stopped" && untranscribed.action == .transcribe && untranscribed.canSummarise,
+              untranscribed.title)
+        let transcribed = SummaryNotice.make(status: .stopped, statusMessage: nil, hasTranscript: true, currentReason: .appleIntelligenceOff)
+        check(transcribed.title == "Summarising stopped" && transcribed.action == .summarise, transcribed.title)
+        check(SummaryNotice.transcript(status: .stopped).title == "Transcription stopped", "transcript tab")
+        let fresh = SummaryNotice.transcript(status: .none)
+        check(fresh.title == "No transcript yet" && fresh.action == .transcribe, fresh.title)
+    }),
+
     ("a model that is not ready names the Mac and Siri languages when they differ", {
         let mismatch = SummaryUnavailable.notReady(macLanguage: "en-SE", siriLanguage: "en-US")
         check(mismatch == .languageMismatch(mac: "en-SE", siri: "en-US"), "\(mismatch)")
@@ -889,7 +900,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         check(ProcessingStage.recognisingSpeakers(progress: 0.5).text(for: "a.m4a") == "Recognising speakers in a.m4a\u{2026} 50%",
               "recognising")
     }),
-    ("meetings left unprocessed resume oldest first, leaving failed, recording and old ones alone", {
+    ("meetings left unprocessed resume oldest first, leaving failed, stopped, recording and old ones alone", {
         let now = Date(timeIntervalSince1970: 30 * 24 * 3600)
         func meeting(_ file: String, hoursAgo: Double, status: ProcessingStatus = .none, transcribed: Bool = false,
                      summarised: Bool = false, deleted: Date? = nil) -> Meeting {
@@ -901,6 +912,8 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
             meeting("transcribed.m4a", hoursAgo: 5, transcribed: true),
             meeting("old.m4a", hoursAgo: 8 * 24),
             meeting("failed.m4a", hoursAgo: 2, status: .failed),
+            meeting("stopped.m4a", hoursAgo: 2, status: .stopped),
+            meeting("stopped-summary.m4a", hoursAgo: 2, status: .stopped, transcribed: true),
             meeting("unavailable.m4a", hoursAgo: 2, status: .unavailable, transcribed: true),
             meeting("done.m4a", hoursAgo: 2, status: .summarised, transcribed: true, summarised: true),
             meeting("deleted.m4a", hoursAgo: 2, deleted: now),
@@ -909,6 +922,7 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
             meeting("continued.m4a", hoursAgo: 2),
         ]
         let files: Set<String> = ["new.m4a", "new.stem-mic.m4a", "transcribed.m4a", "old.m4a", "failed.m4a", "unavailable.m4a",
+                                  "stopped.m4a", "stopped-summary.m4a",
                                   "done.m4a", "deleted.m4a", "recording.m4a", "recording.recording.m4a", "continued.m4a",
                                   "continued.part-1700000000.m4a"]
         check(ProcessingLogic.unfinished(meetings, files: files, now: now) == [.summarise("transcribed.m4a"), .process("new.m4a")],

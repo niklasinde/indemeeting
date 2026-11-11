@@ -150,6 +150,39 @@ let storeTests: [(name: String, run: () throws -> Void)] = [
         check(meeting?.transcriptEngine == "x" && meeting?.transcribedAt == nil, "old meeting has no time")
     }),
 
+    ("the last migration turns a meeting stopped by hand into a stopped one", {
+        let folder = try tempFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("meetings.sqlite")
+        let old = try SQLiteDatabase(path: url.path)
+        try MeetingStore.migrate(old, Array(MeetingStore.migrations.dropLast()))
+        try old.run("""
+            INSERT INTO meetings (audio_file, created, status, status_message) VALUES
+                ('a.m4a', 0, 'failed', 'Transcription stopped. Press Re-transcribe to run it again.'),
+                ('b.m4a', 0, 'failed', 'No speech')
+            """)
+        let store = try MeetingStore.open(at: url)
+        check(try store.content(of: "a.m4a")?.meeting.status == .stopped, "stopped by hand")
+        check(try store.content(of: "b.m4a")?.meeting.status == .failed, "real failures stay")
+    }),
+
+    ("stopping keeps the audio and the meeting out of the resume list, but never hides a summary", {
+        try withStore { store, _ in
+            let name = "Meeting-2026-10-15-1430.m4a", done = "Meeting-2026-10-16-0900.m4a"
+            let created = Date(timeIntervalSince1970: 1_000)
+            try store.beginRecording(name, created: created, audioExpiresAt: created)
+            try store.setStopped(name)
+            let meeting = try store.content(of: name)?.meeting
+            check(meeting?.status == .stopped && meeting?.statusMessage == ProcessingLogic.stoppedMessage, "stopped")
+            check(ProcessingLogic.unfinished(try store.meetings(), files: [name], now: created) == [], "not resumed")
+            check(AudioRetention.due(try store.meetings(), now: created.addingTimeInterval(3600), busy: []) == [], "audio kept")
+            try store.saveTranscript(done, segments: segments, language: .swedish, engine: "x")
+            try store.saveSummary(done, ParsedSummary(standup))
+            try store.setStopped(done)
+            check(try store.content(of: done)?.meeting.status == .summarised, "summary kept")
+        }
+    }),
+
     ("the time of the last transcription is kept until the meeting is transcribed again", {
         try withStore { store, _ in
             let name = "Meeting-2026-10-15-1430.m4a"

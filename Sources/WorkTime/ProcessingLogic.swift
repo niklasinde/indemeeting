@@ -179,11 +179,18 @@ struct SummaryNotice: Equatable {
     var details: String?
     var settings: SettingsLink?
     var canSummarise = true
+    var action = Action.summarise
+
+    enum Action: String {
+        case summarise = "Summarise"
+        case transcribe = "Transcribe"
+    }
 
     var showsSettings: Bool { settings != nil }
 
     static func make(status: ProcessingStatus?, statusMessage: String?, hasTranscript: Bool,
                      currentReason: SummaryUnavailable?) -> SummaryNotice {
+        if status == .stopped { return stopped(hasTranscript: hasTranscript) }
         if status == .unavailable, let currentReason { return SummaryNotice(currentReason) }
         if status == .failed {
             return SummaryNotice(title: "No summary \u{2014} summarising failed", message: "Click Summarise to try again.",
@@ -192,6 +199,20 @@ struct SummaryNotice: Equatable {
         return SummaryNotice(title: "No summary yet", message: hasTranscript
             ? "There is a transcript but no summary. Summarise it on this Mac with Apple Intelligence."
             : "Transcribe and summarise this recording on this Mac. Nothing leaves your computer.")
+    }
+
+    /// The transcript tab of a meeting without one.
+    static func transcript(status: ProcessingStatus?) -> SummaryNotice {
+        status == .stopped ? stopped(hasTranscript: false)
+            : SummaryNotice(title: "No transcript yet", message: "Transcribe this recording on this Mac. Nothing leaves your computer.",
+                            action: .transcribe)
+    }
+
+    private static func stopped(hasTranscript: Bool) -> SummaryNotice {
+        hasTranscript
+            ? SummaryNotice(title: "Summarising stopped", message: "Click Summarise to run it again.")
+            : SummaryNotice(title: "Transcription stopped", message: "Click Transcribe to run it again. The audio is kept.",
+                            action: .transcribe)
     }
 }
 
@@ -523,7 +544,9 @@ enum ProcessingLogic {
 
     static let resumeWindow: TimeInterval = 7 * 24 * 3600
 
-    /// Meetings of the last week left unprocessed when the app quit, oldest first. Failed meetings and those without a
+    static let stoppedMessage = "Stopped before it finished."
+
+    /// Meetings of the last week left unprocessed when the app quit, oldest first. Failed or stopped meetings and those without a
     /// summary for a known reason stay as they are, and so do those still recording or waiting for a part to be appended.
     static func unfinished(_ meetings: [Meeting], files: Set<String>, now: Date) -> [Resume] {
         meetings

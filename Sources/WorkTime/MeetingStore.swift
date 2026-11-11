@@ -38,6 +38,7 @@ enum ProcessingStatus: String {
     case summarised
     case unavailable
     case failed
+    case stopped
 }
 
 struct Meeting: Equatable {
@@ -396,6 +397,7 @@ final class MeetingStore: @unchecked Sendable {
             agenda TEXT
         );
         """,
+        "UPDATE meetings SET status = 'stopped' WHERE status = 'failed' AND status_message LIKE 'Transcription stopped%'",
     ]
 
     private static let meetingColumns = """
@@ -700,6 +702,14 @@ final class MeetingStore: @unchecked Sendable {
         try write {
             try db.run("UPDATE meetings SET status = ?, status_message = ? WHERE id = ?",
                        [ProcessingStatus.failed.rawValue, message, try ensure(audioFile)])
+        }
+    }
+
+    /// Marks processing as stopped by hand, unless the meeting already has a summary to show.
+    func setStopped(_ audioFile: String) throws {
+        try write {
+            try db.run("UPDATE meetings SET status = ?, status_message = ? WHERE id = ? AND NOT summarised",
+                       [ProcessingStatus.stopped.rawValue, ProcessingLogic.stoppedMessage, try ensure(audioFile)])
         }
     }
 
