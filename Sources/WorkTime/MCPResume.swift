@@ -77,8 +77,8 @@ enum ResumeGatherer {
 }
 
 extension MCPServer {
-    static func resumeTools(_ opened: Result<MeetingStore, Error>, sources: ResumeSources? = nil, timeout: TimeInterval = 30,
-                            now: @escaping @Sendable () -> Date = { Date() }) -> [MCPTool] {
+    static func resumeTools(_ opened: Result<MeetingStore, Error>, sources: ResumeSources? = nil, workspaces: WorkspaceSource = WorkspaceSource(),
+                            timeout: TimeInterval = 30, now: @escaping @Sendable () -> Date = { Date() }) -> [MCPTool] {
         let sources = sources ?? ResumeSources(store: { try openedStore(opened) })
         return [
             MCPTool(name: "resume_context",
@@ -88,7 +88,8 @@ extension MCPServer {
                         + "WorkTime agent. With no arguments, the context the user was in last. Read-only.",
                     properties: ["repo": ["type": "string", "description": "Repository folder name or owner/name, e.g. finq.api."],
                                  "branch": ["type": "string", "description": "Branch name, e.g. NI/QDLY-1234."],
-                                 "ticket": ["type": "string", "description": "Jira key like QDLY-1234, or its browse link."]]) { args in
+                                 "ticket": ["type": "string", "description": "Jira key like QDLY-1234, or its browse link."],
+                                 "workspace": workspaceProperty]) { args in
                 func text(_ name: String) -> String? {
                     (args[name] as? String).map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
                 }
@@ -97,7 +98,8 @@ extension MCPServer {
                     return key
                 }
                 let date = now()
-                let blocks = try ResumeGatherer.blocks(try sources.store(), before: date)
+                let scope = try workspaces.scope(args)
+                let blocks = Workspaces.filter(try ResumeGatherer.blocks(try sources.store(), before: date), in: scope, file: workspaces.file())
                 let wanted = [text("repo"), text("branch"), ticket].contains { $0 != nil }
                 guard let key = wanted ? ResumeLogic.context(repo: text("repo"), branch: text("branch"), ticket: ticket, blocks: blocks)
                         : ResumeLogic.latestContext(blocks) else {

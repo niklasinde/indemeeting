@@ -1,8 +1,8 @@
 import { createInterface } from "node:readline";
-import { query, type HookCallback, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { missingFolderError } from "./folder.js";
+import { query, type HookCallback, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
 import { chromeResultStatus, chromeServerStatus, isChromeTool } from "./chrome.js";
-import { sessionOptions, type PromptOptions } from "./options.js";
+import { mcpServers, sessionOptions, type PromptOptions } from "./options.js";
 import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
 import { parseRules, suggestRules, type Rule } from "./rules.js";
 
@@ -67,11 +67,6 @@ function preToolUse(cwd: string): HookCallback {
 
 function send(message: Record<string, unknown>) {
   process.stdout.write(JSON.stringify(message) + "\n");
-}
-
-function mcpServers(): Record<string, McpServerConfig> {
-  const command = process.env.WORKTIME_MCP_COMMAND;
-  return command ? { worktime: { type: "stdio", command, args: ["--mcp"] } } : {};
 }
 
 function resultText(content: unknown): string {
@@ -145,7 +140,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
     options: {
       ...sessionOptions(input, promptModel, mode),
       env,
-      mcpServers: mcpServers(),
+      mcpServers: mcpServers(process.env),
       abortController: abort,
       hooks: { PreToolUse: [{ hooks: [preToolUse(input.cwd)], timeout: hookTimeout }] },
       canUseTool: async (tool, toolInput, { toolUseID }) => {

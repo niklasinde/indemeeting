@@ -1,4 +1,4 @@
-import type { Options } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServerConfig, Options } from "@anthropic-ai/claude-agent-sdk";
 import { chromeArgs } from "./chrome.js";
 import type { Mode } from "./permissions.js";
 
@@ -19,4 +19,12 @@ export function sessionOptions(input: PromptOptions, model: string, mode: Mode):
     settingSources: ["project"],
     extraArgs: chromeArgs(input.chrome === true),
   };
+}
+
+/// WorkTime's MCP server, started through the app's binary; a Main's workspace reaches it so its tools default to that workspace.
+export function mcpServers(env: NodeJS.ProcessEnv): Record<string, McpServerConfig> {
+  const command = env.WORKTIME_MCP_COMMAND;
+  const workspace = env.WORKTIME_WORKSPACE;
+  if (!command) return {};
+  return { worktime: { type: "stdio", command, args: ["--mcp"], ...(workspace ? { env: { WORKTIME_WORKSPACE: workspace } } : {}) } };
 }

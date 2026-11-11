@@ -188,8 +188,10 @@ final class AgentStateWriter: ObservableObject {
     }
 
     func states() -> [AgentState] {
-        let main = AgentHub.shared.main
-        var states = [state(main, key: AgentOverview.mainKey, title: "Main")]
+        let workspaces = WorkspaceStore.shared
+        var states = workspaces.workspaces.compactMap { workspace in
+            AgentHub.shared.mains[workspace.id].map { state($0, key: workspace.mainKey, title: "Main \u{00B7} \(workspace.name)") }
+        }
         let titles = Dictionary(GitHubModel.shared.prs.values.joined().map { ($0.url, $0.title) }) { first, _ in first }
         for (url, model) in PRAgents.shared.models.sorted(by: { $0.key < $1.key }) {
             states.append(state(model, key: url, title: AgentOverview.prTitle(url, title: titles[url])))
@@ -203,6 +205,7 @@ final class AgentStateWriter: ObservableObject {
         return AgentOverview.withPersisted(states, sessions: sessions, known: Array(AgentSessionStore.all().keys)).map { state in
             var state = state
             if !state.loaded, let title = titles[state.key] { state.title = AgentOverview.prTitle(state.key, title: title) }
+            state.workspace = workspaces.assigned(state)
             return state
         }
     }

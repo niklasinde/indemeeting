@@ -11,7 +11,7 @@ extension MCPServer {
     }
 
     static func githubTools(_ opened: Result<MeetingStore, Error>, enabled: @escaping () -> Bool = githubSwitchIsOn,
-                            now: @escaping () -> Date = Date.init) -> [MCPTool] {
+                            workspaces: WorkspaceSource = WorkspaceSource(), now: @escaping () -> Date = Date.init) -> [MCPTool] {
         func answer(_ body: (MeetingStore, [GitHubKind: [GitHubPR]]) throws -> String) throws -> String {
             guard enabled() else { return "GitHub is off in WorkTime settings.\n" }
             let store = try openedStore(opened)
@@ -78,9 +78,10 @@ extension MCPServer {
             MCPTool(name: "github_needs_attention",
                     description: "Open pull requests that wait on the user (a review asked of them, or the author answered their review) or have "
                         + "new comments from people, most urgent first, with the same fields as github_prs. Read-only.",
-                    properties: ["limit": limitSchema("pull requests", 10)]) { args in
-                try answer { store, prs in
-                    let unique = Dictionary(prs.values.joined().map { ($0.url, $0) }) { $1 }.values
+                    properties: ["limit": limitSchema("pull requests", 10), "workspace": workspaceProperty]) { args in
+                let scope = try workspaces.scope(args)
+                return try answer { store, prs in
+                    let unique = Workspaces.filter(Array(Dictionary(prs.values.joined().map { ($0.url, $0) }) { $1 }.values), in: scope, file: workspaces.file())
                     let rows = GitHubLogic.sorted(unique.filter { pr in
                         let signals = GitHubLogic.signals(pr)
                         return signals.waitingOnMe || signals.newFeedback > 0

@@ -18,8 +18,8 @@ enum AgentSessions {
     static let restoreLimit = 200
     static let untitled = "Untitled session"
 
-    static func key(agent: String?, isMain: Bool, folder: String) -> String {
-        agent ?? (isMain ? AgentOverview.mainKey : "folder:" + folder)
+    static func key(agent: String?, isMain: Bool, folder: String, workspace: String? = nil) -> String {
+        agent ?? (isMain ? workspace.map(Workspaces.mainKey) ?? AgentOverview.mainKey : "folder:" + folder)
     }
 
     /// What a session is called in the list: its first prompt in one line, with the app's own prompts named.
@@ -82,7 +82,7 @@ enum AgentSessions {
         }
     }
 
-    /// The agents for the Main page's list: Main first, then the rest most urgent first and newest first, with the time a
+    /// The agents for the Main page's list: Main first (of a workspace), then the rest most urgent first and newest first, with the time a
     /// saved session was last used where the agent is not loaded.
     static func sidebar(_ agents: [AgentState], lastUsed: [String: Date]) -> [AgentState] {
         let filled = agents.map { state -> AgentState in
@@ -90,8 +90,8 @@ enum AgentSessions {
             if state.updatedAt == nil { state.updatedAt = lastUsed[state.key] }
             return state
         }
-        let main = filled.filter { $0.key == AgentOverview.mainKey }
-        return main + AgentOverview.sorted(filled.filter { $0.key != AgentOverview.mainKey })
+        let main = filled.filter { Workspaces.isMainKey($0.key) }
+        return main + AgentOverview.sorted(filled.filter { !Workspaces.isMainKey($0.key) })
     }
 
     /// `finq.api#2591` for a pull request url: the repository without its owner, short enough for the agents list.

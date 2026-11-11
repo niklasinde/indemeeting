@@ -26,6 +26,7 @@ struct AgentState: Codable, Equatable {
     /// A topic agent's links.
     var jiraKey: String?
     var slackURL: String?
+    var workspace: String?
 
     var isTopic: Bool { TopicAgents.isKey(key) }
 
@@ -142,7 +143,7 @@ enum AgentOverview {
 
     /// The agents as Markdown; `active` leaves out the idle ones and Main itself, for the attention summary.
     static func markdown(_ file: File, now: Date, active: Bool = false, limit: Int = 30) -> String {
-        let agents = sorted(file.agents).filter { !active || (need($0) != .idle && $0.key != mainKey) }
+        let agents = sorted(file.agents).filter { !active || (need($0) != .idle && !Workspaces.isMainKey($0.key)) }
         guard !agents.isEmpty else { return active ? "No agent needs you.\n" : "No agents yet.\n" }
         let header = "\(agents.count) agent\(agents.count == 1 ? "" : "s"), state written \(GitHubLogic.updatedText(file.written, now: now))\n"
         return header + agents.prefix(limit).map { line($0, now: now) }.joined()

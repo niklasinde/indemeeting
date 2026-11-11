@@ -12,6 +12,7 @@ final class GitHubModel: ObservableObject {
     static let notchMergeableKey = "githubNotchMergeable"
     static let notchStatusKey = "githubNotchStatus"
     static let notchListKey = "githubNotchList"
+    static let notchWorkspaceKey = "githubNotchWorkspace"
     static let notchReviewStatusKey = "githubNotchReviewStatus"
     static let watchedKey = "githubWatchedPRs"
     static let intervals = [1, 5, 10, 15, 30, 60]

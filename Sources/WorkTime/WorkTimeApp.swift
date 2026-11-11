@@ -28,6 +28,9 @@ enum Main {
         if let output = AgentPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { AgentPreview.run(to: output) }
         }
+        if let output = WorkspacePreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { WorkspacePreview.run(to: output) }
+        }
         if let output = UpgradePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { UpgradePreview.run(to: output) }
         }
@@ -247,7 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         EmbeddedTerminalModel.shared.terminateAll()
         PRAgents.shared.stopAll()
         TopicAgentStore.shared.stopAll()
-        AgentHub.shared.main.stopClient()
+        AgentHub.shared.mains.values.forEach { $0.stopClient() }
         LocalLLM.shared.unload(wait: true)
         tracker.flush()
         AppUpgrade.shared.relaunchIfRequested()

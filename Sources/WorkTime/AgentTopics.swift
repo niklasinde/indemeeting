@@ -125,7 +125,7 @@ final class TopicAgentStore: ObservableObject {
         models[key]?.stopClient()
         models[key] = nil
         recent.removeAll { $0 == key }
-        if AgentHub.shared.selected == key { AgentHub.shared.selected = AgentOverview.mainKey }
+        if AgentHub.shared.selected == key { AgentHub.shared.selected = AgentHub.shared.currentMainKey }
     }
 
     private func save() {

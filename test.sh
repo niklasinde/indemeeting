@@ -80,6 +80,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/MCPTopics.swift \
     Sources/WorkTime/AgentTopicLogic.swift \
     Sources/WorkTime/ClaudeImportLogic.swift \
+    Sources/WorkTime/WorkspaceLogic.swift \
     Sources/WorkTime/ResumeLogic.swift \
     Sources/WorkTime/MCPResume.swift \
     Sources/WorkTime/InCallLogic.swift \
@@ -128,6 +129,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/ResumeTests.swift \
     Tests/WorkTimeTests/InCallTests.swift \
     Tests/WorkTimeTests/ClaudeImportTests.swift \
+    Tests/WorkTimeTests/WorkspaceTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

@@ -240,12 +240,13 @@ enum AgentLogic {
     }
 
     /// The sidecar's environment: the app's, with `node` first on the PATH and never an API key.
-    static func childEnvironment(_ base: [String: String], nodeFolder: String, mcpCommand: String?) -> [String: String] {
+    static func childEnvironment(_ base: [String: String], nodeFolder: String, mcpCommand: String?, workspace: String? = nil) -> [String: String] {
         var environment = base
         environment["ANTHROPIC_API_KEY"] = nil
         environment["ANTHROPIC_AUTH_TOKEN"] = nil
         environment["PATH"] = [nodeFolder, base["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"].compactMap { $0 }.joined(separator: ":")
         environment["WORKTIME_MCP_COMMAND"] = mcpCommand
+        environment[Workspaces.envKey] = workspace
         return environment
     }
 
@@ -522,13 +523,12 @@ enum AgentLogic {
 
     // MARK: Main
 
-    static let mainSessionKey = "agentMainSession"
-    static let mainFolderKey = "agentMainFolder"
+    static let legacyMainSessionKey = "agentMainSession"
+    static let legacyMainFolderKey = "agentMainFolder"
     static let catchUpPrompt = "What do I need to look at right now?"
 
-    static let mainSystemPrompt = """
-        You are Main, the user's overview assistant in WorkTime. The user's repositories are under the working folder, and \
-        every pull request they work on can have its own agent in WorkTime.
+    static let mainBasePrompt = """
+        You are Main, the user's overview assistant in WorkTime. Every pull request they work on can have its own agent in WorkTime.
         To answer "what do I need to look at", call the worktime attention tool first (or agents_overview for the agents \
         alone), then drill in where it matters with agent_session (what an agent did and concluded) and github_pr.
         Answer with a short prioritised list, most urgent first, one line each with the reason. Link every pull request with \
@@ -543,6 +543,11 @@ enum AgentLogic {
         jira_issue, jira_search, slack_thread and slack_search read Jira and Slack; nothing can post there, so draft any reply \
         as text for the user.
         """
+
+    /// Main's prompt for a workspace: what it is and sees, then the shared guidance.
+    static func mainSystemPrompt(workspace: Workspace, others: [Workspace]) -> String {
+        Workspaces.mainScope(workspace, others: others) + "\n" + mainBasePrompt
+    }
 
     // MARK: Models
 

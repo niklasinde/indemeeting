@@ -27,6 +27,10 @@ enum AppPaths {
     /// Each topic agent's own working folder.
     static var topicFolders: URL { support.appendingPathComponent("Agents", isDirectory: true) }
 
+    /// The workspaces and the folders holding each one's MAIN.md.
+    static var workspaceFile: URL { support.appendingPathComponent("workspaces.json") }
+    static var workspaceFolders: URL { support.appendingPathComponent("Workspaces", isDirectory: true) }
+
     private static var support: URL {
         dataDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MeetingRecorder", isDirectory: true)

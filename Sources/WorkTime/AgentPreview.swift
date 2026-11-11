@@ -41,7 +41,7 @@ enum AgentPreview {
             }
             model.open(pr: GitHubLink.Target(repo: "niklasinde/worktime", number: 42), checkout: URL(fileURLWithPath: repo))
             await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-pr-light.png"))
-            let main = AgentModel(folder: NSHomeDirectory() + "/git", main: true)
+            let main = AgentModel(folder: NSHomeDirectory() + "/git", main: Workspaces.defaults[0])
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 main.preview([])
                 await save(main, appearance: appearance, to: output.appendingPathComponent("main-empty-\(name).png"))
@@ -257,8 +257,8 @@ enum AgentPreview {
                        saved: [AgentSessionEntry(id: ids[2], folder: folder, created: now.addingTimeInterval(-90_000),
                                                  lastUsed: now.addingTimeInterval(-86_400), title: "Review quiddly-com/finq.client-ui#412", model: nil)]]
         defaults.set(AgentSessions.encode(history), forKey: AgentSessions.historyKey)
-        defaults.set(folder, forKey: AgentLogic.mainFolderKey)
-        defaults.set(ids[1], forKey: AgentLogic.mainSessionKey)
+        defaults.set(folder, forKey: AgentLogic.legacyMainFolderKey)
+        defaults.set(ids[1], forKey: AgentLogic.legacyMainSessionKey)
         let hub = AgentHub.shared
         for (url, busy, seen) in [(api, false, false), (admin, true, true)] {
             guard let target = GitHubLink.pullRequest(at: url) else { continue }
@@ -273,8 +273,8 @@ enum AgentPreview {
         for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
             hub.selected = AgentOverview.mainKey
             await save(AgentsPage(hub: hub), size: size, appearance: appearance, to: output.appendingPathComponent("main-restored-\(name).png"))
-            let others = await hub.main.otherSessions()
-            await save(AgentSessionList(model: hub.main, others: others, showsOthers: true).background(.background), size: NSSize(width: 340, height: 300),
+            let others = await hub.selectedMain!.otherSessions()
+            await save(AgentSessionList(model: hub.selectedMain!, others: others, showsOthers: true).background(.background), size: NSSize(width: 340, height: 300),
                        appearance: appearance, to: output.appendingPathComponent("sessions-picker-\(name).png"))
         }
         hub.selected = api

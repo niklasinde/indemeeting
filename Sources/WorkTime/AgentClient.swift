@@ -57,7 +57,7 @@ final class AgentModel: ObservableObject {
     @Published private(set) var sessionID: String? {
         didSet {
             if let agentKey, let sessionID { Self.savedSessions[agentKey] = sessionID }
-            if isMain, prURL == nil { Self.defaults.set(sessionID, forKey: AgentLogic.mainSessionKey) }
+            if let workspace, prURL == nil { WorkspaceDefaults.setSession(sessionID, for: workspace) }
             if let sessionID, oldValue != sessionID { remember(sessionID) }
             touch()
         }
@@ -78,6 +78,8 @@ final class AgentModel: ObservableObject {
     private var visiblePanes = 0
     /// The overview session of the Agent window, kept across launches.
     let isMain: Bool
+    /// The workspace a Main is for.
+    let workspace: String?
     @Published var model = AgentLogic.storedModel(AgentModel.defaults.string(forKey: AgentLogic.modelKey)) {
         didSet { Self.defaults.set(model, forKey: AgentLogic.modelKey) }
     }
@@ -124,15 +126,16 @@ final class AgentModel: ObservableObject {
     /// Replaced by the debug preview, so it never writes the app's own settings.
     static var defaults = UserDefaults.standard
 
-    init(folder: String? = nil, main: Bool = false) {
-        isMain = main
+    init(folder: String? = nil, main: Workspace? = nil) {
+        isMain = main != nil
+        workspace = main?.id
         let defaults = Self.defaults
-        self.folder = folder ?? (main ? defaults.string(forKey: AgentLogic.mainFolderKey) ?? GitHubClaudeModel.repositoriesRoot.path
-                                      : defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory())
+        self.folder = folder ?? main.map { WorkspaceDefaults.folder($0.id) ?? $0.defaultFolder() }
+            ?? defaults.string(forKey: AgentLogic.folderKey) ?? NSHomeDirectory()
         history = AgentSessionStore.list(for: historyKey)
         loadMode()
         rulesChanged = AgentRuleStore.shared.$rules.dropFirst().sink { [weak self] in self?.client?.send(.rules($0)) }
-        if main, let session = defaults.string(forKey: AgentLogic.mainSessionKey) {
+        if let main, let session = WorkspaceDefaults.session(main.id) {
             sessionID = session
             remember(session)
             restore()
@@ -142,7 +145,7 @@ final class AgentModel: ObservableObject {
     /// The pull request url or topic key the agent is saved under; nil for Main and a plain folder.
     var agentKey: String? { prURL ?? topic?.key }
 
-    var historyKey: String { AgentSessions.key(agent: agentKey, isMain: isMain, folder: folder) }
+    var historyKey: String { AgentSessions.key(agent: agentKey, isMain: isMain, folder: folder, workspace: workspace) }
 
     var waitingForPermission: Bool {
         busy && items.contains { if case .permission(_, _, _, _, nil) = $0.kind { true } else { false } }
@@ -177,7 +180,7 @@ final class AgentModel: ObservableObject {
         prURL = nil
         topic = nil
         self.folder = folder
-        Self.defaults.set(folder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
+        if let workspace { WorkspaceDefaults.setFolder(folder, for: workspace) } else { Self.defaults.set(folder, forKey: AgentLogic.folderKey) }
         newSession()
         loadMode()
         loadFiles()
@@ -204,7 +207,7 @@ final class AgentModel: ObservableObject {
         } else if let topic {
             self.topic = TopicAgentStore.shared.setFolder(topic.key, to: newFolder) ?? topic
         } else {
-            Self.defaults.set(newFolder, forKey: isMain ? AgentLogic.mainFolderKey : AgentLogic.folderKey)
+            if let workspace { WorkspaceDefaults.setFolder(newFolder, for: workspace) } else { Self.defaults.set(newFolder, forKey: AgentLogic.folderKey) }
         }
         let moved = AgentFolders.moved(history, from: old, to: newFolder), kept = Set(moved.map(\.id))
         if oldKey != historyKey { _ = AgentSessionStore.update(oldKey) { _ in [] } }
@@ -249,7 +252,7 @@ final class AgentModel: ObservableObject {
         history = AgentSessionStore.update(historyKey) { AgentSessions.record(entry, in: $0) }
         if entry.folder != folder {
             folder = entry.folder
-            if isMain, prURL == nil { Self.defaults.set(folder, forKey: AgentLogic.mainFolderKey) }
+            if let workspace, prURL == nil { WorkspaceDefaults.setFolder(folder, for: workspace) }
             loadFiles()
         }
         lastModel = nil
@@ -426,7 +429,7 @@ final class AgentModel: ObservableObject {
             lastModel = picked
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
-                                appendSystemPrompt: isMain && prURL == nil ? AgentLogic.mainSystemPrompt : topic.map(TopicAgents.systemPrompt),
+                                appendSystemPrompt: workspace.flatMap { self.prURL == nil ? WorkspaceStore.shared.mainPrompt(for: $0) : nil } ?? topic.map(TopicAgents.systemPrompt),
                                 mode: permissionMode, chrome: chrome, fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords)))
         }
         return true
@@ -505,7 +508,7 @@ final class AgentModel: ObservableObject {
             return nil
         }
         let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path,
-                                                           mcpCommand: Bundle.main.executablePath)
+                                                           mcpCommand: Bundle.main.executablePath, workspace: workspace)
         do {
             let client = try AgentClient(node: node, script: script, environment: childEnvironment, onLine: { [weak self] line in
                 Task { @MainActor [weak self] in self?.receive(line) }

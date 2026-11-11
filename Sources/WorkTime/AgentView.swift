@@ -7,16 +7,35 @@ import SwiftUI
 final class AgentHub: ObservableObject {
     static let shared = AgentHub()
 
-    let main = AgentModel(main: true)
-    @Published var selected = AgentOverview.mainKey
+    static let lastMainKey = "agentLastMain"
+
+    /// Each workspace's Main by its id.
+    let mains: [String: AgentModel]
+    @Published var selected: String {
+        didSet { if Workspaces.isMainKey(selected) { UserDefaults.standard.set(selected, forKey: Self.lastMainKey) } }
+    }
 
     /// Set by the main window: brings it forward on the Main page.
     var showPage: (() -> Void)?
 
-    var isMainSelected: Bool { selected == AgentOverview.mainKey }
+    init(workspaces: [Workspace]? = nil) {
+        let workspaces = workspaces ?? WorkspaceStore.shared.workspaces
+        WorkspaceDefaults.migrate()
+        let made = Dictionary(uniqueKeysWithValues: workspaces.map { ($0.id, AgentModel(main: $0)) })
+        let last = UserDefaults.standard.string(forKey: Self.lastMainKey).flatMap(Workspaces.id(ofMainKey:))
+        mains = made
+        selected = Workspaces.mainKey(last.flatMap { made[$0] == nil ? nil : $0 } ?? workspaces.first?.id ?? Workspaces.defaultID)
+    }
 
-    func show(_ key: String = AgentOverview.mainKey) {
-        selected = key
+    var isMainSelected: Bool { Workspaces.isMainKey(selected) }
+
+    var selectedMain: AgentModel? { Workspaces.id(ofMainKey: selected).flatMap { mains[$0] } }
+
+    /// The Main last shown, or the first workspace's.
+    var currentMainKey: String { isMainSelected ? selected : UserDefaults.standard.string(forKey: Self.lastMainKey) ?? Workspaces.mainKey(Workspaces.defaultID) }
+
+    func show(_ key: String? = nil) {
+        selected = key ?? currentMainKey
         showPage?()
     }
 }
@@ -25,18 +44,20 @@ struct AgentsPage: View {
     @ObservedObject var hub: AgentHub
     @ObservedObject private var writer = AgentStateWriter.shared
     @ObservedObject private var topics = TopicAgentStore.shared
+    @ObservedObject private var workspaces = WorkspaceStore.shared
     @AppStorage("agentListHidden") private var listHidden = false
 
     var body: some View {
         HStack(spacing: 0) {
             if !listHidden {
-                AgentList(hub: hub, rows: AgentSessions.sidebar(writer.states(), lastUsed: AgentSessions.lastUsed(AgentSessionStore.all())))
+                AgentList(hub: hub, groups: Workspaces.groups(writer.states(), file: workspaces.file,
+                                                              lastUsed: AgentSessions.lastUsed(AgentSessionStore.all())))
                     .frame(width: 250)
                 Divider()
             }
             Group {
-                if hub.isMainSelected {
-                    AgentView(model: hub.main, listHidden: $listHidden)
+                if let main = hub.selectedMain {
+                    AgentView(model: main, listHidden: $listHidden)
                 } else if TopicAgents.isKey(hub.selected) {
                     AgentTopicPage(key: hub.selected, listHidden: $listHidden)
                 } else {
@@ -45,15 +66,18 @@ struct AgentsPage: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .onAppear { hub.main.loadFiles() }
+        .onAppear { hub.selectedMain?.loadFiles() }
     }
 }
 
-/// The agents: Main first, then the pull requests' and topics' agents, the ones that need you first.
+/// The agents by workspace, each group with its Main first, then the pull requests' and topics' agents, the ones that need you first.
 struct AgentList: View {
     @ObservedObject var hub: AgentHub
-    let rows: [AgentState]
+    let groups: [Workspaces.Group]
     @ObservedObject var topics = TopicAgentStore.shared
+    @ObservedObject var workspaces = WorkspaceStore.shared
+    @AppStorage(Workspaces.selectedKey) private var filter = Workspaces.allChoice
+    @AppStorage(Workspaces.collapsedKey) private var collapsed = ""
     @State var creating = false
     @State private var importing = false
     @State private var deleting: TopicAgent?
@@ -61,12 +85,18 @@ struct AgentList: View {
     var body: some View {
         let now = Date()
         VStack(spacing: 0) {
+            if groups.count > 1 { switcher }
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(rows, id: \.key) { state in
-                        Button { hub.selected = state.key } label: { row(state, now: now) }
-                            .buttonStyle(.plain)
-                            .contextMenu { menu(state) }
+                    ForEach(visibleGroups, id: \.workspace.id) { group in
+                        groupHeader(group)
+                        if !collapsedIDs.contains(group.workspace.id) {
+                            ForEach(group.all, id: \.key) { state in
+                                Button { hub.selected = state.key } label: { row(state, now: now) }
+                                    .buttonStyle(.plain)
+                                    .contextMenu { menu(state) }
+                            }
+                        }
                     }
                 }
                 .padding(8)
@@ -94,6 +124,53 @@ struct AgentList: View {
                      + "Claude Code keeps its session transcripts.")
             }
         }
+    }
+
+    private var visibleGroups: [Workspaces.Group] {
+        groups.contains { $0.workspace.id == filter } ? groups.filter { $0.workspace.id == filter } : groups
+    }
+
+    private var collapsedIDs: Set<String> { Set(collapsed.split(separator: ",").map(String.init)) }
+
+    private var switcher: some View {
+        Picker("Workspace", selection: $filter) {
+            Text("All").tag(Workspaces.allChoice)
+            ForEach(groups, id: \.workspace.id) { Text($0.workspace.name).tag($0.workspace.id) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .onChange(of: filter) {
+            guard let group = groups.first(where: { $0.workspace.id == filter }), !group.all.contains(where: { $0.key == hub.selected }) else { return }
+            hub.selected = group.workspace.mainKey
+        }
+    }
+
+    private func groupHeader(_ group: Workspaces.Group) -> some View {
+        let id = group.workspace.id, isCollapsed = collapsedIDs.contains(id)
+        return Button {
+            var ids = collapsedIDs
+            if isCollapsed { ids.remove(id) } else { ids.insert(id) }
+            collapsed = ids.sorted().joined(separator: ",")
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                Image(systemName: group.workspace.symbol).foregroundStyle(group.workspace.tint)
+                Text(group.workspace.name).font(.caption.weight(.semibold))
+                Spacer()
+                if group.needing > 0 {
+                    Text("\(group.needing)").font(.caption2.weight(.semibold)).foregroundStyle(.orange).help("Agents that need you")
+                }
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(isCollapsed ? "Show \(group.workspace.name)" : "Hide \(group.workspace.name)")
     }
 
     private var footer: some View {
@@ -129,6 +206,15 @@ struct AgentList: View {
            let folder = state.folder ?? AgentSessionStore.list(for: state.key).first(where: { $0.id == session })?.folder {
             Button("Open in Claude Code\u{2026}") { ClaudeSessionImporter.openInClaudeCode(folder: folder, session: session) }
         }
+        if !Workspaces.isMainKey(state.key) {
+            Menu("Move to Workspace") {
+                ForEach(workspaces.workspaces) { workspace in
+                    Toggle(workspace.name, isOn: Binding { workspaces.assigned(state) == workspace.id } set: { _ in workspaces.move(state.key, to: workspace.id) })
+                }
+                Divider()
+                Button("Automatic") { workspaces.move(state.key, to: nil) }
+            }
+        }
         if let topic = topics.topic(state.key) {
             Divider()
             Button("Archive") { topics.setArchived(topic.key, true) }
@@ -138,7 +224,7 @@ struct AgentList: View {
 
     private func row(_ state: AgentState, now: Date) -> some View {
         let need = AgentOverview.need(state)
-        let isMain = state.key == AgentOverview.mainKey
+        let isMain = Workspaces.isMainKey(state.key)
         return HStack(alignment: .top, spacing: 8) {
             Circle().fill(Self.color(need)).frame(width: 8, height: 8).padding(.top, 5).help(need.label)
             VStack(alignment: .leading, spacing: 2) {
@@ -150,7 +236,7 @@ struct AgentList: View {
                         Text(GitHubLogic.updatedText(updated, now: now)).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
-                Text(isMain ? "Overview of everything" : Self.title(state)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Text(isMain ? "Overview of \(workspaces.workspace(state.workspace)?.name ?? "everything")" : Self.title(state)).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 if need != .idle {
                     Text(state.status == .signedOut ? "Signed out of Claude" : need.label).font(.caption2).foregroundStyle(Self.color(need))
                 }
@@ -237,6 +323,7 @@ struct AgentView: View {
                 AgentTopicHeader(topic: topic)
             } else {
                 Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium)).fixedSize()
+                if isMain { MainWorkspaceBadge(workspace: model.workspace) }
                 Button { model.chooseFolder() } label: {
                     Label((model.folder as NSString).abbreviatingWithTildeInPath, systemImage: "folder").lineLimit(1).truncationMode(.head)
                 }
@@ -731,7 +818,10 @@ struct AgentSettingsSection: View {
     @ObservedObject var store: AgentRuleStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) { sections }
+        VStack(alignment: .leading, spacing: 22) {
+            WorkspacesSettings()
+            sections
+        }
     }
 
     @ViewBuilder private var sections: some View {

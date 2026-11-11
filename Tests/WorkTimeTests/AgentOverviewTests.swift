@@ -34,7 +34,7 @@ let agentOverviewTests: [(name: String, run: () throws -> Void)] = [
         let line = AgentRequest.prompt(text: "hi", cwd: "/repos", sessionID: nil, appendSystemPrompt: "Be Main").line
         check(line.contains(#""appendSystemPrompt":"Be Main""#), line)
         check(!AgentRequest.prompt(text: "hi", cwd: "/repos", sessionID: nil).line.contains("appendSystemPrompt"), "others send none")
-        check(AgentLogic.mainSystemPrompt.contains("attention") && AgentLogic.mainSystemPrompt.contains("send_to_agent"), "tools named")
+        check(AgentLogic.mainBasePrompt.contains("attention") && AgentLogic.mainBasePrompt.contains("send_to_agent"), "tools named")
         let reply = "- [acme/api#7](\(pull)) \u{00B7} [agent](\(GitHubLink.agentLink(for: pull)))"
         check(AgentLogic.linkifiedCodeReferences(reply, cwd: "/repos") { _ in true } == reply, "untouched")
         check(GitHubLink.parseAgent(GitHubLink.agentLink(for: pull))?.url == pull, "the link opens that pull request's agent")

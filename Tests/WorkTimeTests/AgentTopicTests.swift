@@ -87,7 +87,7 @@ let agentTopicTests: [(name: String, run: () throws -> Void)] = [
         check(system.contains("ISD-1") && system.contains("jira_issue") && system.contains("slack_thread") && system.contains("never claim"), system)
         check(TopicAgents.name(ticket: "ISD-1", summary: "Login fails") == "ISD-1 Login fails", "ticket name")
         check(TopicAgents.name(slackPlace: "#support", author: "Anna") == "Slack: #support \u{00B7} Anna", "slack name")
-        check(AgentLogic.mainSystemPrompt.contains("topic agents"), "Main knows it can delegate to them")
+        check(AgentLogic.mainBasePrompt.contains("topic agents"), "Main knows it can delegate to them")
     }),
 
     ("topics: Open in Agent finds the topic already made for a ticket or thread", {

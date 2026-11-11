@@ -14,7 +14,9 @@ struct WaitingPullRequests: View {
     let onHold: (Bool) -> Void
     @ObservedObject private var model = GitHubModel.shared
     @ObservedObject private var actions = GitHubActionsModel.shared
+    @ObservedObject private var workspaces = WorkspaceStore.shared
     @AppStorage(GitHubModel.notchListKey) private var list = NotchGitHubList.created
+    @AppStorage(GitHubModel.notchWorkspaceKey) private var workspace = Workspaces.allChoice
     @AppStorage(GitHubModel.notchMergeableKey) private var mergeable = false
     @AppStorage(GitHubModel.notchStatusKey) private var status = GitHubStatusTab.all
     @AppStorage(GitHubModel.notchReviewStatusKey) private var reviewStatus = GitHubStatusTab.all
@@ -22,8 +24,9 @@ struct WaitingPullRequests: View {
     @State private var result: (url: String, text: String, isError: Bool)?
 
     var body: some View {
-        let all = model.enabled ? model.prs[.created] ?? [] : []
-        let fetched = model.enabled ? model.prs : [:]
+        let scope = WorkspaceScope(id: workspaces.workspaces.contains { $0.id == workspace } ? workspace : nil)
+        let fetched = model.enabled ? model.prs.mapValues { Workspaces.filter($0, in: scope, file: workspaces.file) } : [:]
+        let all = fetched[.created] ?? []
         let createdCounts = GitHubLogic.statusCounts(all, GitHubLogic.Filter(), mergeable: mergeable)
         let reviewingCounts = GitHubLogic.reviewingCounts(fetched)
         let totals: [NotchGitHubList: Int] = [.created: createdCounts[.all, default: 0], .reviewing: reviewingCounts[.all, default: 0]]
@@ -85,11 +88,29 @@ struct WaitingPullRequests: View {
                 .buttonStyle(NotchChipStyle(selected: list == option))
             }
             Spacer()
+            if workspaces.workspaces.count > 1 { workspaceMenu }
             if list == .created { MergeablePill(isOn: $mergeable) }
         }
         .font(.caption.weight(.semibold))
         .padding(.horizontal, 8)
         .padding(.bottom, 2)
+    }
+
+    private var workspaceMenu: some View {
+        Menu {
+            Picker("Workspace", selection: $workspace) {
+                Text("All").tag(Workspaces.allChoice)
+                ForEach(workspaces.workspaces) { Label($0.name, systemImage: $0.symbol).tag($0.id) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(workspaces.workspaces.first { $0.id == workspace }?.name ?? "All").foregroundStyle(workspace == Workspaces.allChoice ? .secondary : .primary)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Show the pull requests of one workspace")
     }
 
     private func tabs(selection: Binding<GitHubStatusTab>, counts: [GitHubStatusTab: Int]) -> some View {

@@ -3,11 +3,30 @@ import Foundation
 /// The agent tools of the MCP server: the overview the app writes, session transcripts, what needs the user across the
 /// sources the `--mcp` process can read on its own, and handing a prompt to a pull request's agent in the running app.
 extension MCPServer {
+    /// The workspaces the app saved and the one the calling Main belongs to (`WORKTIME_WORKSPACE`), which tools default to.
+    struct WorkspaceSource {
+        var file: () -> WorkspaceFile = { Workspaces.decode(try? Data(contentsOf: AppPaths.workspaceFile)) }
+        var environment: () -> String? = { ProcessInfo.processInfo.environment[Workspaces.envKey] }
+
+        func scope(_ args: [String: Any]) throws -> WorkspaceScope {
+            switch Workspaces.scope(argument: args["workspace"], environment: environment(), in: file().workspaces) {
+            case .success(let scope): return scope
+            case .failure(let error): throw MCPToolError(error.message)
+            }
+        }
+    }
+
+    static let workspaceProperty: [String: Any] = [
+        "type": "string",
+        "description": "A workspace id or name, or all. Left out, the calling Main's own workspace, or all outside a Main.",
+    ]
+
     struct AgentSources {
         var stateFile = AppPaths.agentState
         var inbox = AppPaths.agentInbox
         var projects = ClaudeTranscripts.projectsFolder
         var topics = AppPaths.topicAgents
+        var workspaces = WorkspaceSource()
         var replyTimeout: TimeInterval = 10
         /// Slack mentions and unread DMs as Markdown, nil when Slack is not signed in.
         var slack: () -> String? = { MCPServer.slackAttention() }
@@ -33,19 +52,40 @@ extension MCPServer {
             case .failure(let error): throw MCPToolError(error.message)
             }
         }
+        func scoped(_ args: [String: Any]) throws -> (scope: WorkspaceScope, file: AgentOverview.File) {
+            var file = try stateFile()
+            let scope = try sources.workspaces.scope(args)
+            file.agents = Workspaces.filter(file.agents, in: scope)
+            return (scope, file)
+        }
+        func workspace(of target: AgentTarget, in agents: [AgentState]) -> String? {
+            if let state = agents.first(where: { $0.key == target.key }) { return state.workspace }
+            let saved = sources.workspaces.file()
+            return GitHubLink.pullRequest(at: target.key) != nil
+                ? Workspaces.assign(Workspaces.prSubject(target.key, override: saved.overrides[target.key]), in: saved.workspaces) : nil
+        }
+        func checkDelegation(_ target: AgentTarget, args: [String: Any], agents: [AgentState]) throws {
+            let scope = try sources.workspaces.scope(args)
+            if let problem = Workspaces.delegationProblem(target: workspace(of: target, in: agents), scope: scope,
+                                                         workspaces: sources.workspaces.file().workspaces) {
+                throw MCPToolError(problem)
+            }
+        }
         return [
             MCPTool(name: "agents_overview",
                     description: "Every Claude agent WorkTime knows (Main, one per pull request and the topic agents), most urgent first: waiting for the "
                         + "user's permission (with the tool it asks for), finished with a result the user has not seen, errored, working, "
                         + "idle. Each with its pull request url, worktime://agent link, folder, session id, last prompt and last result.",
-                    properties: ["active_only": ["type": "boolean", "description": "Leave out idle agents. False when left out."]]) {
-                AgentOverview.markdown(try stateFile(), now: now(), active: $0["active_only"] as? Bool ?? false)
+                    properties: ["active_only": ["type": "boolean", "description": "Leave out idle agents. False when left out."],
+                                 "workspace": workspaceProperty]) {
+                AgentOverview.markdown(try scoped($0).file, now: now(), active: $0["active_only"] as? Bool ?? false)
             },
             MCPTool(name: "agent_session",
                     description: "A compact transcript of one agent's Claude Code session: the user's prompts, the assistant's replies, "
                         + "tool calls in one line each and the final result, without thinking or tool output. Newest kept when cut.",
                     properties: ["agent": agentProperty,
                                  "pr_url": ["type": "string", "description": "The pull request whose agent to read; the same as agent."],
+                                 "workspace": workspaceProperty,
                                  "session_id": ["type": "string", "description": "A session id from agents_overview, instead of agent."],
                                  "max_chars": ["type": "integer", "minimum": 1000, "maximum": outputLimit,
                                                "description": "Keep at most this many characters, \(AgentTranscript.defaultLimit) when left out."]]) { args in
@@ -56,6 +96,7 @@ extension MCPServer {
                     guard let agent = agents.first(where: { $0.key == target.key }) else {
                         throw MCPToolError("No agent for \(target.title) in agents_overview.")
                     }
+                    try checkDelegation(target, args: args, agents: agents)
                     guard let id = agent.sessionID else { throw MCPToolError("The agent \(target.title) has no session yet.") }
                     session = id
                     cwd = agent.folder
@@ -74,16 +115,21 @@ extension MCPServer {
                     description: "What needs the user right now, in one place: pull requests waiting on them, agents waiting for permission "
                         + "or with unseen results, Slack mentions they have not answered, read or dismissed and unread DMs (when signed in), and open action items from the last "
                         + "two weeks of meetings. Start here for \u{201C}what do I need to look at\u{201D}.",
-                    properties: [:]) { _ in
+                    properties: ["workspace": workspaceProperty]) { args in
+                let scope = try sources.workspaces.scope(args)
+                let workspaces = sources.workspaces.file().workspaces
                 var sections: [String] = []
                 if let tool = github.first(where: { $0.name == "github_needs_attention" }) {
-                    sections.append("## Pull requests\n" + ((try? tool.run(["limit": 8])) ?? "The GitHub cache could not be read.\n"))
+                    sections.append("## Pull requests\n" + ((try? tool.run(["limit": 8, "workspace": scope.id ?? Workspaces.allChoice]))
+                                                            ?? "The GitHub cache could not be read.\n"))
                 }
-                sections.append("## Agents\n" + ((try? AgentOverview.markdown(stateFile(), now: now(), active: true, limit: 10))
+                sections.append("## Agents\n" + ((try? AgentOverview.markdown(scoped(args).file, now: now(), active: true, limit: 10))
                                                   ?? "WorkTime has not written its agents yet.\n"))
-                if let slack = sources.slack() { sections.append("## Slack\n" + slack) }
+                if scope.id == nil || Workspaces.workspace(scope.id, in: workspaces)?.slack != nil, let slack = sources.slack() {
+                    sections.append("## Slack\n" + slack)
+                }
                 if let items = try? openedStore(opened).openActionItems(limit: 10, since: TodoLogic.meetingCutoff(now: now())) {
-                    sections.append("## Meeting action items\n" + (items.isEmpty ? "None open.\n" : items.map {
+                    sections.append("## Meeting action items (not tied to a workspace)\n" + (items.isEmpty ? "None open.\n" : items.map {
                         "- \(ActivityLogic.dateText($0.date)) \u{00B7} \($0.title) (meeting id \($0.meeting)) \u{00B7} "
                             + ($0.owner.map { "\($0): " } ?? "") + $0.task
                     }.joined(separator: "\n") + "\n"))
@@ -97,9 +143,11 @@ extension MCPServer {
                         + "own pane for anything it wants to run. Returns the session id to read the outcome with agent_session later.",
                     properties: ["agent": agentProperty,
                                  "pr_url": ["type": "string", "description": "A pull request's GitHub url; the same as agent."],
+                                 "workspace": workspaceProperty,
                                  "text": ["type": "string", "maxLength": AgentInbox.textLimit, "description": "The prompt for that agent."]],
                     required: ["text"], readOnly: false) { args in
                 guard let target = try target(args) else { throw MCPToolError("agent is required.") }
+                try checkDelegation(target, args: args, agents: (try? stateFile())?.agents ?? [])
                 let request: AgentInbox.Request
                 switch AgentInbox.request(agent: target.key, text: args["text"] as? String ?? "", now: now()) {
                 case .success(let made): request = made
