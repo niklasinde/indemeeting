@@ -97,15 +97,15 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
     }
 
     /// Each agent's mode by its history key, Ask when none is saved or it is no longer offered.
-    static func stored(_ modes: [String: Any]?, key: String) -> AgentPermissionMode {
-        (modes?[key] as? String).flatMap(AgentPermissionMode.init(rawValue:)) ?? .ask
+    static func stored(_ modes: [String: Any]?, key: String, fallback: AgentPermissionMode = .ask) -> AgentPermissionMode {
+        (modes?[key] as? String).flatMap(AgentPermissionMode.init(rawValue:)) ?? fallback
     }
 }
 
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
     case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask,
-                chrome: Bool = false, fork: Bool = false)
+                chrome: Bool = false, fork: Bool = false, allowedTools: [String]? = nil)
     case permission(id: String, allow: Bool)
     case mode(AgentPermissionMode)
     case rules([AgentRule])
@@ -114,8 +114,9 @@ enum AgentRequest {
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome, let fork):
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome, let fork, let allowedTools):
             object = ["type": "prompt", "text": text, "cwd": cwd, "permissionMode": mode.rawValue]
+            if let allowedTools { object["allowedMcpTools"] = allowedTools }
             if chrome { object["chrome"] = true }
             if let sessionID {
                 object["sessionId"] = sessionID

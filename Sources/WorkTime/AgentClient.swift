@@ -68,6 +68,9 @@ final class AgentModel: ObservableObject {
     @Published private(set) var prURL: String?
     /// The topic this agent is for, when it is a topic agent.
     @Published private(set) var topic: TopicAgent?
+    /// The role this agent is for, when it is an assistant under a Main.
+    @Published private(set) var assistant: AssistantEntry?
+    private var loadingDefaults = false
     /// Whether the user has seen the latest reply: false when a turn ends while no pane shows this agent.
     @Published private(set) var resultSeen = true {
         didSet { if oldValue != resultSeen { touch() } }
@@ -81,14 +84,17 @@ final class AgentModel: ObservableObject {
     /// The workspace a Main is for.
     let workspace: String?
     @Published var model = AgentLogic.storedModel(AgentModel.defaults.string(forKey: AgentLogic.modelKey)) {
-        didSet { Self.defaults.set(model, forKey: AgentLogic.modelKey) }
+        didSet {
+            guard !loadingDefaults else { return }
+            if assistant != nil { saveAssistantModel() } else { Self.defaults.set(model, forKey: AgentLogic.modelKey) }
+        }
     }
     /// How this agent's calls are approved, saved per agent; a change reaches a turn already running too.
     @Published var permissionMode = AgentPermissionMode.ask {
         didSet {
-            guard oldValue != permissionMode else { return }
+            guard oldValue != permissionMode, !loadingDefaults else { return }
             var modes = Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey) ?? [:]
-            modes[historyKey] = permissionMode == .ask ? nil : permissionMode.rawValue
+            modes[historyKey] = permissionMode == .ask && assistant == nil ? nil : permissionMode.rawValue
             Self.defaults.set(modes, forKey: AgentPermissionMode.storageKey)
             if busy { client?.send(.mode(permissionMode)) }
         }
@@ -142,8 +148,8 @@ final class AgentModel: ObservableObject {
         }
     }
 
-    /// The pull request url or topic key the agent is saved under; nil for Main and a plain folder.
-    var agentKey: String? { prURL ?? topic?.key }
+    /// The pull request url, topic key or assistant key the agent is saved under; nil for Main and a plain folder.
+    var agentKey: String? { prURL ?? topic?.key ?? assistant?.key }
 
     var historyKey: String { AgentSessions.key(agent: agentKey, isMain: isMain, folder: folder, workspace: workspace) }
 
@@ -179,6 +185,7 @@ final class AgentModel: ObservableObject {
         guard folder != self.folder else { return }
         prURL = nil
         topic = nil
+        assistant = nil
         self.folder = folder
         if let workspace { WorkspaceDefaults.setFolder(folder, for: workspace) } else { Self.defaults.set(folder, forKey: AgentLogic.folderKey) }
         newSession()
@@ -197,7 +204,7 @@ final class AgentModel: ObservableObject {
     /// Moves the agent to another folder and keeps its conversation: the sessions' transcripts are copied to where Claude Code
     /// looks for them from the new folder, so the next prompt resumes there.
     func move(to newFolder: String) {
-        guard !busy, newFolder != folder else { return }
+        guard !busy, newFolder != folder, assistant == nil else { return }
         let old = folder, oldKey = historyKey
         let ids = AgentFolders.sessions(current: sessionID, history: history, folder: old, records: Self.importRecords)
         AgentFolders.copy(AgentFolders.plan(sessions: ids, from: old, to: newFolder))
@@ -324,7 +331,7 @@ final class AgentModel: ObservableObject {
     func open(pr target: GitHubLink.Target, checkout: URL?) {
         guard prURL != target.url || (items.isEmpty && !busy) else { return }
         let moved = Self.movedFolders[target.url]
-        point(prURL: target.url, topic: nil, folder: moved ?? checkout?.path ?? NSHomeDirectory())
+        point(prURL: target.url, topic: nil, assistant: nil, folder: moved ?? checkout?.path ?? NSHomeDirectory())
         draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: moved != nil || checkout != nil) : ""
     }
 
@@ -332,14 +339,26 @@ final class AgentModel: ObservableObject {
     /// when there is no session yet. A renamed topic only updates the name.
     func open(topic: TopicAgent) {
         guard self.topic?.id != topic.id || (items.isEmpty && !busy) else { return self.topic = topic }
-        point(prURL: nil, topic: topic, folder: topic.folder)
+        point(prURL: nil, topic: topic, assistant: nil, folder: topic.folder)
         draft = sessionID == nil ? TopicAgents.prompt(topic) : ""
     }
 
-    private func point(prURL: String?, topic: TopicAgent?, folder: String) {
+    /// Points the agent at an assistant: its folder and the session it had before. A renamed role only updates the entry.
+    func open(assistant entry: AssistantEntry, folder: String) {
+        guard assistant?.key != entry.key || (items.isEmpty && !busy) else { return assistant = entry }
+        point(prURL: nil, topic: nil, assistant: entry, folder: folder)
+        draft = ""
+    }
+
+    func update(assistant entry: AssistantEntry) {
+        if assistant != entry { assistant = entry }
+    }
+
+    private func point(prURL: String?, topic: TopicAgent?, assistant: AssistantEntry?, folder: String) {
         if busy { stop() }
         self.prURL = prURL
         self.topic = topic
+        self.assistant = assistant
         self.folder = folder
         lastModel = nil
         problem = nil
@@ -353,9 +372,46 @@ final class AgentModel: ObservableObject {
     }
 
     private func loadMode() {
-        permissionMode = AgentPermissionMode.stored(Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey), key: historyKey)
+        loadingDefaults = true
+        defer { loadingDefaults = false }
+        permissionMode = AgentPermissionMode.stored(Self.defaults.dictionary(forKey: AgentPermissionMode.storageKey), key: historyKey,
+                                                    fallback: assistant.map { Assistants.permissionMode($0.role.permissionMode) } ?? .ask)
+        if let assistant {
+            let saved = (Self.defaults.dictionary(forKey: Assistants.storedModelsKey) as? [String: String])?[historyKey]
+            model = saved.map { AgentLogic.storedModel($0) } ?? Assistants.modelID(assistant.role.model)
+        }
         chrome = AgentLogic.chromeEnabled(Self.defaults.dictionary(forKey: AgentLogic.chromeKey), key: historyKey)
         chromeProblem = nil
+    }
+
+    private func saveAssistantModel() {
+        var saved = Self.defaults.dictionary(forKey: Assistants.storedModelsKey) as? [String: String] ?? [:]
+        saved[historyKey] = model
+        Self.defaults.set(saved, forKey: Assistants.storedModelsKey)
+    }
+
+    /// Reads the role's file again before a prompt, so edits apply at once; false, with the problem shown, when it cannot be used.
+    private func refreshAssistant() -> Bool {
+        guard let current = assistant else { return true }
+        guard let role = AssistantStore.shared.role(of: current) else {
+            problem = "The file of the assistant \(current.role.name) is gone."
+            return false
+        }
+        if role != current.role {
+            assistant = AssistantEntry(workspace: current.workspace, role: role)
+            loadMode()
+            if sessionID == nil { folder = AssistantStore.shared.folder(assistant ?? current) }
+        }
+        guard role.isUsable else {
+            problem = "Fix the instructions of \(role.name) first: " + (role.problems.first?.text ?? "")
+            return false
+        }
+        return true
+    }
+
+    private var systemPrompt: String? {
+        if let assistant { return AssistantStore.shared.systemPrompt(assistant.role, workspace: assistant.workspace, folder: folder) }
+        return workspace.flatMap { self.prURL == nil ? WorkspaceStore.shared.mainPrompt(for: $0) : nil } ?? topic.map(TopicAgents.systemPrompt)
     }
 
     /// The current session of each pull request's and topic's agent, by its key.
@@ -414,12 +470,13 @@ final class AgentModel: ObservableObject {
             AgentLogic.apply(.missingFolder(folder), to: &items)
             return false
         }
-        guard let client = runningClient() else { return false }
+        guard refreshAssistant(), let client = runningClient() else { return false }
         problem = nil
         items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
         busy = true
         let auto = model == AgentLogic.auto, chosen = model, previous = lastModel, cwd = folder
+        let system = systemPrompt, allowedTools = assistant.map { Assistants.allowedTools($0.role) }
         let signals = AgentLogic.RouteSignals(mentions: AgentLogic.mentions(in: text).count, isReview: prURL != nil,
                                               turns: items.filter { if case .user = $0.kind { true } else { false } }.count - 1)
         routing = Task { @MainActor [weak self] in
@@ -429,8 +486,8 @@ final class AgentModel: ObservableObject {
             lastModel = picked
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
-                                appendSystemPrompt: workspace.flatMap { self.prURL == nil ? WorkspaceStore.shared.mainPrompt(for: $0) : nil } ?? topic.map(TopicAgents.systemPrompt),
-                                mode: permissionMode, chrome: chrome, fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords)))
+                                appendSystemPrompt: system, mode: permissionMode, chrome: chrome,
+                                fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords), allowedTools: allowedTools))
         }
         return true
     }
@@ -508,7 +565,7 @@ final class AgentModel: ObservableObject {
             return nil
         }
         let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path,
-                                                           mcpCommand: Bundle.main.executablePath, workspace: workspace)
+                                                           mcpCommand: Bundle.main.executablePath, workspace: workspace ?? assistant?.workspace)
         do {
             let client = try AgentClient(node: node, script: script, environment: childEnvironment, onLine: { [weak self] line in
                 Task { @MainActor [weak self] in self?.receive(line) }

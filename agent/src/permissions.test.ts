@@ -37,3 +37,25 @@ test("the rest is left to the mode: canUseTool asks in Ask, the classifier decid
     assert.deepEqual(preToolDecision("Write", { file_path: "/elsewhere/x" }, cwd, rules, mode), { kind: "defer" }, mode);
   }
 });
+
+test("an assistant's allowlist refuses unlisted MCP tools in every mode and leaves the other tools to the mode", () => {
+  const allowed = ["mcp__worktime__time_report", "mcp__worktime__jira_issue"];
+  for (const mode of modes) {
+    assert.equal(preToolDecision("mcp__worktime__slack_thread", {}, cwd, rules, mode, allowed).kind, "deny", mode);
+    assert.equal(preToolDecision("mcp__worktime__send_to_agent", {}, cwd, rules, mode, allowed).kind, "deny", mode);
+    assert.equal(preToolDecision("mcp__other__thing", {}, cwd, rules, mode, allowed).kind, "deny", mode);
+    assert.deepEqual(preToolDecision("mcp__worktime__time_report", {}, cwd, [], mode, allowed), { kind: "allow" }, mode);
+    assert.deepEqual(preToolDecision("Read", {}, cwd, [], mode, allowed), { kind: "allow" }, mode);
+    assert.deepEqual(preToolDecision("Bash", { command: "rm -rf build" }, cwd, [], mode, allowed), { kind: "defer" }, mode);
+  }
+  assert.deepEqual(preToolDecision("mcp__worktime__send_to_agent", {}, cwd, [], "default", ["mcp__worktime__send_to_agent"]), { kind: "ask" });
+  assert.equal(preToolDecision("mcp__worktime__slack_thread", {}, cwd, [], "default", []).kind, "deny");
+});
+
+test("without an allowlist every MCP tool is decided as before", () => {
+  assert.deepEqual(preToolDecision("mcp__worktime__slack_thread", {}, cwd, [], "default"), { kind: "allow" });
+});
+
+test("Claude in Chrome is not touched by the allowlist", () => {
+  assert.notEqual(preToolDecision("mcp__claude-in-chrome__navigate", {}, cwd, [], "default", []).kind, "deny");
+});

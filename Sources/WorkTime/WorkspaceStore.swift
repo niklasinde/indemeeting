@@ -8,12 +8,15 @@ final class WorkspaceStore: ObservableObject {
 
     @Published private(set) var file: WorkspaceFile
     let instructions: WorkspaceInstructionFiles
+    let assistants: AssistantFiles
     private let url: URL?
 
     /// `url` nil keeps the workspaces in memory only, for previews.
-    init(url: URL? = AppPaths.workspaceFile, file: WorkspaceFile? = nil, instructions: WorkspaceInstructionFiles = WorkspaceInstructionFiles()) {
+    init(url: URL? = AppPaths.workspaceFile, file: WorkspaceFile? = nil, instructions: WorkspaceInstructionFiles = WorkspaceInstructionFiles(),
+         assistants: AssistantFiles = AssistantFiles()) {
         self.url = url
         self.instructions = instructions
+        self.assistants = assistants
         self.file = file ?? Workspaces.decode(url.flatMap { try? Data(contentsOf: $0) })
         if url != nil, file == nil { save() }
     }
@@ -38,7 +41,15 @@ final class WorkspaceStore: ObservableObject {
 
     func mainPrompt(for id: String) -> String {
         guard let workspace = workspace(id) else { return AgentLogic.mainBasePrompt }
-        return instructions.prompt(for: workspace, others: workspaces.filter { $0.id != workspace.id })
+        let prompt = instructions.prompt(for: workspace, others: workspaces.filter { $0.id != workspace.id })
+        return [prompt, Assistants.roster(assistants.list(workspace.id))].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
+    /// An assistant's prompt: its role, then the workspace's MAIN.md and extra files.
+    func assistantPrompt(_ role: AssistantRole, workspace id: String, folder: String) -> String {
+        guard let workspace = workspace(id) else { return Assistants.scope(role, workspace: Workspaces.defaults[0], folder: folder) }
+        return WorkspaceInstructions.compose(scope: Assistants.scope(role, workspace: workspace, folder: folder), main: instructions.read(workspace),
+                                             extras: instructions.extras(workspace))
     }
 
     private func save() {

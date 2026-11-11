@@ -41,7 +41,10 @@ struct WorkspacesSettings: View {
     @ObservedObject private var store = WorkspaceStore.shared
 
     var body: some View {
-        ForEach(store.workspaces) { WorkspaceEditor(workspace: $0, store: store) }
+        ForEach(store.workspaces) { workspace in
+            WorkspaceEditor(workspace: workspace, store: store)
+            AssistantsSettings(workspace: workspace)
+        }
     }
 }
 

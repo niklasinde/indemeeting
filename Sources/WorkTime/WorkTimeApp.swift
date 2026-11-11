@@ -31,6 +31,9 @@ enum Main {
         if let output = WorkspacePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { WorkspacePreview.run(to: output) }
         }
+        if let output = AssistantPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { AssistantPreview.run(to: output) }
+        }
         if let output = UpgradePreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { UpgradePreview.run(to: output) }
         }
@@ -224,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         AgentHub.shared.showPage = { [weak self] in self?.mainWindow.show(section: .agent) }
         AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
+        AssistantStore.shared.start()
         AgentStateWriter.shared.start()
         AgentInboxWatcher.shared.start()
         InCallHelp.shared.openMeeting = { [weak self] in self?.mainWindow.show(meeting: $0, at: nil) }
@@ -250,6 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         EmbeddedTerminalModel.shared.terminateAll()
         PRAgents.shared.stopAll()
         TopicAgentStore.shared.stopAll()
+        AssistantStore.shared.stopAll()
         AgentHub.shared.mains.values.forEach { $0.stopClient() }
         LocalLLM.shared.unload(wait: true)
         tracker.flush()

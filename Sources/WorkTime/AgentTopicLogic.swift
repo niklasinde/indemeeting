@@ -35,7 +35,7 @@ enum TopicAgentError: Error, Equatable {
         case .noName: return "Give the agent a name."
         case .badJiraKey(let text): return "\u{201C}\(text)\u{201D} is not a Jira key like ISD-123."
         case .badSlackLink(let text): return "\u{201C}\(text)\u{201D} is not a Slack message link (https://<workspace>.slack.com/archives/\u{2026})."
-        case .unknown(let text): return "No agent matches \u{201C}\(text)\u{201D}: give a pull request url, a topic agent's key (topic:<id>) or its name."
+        case .unknown(let text): return "No agent matches \u{201C}\(text)\u{201D}: give a pull request url, a topic agent's key (topic:<id>) or its name, or an assistant's role name."
         case .ambiguous(let text, let names): return "\u{201C}\(text)\u{201D} matches several topic agents: \(names.joined(separator: ", ")). Use its key."
         case .archived(let name): return "The topic agent \(name) is archived; unarchive it in WorkTime first."
         }

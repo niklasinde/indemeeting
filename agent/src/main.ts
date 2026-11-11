@@ -48,12 +48,15 @@ function allowed(decision: Extract<Decision, { kind: "allow" }>, toolUseID: stri
 
 /// Runs before the mode decides, so the read-only list and saved rules apply in every mode and send_to_agent is asked
 /// of the user even where the auto mode classifier would otherwise answer.
-function preToolUse(cwd: string): HookCallback {
+function preToolUse(cwd: string, allowedMcp?: string[]): HookCallback {
   return async (hook) => {
     if (hook.hook_event_name !== "PreToolUse") return {};
     const input = (hook.tool_input ?? {}) as Record<string, unknown>;
-    const decision = preToolDecision(hook.tool_name, input, cwd, rules, mode);
+    const decision = preToolDecision(hook.tool_name, input, cwd, rules, mode, allowedMcp);
     if (decision.kind === "defer") return {};
+    if (decision.kind === "deny") {
+      return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason } };
+    }
     const result = decision.kind === "allow" ? allowed(decision, hook.tool_use_id) : await ask(hook.tool_name, input, cwd);
     if (result.behavior === "allow") hookAllowed.add(hook.tool_use_id);
     return {
@@ -142,10 +145,11 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       env,
       mcpServers: mcpServers(process.env),
       abortController: abort,
-      hooks: { PreToolUse: [{ hooks: [preToolUse(input.cwd)], timeout: hookTimeout }] },
+      hooks: { PreToolUse: [{ hooks: [preToolUse(input.cwd, input.allowedMcpTools)], timeout: hookTimeout }] },
       canUseTool: async (tool, toolInput, { toolUseID }) => {
         if (hookAllowed.delete(toolUseID)) return { behavior: "allow" };
-        const decision = preToolDecision(tool, toolInput, input.cwd, rules, mode);
+        const decision = preToolDecision(tool, toolInput, input.cwd, rules, mode, input.allowedMcpTools);
+        if (decision.kind === "deny") return { behavior: "deny", message: decision.reason };
         return decision.kind === "allow" ? allowed(decision, toolUseID) : ask(tool, toolInput, input.cwd);
       },
     },

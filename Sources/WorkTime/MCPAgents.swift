@@ -26,6 +26,7 @@ extension MCPServer {
         var inbox = AppPaths.agentInbox
         var projects = ClaudeTranscripts.projectsFolder
         var topics = AppPaths.topicAgents
+        var assistants = AssistantFiles()
         var workspaces = WorkspaceSource()
         var replyTimeout: TimeInterval = 10
         /// Slack mentions and unread DMs as Markdown, nil when Slack is not signed in.
@@ -33,7 +34,7 @@ extension MCPServer {
     }
 
     static let agentProperty: [String: Any] = ["type": "string",
-                                               "description": "A pull request url, or a topic agent's key (topic:<id>) or name, as agents_overview lists them."]
+                                               "description": "A pull request url, a topic agent's key (topic:<id>) or name, or an assistant's role name or key, as agents_overview lists them."]
 
     static func agentTools(_ opened: Result<MeetingStore, Error>, sources: AgentSources = AgentSources(),
                            github: [MCPTool] = [], now: @escaping () -> Date = Date.init) -> [MCPTool] {
@@ -44,9 +45,20 @@ extension MCPServer {
             guard let file = AgentOverview.decode(data) else { throw MCPToolError("\(sources.stateFile.path) could not be read.") }
             return file
         }
+        func assistantEntries(_ args: [String: Any]) throws -> [AssistantEntry] {
+            let scope = try sources.workspaces.scope(args)
+            return sources.workspaces.file().workspaces.filter { Workspaces.includes($0.id, in: scope) }.flatMap { workspace in
+                sources.assistants.list(workspace.id).map { AssistantEntry(workspace: workspace.id, role: $0) }
+            }
+        }
         func target(_ args: [String: Any]) throws -> AgentTarget? {
             guard let text = [args["agent"], args["pr_url"]].compactMap({ $0 as? String })
                 .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+            switch Assistants.resolve(text, in: try assistantEntries(args)) {
+            case .success(let target)?: return target
+            case .failure(let error)?: throw MCPToolError(error.message)
+            case nil: break
+            }
             switch TopicAgents.resolve(text, topics: TopicAgents.decode(try? Data(contentsOf: sources.topics))) {
             case .success(let target): return target
             case .failure(let error): throw MCPToolError(error.message)
@@ -59,6 +71,7 @@ extension MCPServer {
             return (scope, file)
         }
         func workspace(of target: AgentTarget, in agents: [AgentState]) -> String? {
+            if let id = Assistants.parse(key: target.key)?.workspace { return id }
             if let state = agents.first(where: { $0.key == target.key }) { return state.workspace }
             let saved = sources.workspaces.file()
             return GitHubLink.pullRequest(at: target.key) != nil
@@ -73,7 +86,7 @@ extension MCPServer {
         }
         return [
             MCPTool(name: "agents_overview",
-                    description: "Every Claude agent WorkTime knows (Main, one per pull request and the topic agents), most urgent first: waiting for the "
+                    description: "Every Claude agent WorkTime knows (Main, its assistants, one per pull request and the topic agents), most urgent first: waiting for the "
                         + "user's permission (with the tool it asks for), finished with a result the user has not seen, errored, working, "
                         + "idle. Each with its pull request url, worktime://agent link, folder, session id, last prompt and last result.",
                     properties: ["active_only": ["type": "boolean", "description": "Leave out idle agents. False when left out."],
@@ -137,8 +150,8 @@ extension MCPServer {
                 return cut(sections.joined(separator: "\n"), at: outputLimit)
             },
             MCPTool(name: "send_to_agent",
-                    description: "Sends a prompt to an agent in WorkTime, marked as from Main: a pull request's agent, or a topic agent "
-                        + "(a support case or other topic, by its key or name). It starts when the agent is idle "
+                    description: "Sends a prompt to an agent in WorkTime, marked as from Main: a pull request's agent, a topic agent "
+                        + "(a support case or other topic, by its key or name) or one of the workspace's assistants (by role name, like Developer). It starts when the agent is idle "
                         + "and queues while it works; it is refused while the agent waits for a permission. The agent asks the user in its "
                         + "own pane for anything it wants to run. Returns the session id to read the outcome with agent_session later.",
                     properties: ["agent": agentProperty,

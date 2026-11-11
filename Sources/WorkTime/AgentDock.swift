@@ -202,6 +202,11 @@ final class AgentStateWriter: ObservableObject {
             let loaded = topics.models[topic.key].map { state($0, key: topic.key, title: topic.name) }
             states.append(AgentState.topic(topic, loaded: loaded, sessionID: sessions[topic.key]))
         }
+        let assistants = AssistantStore.shared
+        for entry in assistants.all {
+            let loaded = assistants.models[entry.key].map { state($0, key: entry.key, title: entry.role.name) }
+            states.append(AgentState.assistant(entry, loaded: loaded, sessionID: sessions[entry.key], folder: assistants.folder(entry)))
+        }
         return AgentOverview.withPersisted(states, sessions: sessions, known: Array(AgentSessionStore.all().keys)).map { state in
             var state = state
             if !state.loaded, let title = titles[state.key] { state.title = AgentOverview.prTitle(state.key, title: title) }
@@ -246,6 +251,8 @@ final class AgentInboxWatcher {
                     reply = AgentInbox.Reply(id: request.id, status: .rejected, message: problem.message)
                 } else if TopicAgents.isKey(request.agent) {
                     reply = TopicAgentStore.shared.deliver(request)
+                } else if Assistants.isKey(request.agent) {
+                    reply = AssistantStore.shared.deliver(request)
                 } else {
                     reply = await PRAgents.shared.deliver(request)
                 }

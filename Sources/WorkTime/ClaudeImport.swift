@@ -73,8 +73,9 @@ struct AgentOverflowMenu: View {
             }
             .disabled(model.sessionID == nil)
             Button("Change Folder\u{2026}") { model.changeFolder() }
-                .disabled(model.busy)
-                .help("Move the agent to another folder; the conversation continues there")
+                .disabled(model.busy || model.assistant != nil)
+                .help(model.assistant == nil ? "Move the agent to another folder; the conversation continues there"
+                      : "An assistant\u{2019}s folder is set by the folder line in its instructions")
         } label: {
             Image(systemName: "ellipsis.circle")
         }

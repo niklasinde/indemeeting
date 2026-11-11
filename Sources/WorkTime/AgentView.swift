@@ -44,6 +44,7 @@ struct AgentsPage: View {
     @ObservedObject var hub: AgentHub
     @ObservedObject private var writer = AgentStateWriter.shared
     @ObservedObject private var topics = TopicAgentStore.shared
+    @ObservedObject private var assistants = AssistantStore.shared
     @ObservedObject private var workspaces = WorkspaceStore.shared
     @AppStorage("agentListHidden") private var listHidden = false
 
@@ -60,6 +61,8 @@ struct AgentsPage: View {
                     AgentView(model: main, listHidden: $listHidden)
                 } else if TopicAgents.isKey(hub.selected) {
                     AgentTopicPage(key: hub.selected, listHidden: $listHidden)
+                } else if Assistants.isKey(hub.selected) {
+                    AgentAssistantPage(key: hub.selected, listHidden: $listHidden)
                 } else {
                     AgentPRPage(key: hub.selected, listHidden: $listHidden)
                 }
@@ -75,12 +78,16 @@ struct AgentList: View {
     @ObservedObject var hub: AgentHub
     let groups: [Workspaces.Group]
     @ObservedObject var topics = TopicAgentStore.shared
+    @ObservedObject var assistants = AssistantStore.shared
     @ObservedObject var workspaces = WorkspaceStore.shared
     @AppStorage(Workspaces.selectedKey) private var filter = Workspaces.allChoice
     @AppStorage(Workspaces.collapsedKey) private var collapsed = ""
+    @AppStorage(Assistants.collapsedKey) private var collapsedAssistants = ""
     @State var creating = false
     @State private var importing = false
     @State private var deleting: TopicAgent?
+    @State private var assistantAction: AssistantAction?
+    @State private var deletingAssistant: AssistantEntry?
 
     var body: some View {
         let now = Date()
@@ -91,11 +98,9 @@ struct AgentList: View {
                     ForEach(visibleGroups, id: \.workspace.id) { group in
                         groupHeader(group)
                         if !collapsedIDs.contains(group.workspace.id) {
-                            ForEach(group.all, id: \.key) { state in
-                                Button { hub.selected = state.key } label: { row(state, now: now) }
-                                    .buttonStyle(.plain)
-                                    .contextMenu { menu(state) }
-                            }
+                            if let main = group.main { rowButton(main, now: now) }
+                            assistantSection(group, now: now)
+                            ForEach(group.agents, id: \.key) { rowButton($0, now: now) }
                         }
                     }
                 }
@@ -112,6 +117,7 @@ struct AgentList: View {
             }
         }
         .sheet(isPresented: $importing) { ImportClaudeSessionSheet { importing = false } }
+        .assistantSheets(action: $assistantAction, deleting: $deletingAssistant) { hub.selected = $0 }
         .confirmationDialog("Delete \u{201C}\(deleting?.name ?? "")\u{201D}?", isPresented: Binding { deleting != nil } set: { if !$0 { deleting = nil } }) {
             Button("Delete Agent and Folder", role: .destructive) {
                 if let deleting { topics.delete(deleting.key) }
@@ -124,6 +130,76 @@ struct AgentList: View {
                      + "Claude Code keeps its session transcripts.")
             }
         }
+    }
+
+    private func rowButton(_ state: AgentState, now: Date) -> some View {
+        Button { hub.selected = state.key } label: { row(state, now: now) }
+            .buttonStyle(.plain)
+            .contextMenu { menu(state) }
+    }
+
+    private var collapsedAssistantIDs: Set<String> { Set(collapsedAssistants.split(separator: ",").map(String.init)) }
+
+    /// The workspace's assistants, indented under its Main, with a menu to make one.
+    @ViewBuilder
+    private func assistantSection(_ group: Workspaces.Group, now: Date) -> some View {
+        let id = group.workspace.id, isCollapsed = collapsedAssistantIDs.contains(id)
+        HStack(spacing: 4) {
+            Button {
+                var ids = collapsedAssistantIDs
+                if isCollapsed { ids.remove(id) } else { ids.insert(id) }
+                collapsedAssistants = ids.sorted().joined(separator: ",")
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold)).rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    Text("Assistants").font(.caption2.weight(.semibold))
+                    Text("\(group.assistants.count)").font(.caption2).foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isCollapsed ? "Show the assistants of \(group.workspace.name)" : "Hide the assistants of \(group.workspace.name)")
+            Spacer()
+            Menu {
+                NewAssistantMenuItems(workspace: id, action: $assistantAction) { hub.selected = $0 }
+            } label: { Image(systemName: "plus").font(.caption) }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("New Assistant: a role agent under this workspace\u{2019}s Main, such as a developer or a time reporter")
+        }
+        .padding(.leading, 26)
+        .padding(.trailing, 8)
+        .padding(.top, 2)
+        if !isCollapsed {
+            ForEach(group.assistants, id: \.key) { state in
+                Button { hub.selected = state.key } label: { assistantRow(state, now: now) }
+                    .buttonStyle(.plain)
+                    .contextMenu { menu(state) }
+            }
+        }
+    }
+
+    private func assistantRow(_ state: AgentState, now: Date) -> some View {
+        let need = AgentOverview.need(state)
+        return HStack(spacing: 7) {
+            Circle().fill(Self.color(need)).frame(width: 7, height: 7).help(need.label)
+            AssistantIcon(name: assistants.entry(state.key)?.role.icon ?? Assistants.defaultIcon)
+            Text(state.title).font(.callout).lineLimit(1)
+            Spacer(minLength: 4)
+            if state.error != nil, state.status == .idle {
+                Image(systemName: "exclamationmark.triangle.fill").font(.caption2).foregroundStyle(.red).help(state.error ?? "")
+            } else if need != .idle {
+                Text(need.label).font(.caption2).foregroundStyle(Self.color(need)).lineLimit(1)
+            }
+        }
+        .padding(.leading, 28)
+        .padding(.trailing, 8)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 6).fill(hub.selected == state.key ? Color.primary.opacity(0.08) : .clear))
+        .contentShape(Rectangle())
     }
 
     private var visibleGroups: [Workspaces.Group] {
@@ -206,7 +282,10 @@ struct AgentList: View {
            let folder = state.folder ?? AgentSessionStore.list(for: state.key).first(where: { $0.id == session })?.folder {
             Button("Open in Claude Code\u{2026}") { ClaudeSessionImporter.openInClaudeCode(folder: folder, session: session) }
         }
-        if !Workspaces.isMainKey(state.key) {
+        if let entry = assistants.entry(state.key) {
+            Divider()
+            AssistantMenuItems(entry: entry, action: $assistantAction, deleting: $deletingAssistant) { hub.selected = $0 }
+        } else if !Workspaces.isMainKey(state.key) {
             Menu("Move to Workspace") {
                 ForEach(workspaces.workspaces) { workspace in
                     Toggle(workspace.name, isOn: Binding { workspaces.assigned(state) == workspace.id } set: { _ in workspaces.move(state.key, to: workspace.id) })
@@ -321,6 +400,8 @@ struct AgentView: View {
                     .help("Open the pull request page with this agent beside it")
             } else if let topic = model.topic {
                 AgentTopicHeader(topic: topic)
+            } else if let assistant = model.assistant {
+                AgentAssistantHeader(entry: assistant)
             } else {
                 Text(isMain ? "Main" : "Agent").font(.system(size: 20, weight: .medium)).fixedSize()
                 if isMain { MainWorkspaceBadge(workspace: model.workspace) }
@@ -544,6 +625,8 @@ struct AgentPanel: View {
                     if model.items.isEmpty {
                         Text(isMain ? "Main keeps an eye on everything: pull requests, the agents beside them, Slack and meeting action items. "
                                 + "Ask what needs you, or have it hand a prompt to a pull request\u{2019}s agent. It only reads unless you ask for more."
+                             : model.assistant != nil ? "\(model.assistant?.role.summary ?? "") It follows the instructions in its Markdown file "
+                                + "(Edit instructions, above); Main can hand it work, and it cannot post to Jira, Slack or GitHub."
                              : model.topic != nil ? "This agent works on one topic in its own folder. It reads the linked Jira ticket and Slack "
                                 + "thread and searches both, and drafts replies for you to copy; it cannot post anywhere."
                              : "Ask the agent to read, search or change code in this folder. Type @ to reference a file. Edits and commands ask first.")
@@ -636,7 +719,7 @@ struct AgentPanel: View {
                 .background(RoundedRectangle(cornerRadius: 10).fill(.background).shadow(radius: 2))
             } else if model.draft.isEmpty && model.items.isEmpty {
                 HStack {
-                    ForEach(isMain || model.topic != nil ? [] : AgentLogic.quickActions, id: \.title) { action in
+                    ForEach(isMain || model.topic != nil || model.assistant != nil ? [] : AgentLogic.quickActions, id: \.title) { action in
                         Button(action.title) { model.draft = action.prompt }.buttonStyle(SuggestionStyle())
                     }
                 }

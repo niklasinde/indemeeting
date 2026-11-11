@@ -60,7 +60,7 @@ let workspaceTests: [(name: String, run: () throws -> Void)] = [
         check(groups[1].all.first?.key == "main:personal", "Main first")
         let legacy = Workspaces.groups([state("main")], file: file, lastUsed: [:], home: home)
         check(legacy[0].main?.key == "main", "the old Main key still lands in Work")
-        let waiting = Workspaces.Group(workspace: work, main: nil, agents: [state("a", status: .waiting), state("b", status: .working)])
+        let waiting = Workspaces.Group(workspace: work, main: nil, assistants: [], agents: [state("a", status: .waiting), state("b", status: .working)])
         check(waiting.needing == 1, "only agents that need you count")
     }),
     ("workspaces: keys, the file and what an old agents.json holds", {

@@ -122,7 +122,7 @@ let agentOverviewTests: [(name: String, run: () throws -> Void)] = [
         }
         check(request.agent == pull && request.text == "Rebase it", "trimmed")
         check(AgentInbox.request(agent: "https://example.com", text: "x", now: now) == .failure(AgentInboxError(
-            "agent must be a GitHub pull request url or a topic agent key, not https://example.com.")), "url")
+            "agent must be a GitHub pull request url, a topic agent key or an assistant key, not https://example.com.")), "url")
         check(AgentInbox.request(agent: pull, text: "  ", now: now) == .failure(AgentInboxError("text is empty.")), "empty")
         if case .success = AgentInbox.request(agent: pull, text: String(repeating: "a", count: AgentInbox.textLimit + 1), now: now) {
             check(false, "too long is refused")

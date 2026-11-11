@@ -144,6 +144,9 @@ enum Workspaces {
     }
 
     static func assigned(_ state: AgentState, in file: WorkspaceFile, home: String = NSHomeDirectory()) -> String {
+        if let id = Assistants.parse(key: state.key)?.workspace {
+            return file.workspaces.contains { $0.id == id } ? id : (workspace(nil, in: file.workspaces)?.id ?? id)
+        }
         if let id = id(ofMainKey: state.key) { return file.workspaces.contains { $0.id == id } ? id : (workspace(nil, in: file.workspaces)?.id ?? id) }
         let subject = Subject(folders: state.folder.map { [$0] } ?? [], owner: state.prURL.flatMap { prSubject($0, override: nil).owner },
                               jiraKey: state.jiraKey, override: file.overrides[state.key])
@@ -155,10 +158,11 @@ enum Workspaces {
     struct Group: Equatable {
         let workspace: Workspace
         let main: AgentState?
+        let assistants: [AgentState]
         let agents: [AgentState]
 
-        var all: [AgentState] { (main.map { [$0] } ?? []) + agents }
-        var needing: Int { agents.filter { AgentOverview.need($0) < .working }.count }
+        var all: [AgentState] { (main.map { [$0] } ?? []) + assistants + agents }
+        var needing: Int { (assistants + agents).filter { AgentOverview.need($0) < .working }.count }
     }
 
     /// The agents of each workspace in the order of the file, each with its Main first.
@@ -167,7 +171,8 @@ enum Workspaces {
         return file.workspaces.map { workspace in
             let rows = AgentSessions.sidebar(members[workspace.id] ?? [], lastUsed: lastUsed)
             let main = rows.first { isMainKey($0.key) }
-            return Group(workspace: workspace, main: main, agents: rows.filter { !isMainKey($0.key) })
+            let assistants = rows.filter(\.isAssistant).sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            return Group(workspace: workspace, main: main, assistants: assistants, agents: rows.filter { !isMainKey($0.key) && !$0.isAssistant })
         }
     }
 

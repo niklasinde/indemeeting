@@ -27,14 +27,31 @@ struct AgentState: Codable, Equatable {
     var jiraKey: String?
     var slackURL: String?
     var workspace: String?
+    /// `assistant` for a role agent under a Main, with the role's name.
+    var kind: String?
+    var role: String?
 
     var isTopic: Bool { TopicAgents.isKey(key) }
+    var isAssistant: Bool { Assistants.isKey(key) }
 
     /// A topic agent as it stands: its loaded model's state, or its saved session.
     static func topic(_ topic: TopicAgent, loaded: AgentState?, sessionID: String?) -> AgentState {
         var state = loaded ?? AgentState(key: topic.key, title: topic.name, folder: topic.folder, sessionID: sessionID, status: .idle, loaded: false)
         state.jiraKey = topic.jiraKey
         state.slackURL = topic.slackURL
+        return state
+    }
+}
+
+extension AgentState {
+    /// A role agent as it stands: its loaded model's state, or its saved session.
+    static func assistant(_ entry: AssistantEntry, loaded: AgentState?, sessionID: String?, folder: String) -> AgentState {
+        var state = loaded ?? AgentState(key: entry.key, title: entry.role.name, folder: folder, sessionID: sessionID, status: .idle, loaded: false)
+        state.title = entry.role.name
+        state.kind = "assistant"
+        state.role = entry.role.name
+        state.workspace = entry.workspace
+        state.error = state.error ?? entry.role.problems.first?.text
         return state
     }
 }
@@ -158,6 +175,7 @@ enum AgentOverview {
         if !state.loaded { facts.append("saved session, not open") }
         var lines = ["- **\(state.title)** \u{00B7} " + facts.joined(separator: " \u{00B7} ")]
         if let url = state.prURL { lines.append("  \(url) \u{00B7} agent: \(GitHubLink.agentLink(for: url))") }
+        if state.isAssistant { lines.append("  assistant \(state.role ?? state.title) \u{00B7} key \(state.key)") }
         if state.isTopic {
             lines.append("  topic agent \(state.key)" + [state.jiraKey.map { "Jira \($0)" }, state.slackURL.map { "Slack \($0)" }]
                 .compactMap { $0 }.map { " \u{00B7} " + $0 }.joined())
@@ -334,8 +352,8 @@ enum AgentInbox {
 
     static func problem(_ request: Request, now: Date) -> AgentInboxError? {
         guard ClaudeTranscripts.isSessionID(request.id) else { return AgentInboxError("The request id is not a UUID.") }
-        guard GitHubLink.pullRequest(at: request.agent) != nil || TopicAgents.isKey(request.agent) else {
-            return AgentInboxError("agent must be a GitHub pull request url or a topic agent key, not \(request.agent).")
+        guard GitHubLink.pullRequest(at: request.agent) != nil || TopicAgents.isKey(request.agent) || Assistants.isKey(request.agent) else {
+            return AgentInboxError("agent must be a GitHub pull request url, a topic agent key or an assistant key, not \(request.agent).")
         }
         guard !request.text.isEmpty else { return AgentInboxError("text is empty.") }
         guard request.text.count <= textLimit else { return AgentInboxError("text is \(request.text.count) characters; the limit is \(textLimit).") }
