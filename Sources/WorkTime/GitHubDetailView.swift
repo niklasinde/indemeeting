@@ -454,7 +454,7 @@ struct PageActionBar: View {
     private var isClosed: Bool { (detail?.state ?? pr.state) == .closed }
 
     private var present: [GitHubLayout.PageAction] {
-        var present: [GitHubLayout.PageAction] = [.openInBrowser, .copy, .ask, .review, .openInClaude]
+        var present: [GitHubLayout.PageAction] = [.openInBrowser, .copy, .ask, .review, .openInClaude, .openInAgent]
         if terminals.hasSession(pr.url) { present.append(.terminal) }
         return present + [.merge, .close]
     }
@@ -480,6 +480,7 @@ struct PageActionBar: View {
         case .review: Menu { reviewItems } label: { Label("Review", systemImage: "checkmark.bubble") }
             .menuIndicator(.visible).fixedSize().disabled(!pageActions.enabled)
         case .openInClaude: OpenInClaudeMenu(pr: pr, detail: detail, model: claude)
+        case .openInAgent: Button(action: openInAgent) { Label("Open in Agent", systemImage: "sparkles") }.help(openInAgentHelp)
         case .terminal: TerminalToggle(key: pr.url, model: terminals)
         case .merge: mergeButton
         case .close: closeButton
@@ -507,6 +508,7 @@ struct PageActionBar: View {
                 if claude.resumable(pr.url) != nil { Button("Resume Previous Session") { claude.resumeInClaude(pr, detail) } }
                 ForEach(GitHubClaude.Preset.allCases) { preset in Button(preset.title) { claude.openInClaude(pr, detail, preset) } }
             }
+        case .openInAgent: Button("Open in Agent", action: openInAgent)
         case .terminal:
             Button(terminals.isShown(pr.url) ? "Hide Terminal" : "Show Terminal") { terminals.setShown(pr.url, !terminals.isShown(pr.url)) }
         case .merge: mergeButton
@@ -514,9 +516,14 @@ struct PageActionBar: View {
         }
     }
 
+    private func openInAgent() { AgentWindow.shared.show(pr: GitHubLink.Target(repo: pr.repo, number: pr.number)) }
+
+    private let openInAgentHelp = "Open the Agent window in this repository's checkout with a review prompt ready to send"
+
     @ViewBuilder private var copyItems: some View {
         Button("Copy Link") { GitHubModel.copy(pr.url) }
         Button("Copy WorkTime link") { GitHubModel.copy(GitHubLink.appLink(for: pr.url)) }
+        Button("Copy Agent link") { GitHubModel.copy(GitHubLink.agentLink(for: pr.url)) }
         Button("Copy Title") { GitHubModel.copy(pr.copyText) }
         if let branch = detail?.head, !branch.isEmpty {
             Divider()

@@ -116,3 +116,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"
+
+if [ -f agent/package.json ] && command -v npm >/dev/null; then
+    (cd agent && { [ -d node_modules ] || npm ci --no-audit --no-fund --silent; } && npm test --silent)
+fi

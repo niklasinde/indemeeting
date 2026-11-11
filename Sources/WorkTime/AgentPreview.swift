@@ -33,7 +33,11 @@ enum AgentPreview {
                 model.preview(signIn, files: files)
                 model.draft = ""
                 await save(model, appearance: appearance, to: output.appendingPathComponent("agent-signin-\(name).png"))
+                model.preview(Array(sample().suffix(2)), files: files)
+                await save(model, appearance: appearance, to: output.appendingPathComponent("agent-permission-\(name).png"))
             }
+            model.open(pr: GitHubLink.Target(repo: "niklasinde/worktime", number: 42), checkout: URL(fileURLWithPath: repo))
+            await save(model, appearance: .aqua, to: output.appendingPathComponent("agent-pr-light.png"))
             exit(0)
         }
         app.run()
@@ -56,17 +60,27 @@ enum AgentPreview {
         let answer: [AgentEvent] = [
             .session("preview-session"),
             .toolUse(id: "1", tool: "Grep", summary: "permission_request in Sources", detail: "{\n  \"pattern\" : \"permission_request\"\n}"),
-            .toolResult(id: "1", content: "Sources/WorkTime/AgentLogic.swift\nagent/src/main.ts", isError: false),
+            .toolResult(id: "1", content: "Sources/WorkTime/AgentLogic.swift\nagent/src/main.ts", isError: false, auto: false),
+            .toolUse(id: "3", tool: "mcp__worktime__github_pr", summary: "quiddly-com/finq.api#2483",
+                     detail: "{\n  \"pr\" : \"https://github.com/quiddly-com/finq.api/pull/2483\"\n}"),
+            .toolResult(id: "3", content: "{\"title\": \"Search the fields the count came from\"}", isError: false, auto: false),
+            .toolUse(id: "4", tool: "Bash", summary: "git log --oneline -5", detail: "git log --oneline -5"),
+            .toolResult(id: "4", content: "d1e2fdb Run the Agent window on the Claude subscription", isError: false, auto: true),
             .toolUse(id: "2", tool: "Read", summary: "Sources/WorkTime/AgentLogic.swift", detail: ""),
-            .toolResult(id: "2", content: "import Foundation\n…", isError: false),
+            .toolResult(id: "2", content: "import Foundation\n…", isError: false, auto: false),
             .text("The window answers them in `Sources/WorkTime/AgentClient.swift:120`, and the transcript marks the prompt answered in "
                   + "[AgentLogic.answer](Sources/WorkTime/AgentLogic.swift#L115).\n\n- The sidecar waits in `canUseTool` (agent/src/main.ts:93).\n"
                   + "- Deny sends `allow: false`, which the SDK turns into a refusal."),
-            .result(sessionID: "preview-session", isError: false, text: "", turns: 3),
+            .result(sessionID: "preview-session", isError: false, text: "", turns: 5, model: "claude-sonnet-5-5"),
         ]
-        answer.forEach { AgentLogic.apply($0, to: &items) }
+        answer.forEach { AgentLogic.apply($0, to: &items, auto: true) }
         items.append(AgentItem(id: "user-\(items.count)", kind: .user("Run the tests")))
-        AgentLogic.apply(.permissionRequest(id: "7", tool: "Bash", summary: "./test.sh", detail: ""), to: &items)
+        let command = (["swift build 2>&1 | tail -5 && ./test.sh && python3 - <<'EOF'", "import json, subprocess",
+                        "result = json.loads(subprocess.check_output(['gh', 'pr', 'view', '2483', '--json', 'files']))"]
+                       + (1...12).map { "print({'file': result['files'][\($0)]['path'], 'additions': result['files'][\($0)]['additions']})" }
+                       + ["EOF"]).joined(separator: "\n")
+        AgentLogic.apply(.permissionRequest(id: "7", tool: "Bash", summary: "swift build 2>&1 | tail -5 && ./test.sh \u{2026}", detail: command),
+                         to: &items)
         return items
     }
 }

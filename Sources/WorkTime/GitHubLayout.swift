@@ -49,7 +49,7 @@ enum GitHubLayout {
 
     /// The page's actions in the order they give way: the first ones stay in the toolbar longest.
     enum PageAction: CaseIterable {
-        case openInBrowser, copy, ask, review, openInClaude, terminal, merge, close
+        case openInBrowser, copy, ask, review, openInClaude, openInAgent, terminal, merge, close
     }
 
     static let toolbarSpacing = 8.0
@@ -63,6 +63,7 @@ enum GitHubLayout {
         case .ask: return 72
         case .review: return 84
         case .openInClaude: return 124
+        case .openInAgent: return 124
         case .terminal: return 88
         case .merge: return 76
         case .close: return 76

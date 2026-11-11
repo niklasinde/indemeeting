@@ -19,10 +19,12 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
             check(false, "tool_use decodes")
         }
         check(AgentEvent.decode(#"{"type":"permission_request","id":"3","tool":"Bash","input":{"command":"ls -la\nrm x"}}"#, cwd: cwd)
-              == .permissionRequest(id: "3", tool: "Bash", summary: "ls -la \u{2026}", detail: AgentLogic.pretty(["command": "ls -la\nrm x"])),
-              "bash shows its first line")
-        check(AgentEvent.decode(#"{"type":"result","sessionId":"s1","isError":false,"text":"ok","costUSD":0.5,"turns":2}"#, cwd: cwd)
-              == .result(sessionID: "s1", isError: false, text: "ok", turns: 2), "result")
+              == .permissionRequest(id: "3", tool: "Bash", summary: "ls -la \u{2026}", detail: "ls -la\nrm x"),
+              "bash summarises its first line and keeps the whole command as the detail")
+        check(AgentEvent.decode(#"{"type":"result","sessionId":"s1","isError":false,"text":"ok","costUSD":0.5,"turns":2,"model":"m"}"#, cwd: cwd)
+              == .result(sessionID: "s1", isError: false, text: "ok", turns: 2, model: "m"), "result")
+        check(AgentEvent.decode(#"{"type":"tool_result","id":"t","content":"x","auto":true}"#, cwd: cwd)
+              == .toolResult(id: "t", content: "x", isError: false, auto: true), "auto-allowed result")
         check(AgentEvent.decode("not json", cwd: cwd) == nil, "garbage is ignored")
         check(AgentEvent.decode(#"{"type":"mystery"}"#, cwd: cwd) == nil, "unknown types are ignored")
     }),
@@ -30,9 +32,87 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
     ("agent: tool summaries per tool, truncated", {
         check(AgentLogic.summary(tool: "Grep", input: ["pattern": "foo", "path": "/repo/Sources"], cwd: cwd) == "foo in Sources", "grep")
         check(AgentLogic.summary(tool: "Glob", input: ["pattern": "**/*.swift"], cwd: cwd) == "**/*.swift", "glob")
-        check(AgentLogic.summary(tool: "mcp__worktime__recent_meetings", input: [:], cwd: cwd) == "worktime recent meetings", "mcp")
+        check(AgentLogic.summary(tool: "mcp__worktime__recent_meetings", input: [:], cwd: cwd) == "", "mcp without inputs has no summary")
         let long = AgentLogic.summary(tool: "Bash", input: ["command": String(repeating: "a", count: 300)], cwd: cwd)
         check(long.count == AgentLogic.summaryLimit && long.hasSuffix("\u{2026}"), "truncated to the limit")
+    }),
+
+    ("agent: MCP tools read as server and humanised tool, with their inputs summarised", {
+        check(AgentLogic.displayName("mcp__worktime__github_needs_attention") == "WorkTime \u{00B7} GitHub needs attention", "worktime")
+        check(AgentLogic.displayName("mcp__plugin_worktime_worktime__github_pr") == "WorkTime \u{00B7} GitHub PR", "plugin server")
+        check(AgentLogic.displayName("mcp__claude-in-chrome__read_page") == "Claude In Chrome \u{00B7} Read page", "dashed server")
+        check(AgentLogic.displayName("Bash") == "Bash" && AgentLogic.displayName("mcp__x") == "mcp__x", "others unchanged")
+        let pr = AgentLogic.summary(tool: "mcp__worktime__github_pr", input: ["pr": "https://github.com/o/r/pull/12"], cwd: cwd)
+        check(pr == "o/r#12", "pr url shortened: \(pr)")
+        let search = AgentLogic.summary(tool: "mcp__worktime__search_meetings", input: ["query": "budget", "limit": 5], cwd: cwd)
+        check(search == "limit: 5, budget", "mixed inputs: \(search)")
+    }),
+
+    ("agent: Bash details are the command itself, other tools JSON", {
+        let command = "python3 - <<'EOF'\nprint({1: 2})\nEOF"
+        check(AgentLogic.detail(tool: "Bash", input: ["command": command, "description": "x"]) == command, "whole command")
+        check(AgentLogic.detail(tool: "Read", input: ["file_path": "/a"]) == AgentLogic.pretty(["file_path": "/a"]), "json")
+    }),
+
+    ("agent: pull requests open from an agent link with a review prompt", {
+        let url = "https://github.com/o/r/pull/12"
+        let link = GitHubLink.agentLink(for: url)
+        check(link == "worktime://agent?pr=https%3A%2F%2Fgithub.com%2Fo%2Fr%2Fpull%2F12", link)
+        check(GitHubLink.parseAgent(link) == GitHubLink.Target(repo: "o/r", number: 12), "round trip")
+        check(GitHubLink.parseAgent("worktime://agent?pr=\(url)") == GitHubLink.Target(repo: "o/r", number: 12), "unencoded")
+        check(GitHubLink.parseAgent("worktime://pr?url=\(url)") == nil && GitHubLink.parse(link) == nil, "the two links stay apart")
+        check(GitHubLink.parseAgent("worktime://agent?pr=https://evil.com/o/r/pull/1") == nil, "only GitHub")
+        check(GitHubLink.parseAgent("worktime://agent?pr=\(url)&x=1") == nil, "no extra parameters")
+        let prompt = AgentLogic.reviewPrompt(url: url, repo: "o/r", hasCheckout: true)
+        check(prompt == "Review \(url). Use the worktime github_pr tool and `gh pr diff`; don't check out the branch.", prompt)
+        check(AgentLogic.reviewPrompt(url: url, repo: "o/r", hasCheckout: false).contains("no local checkout of o/r"), "no checkout")
+    }),
+
+    ("agent: models are a fixed list with Auto first and the default", {
+        check(AgentLogic.models.map(\.id) == ["auto", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], "ids")
+        check(AgentLogic.storedModel(nil) == "auto" && AgentLogic.storedModel("gpt") == "auto", "Auto by default")
+        check(AgentLogic.storedModel("claude-haiku-5-5") == "claude-haiku-5-5", "a saved choice")
+        check(AgentLogic.modelName("claude-sonnet-5-5") == "Sonnet 5.5" && AgentLogic.modelName("other") == "other", "names")
+        check(AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil, model: "claude-haiku-5-5").line.contains(#""model":"claude-haiku-5-5""#), "sent")
+    }),
+
+    ("agent: Auto asks Ollama for a tier with a schema and parses its reply", {
+        let body = AgentLogic.routeRequestBody(prompt: "Refactor @a.swift", signals: .init(mentions: 1, isReview: true, turns: 2))
+        let schema = body["format"] as? [String: Any]
+        let model = (schema?["properties"] as? [String: Any])?["model"] as? [String: Any]
+        check(body["model"] as? String == OllamaSummarizer.model && model?["enum"] as? [String] == ["haiku", "sonnet", "opus"], "schema")
+        let user = ((body["messages"] as? [[String: String]])?.last?["content"]) ?? ""
+        check(user.contains("Referenced files: 1") && user.contains("review: yes") && user.contains("turns in this session: 2"), user)
+        let reply = { (content: String) in Data(try! JSONSerialization.data(withJSONObject: ["message": ["content": content]])) }
+        check(AgentLogic.routeTier(fromReply: reply(#"{"model":"opus"}"#)) == "opus", "opus")
+        check(AgentLogic.routeTier(fromReply: reply(#"{"model":"gpt"}"#)) == nil, "unknown tier")
+        check(AgentLogic.routeTier(fromReply: Data("nope".utf8)) == nil, "garbage")
+    }),
+
+    ("agent: Auto falls back to Sonnet and does not downgrade a follow-up", {
+        let opus = "claude-opus-5-5", sonnet = "claude-sonnet-5-5", haiku = "claude-haiku-5-5"
+        check(AgentLogic.routedModel(tier: "haiku", previous: nil, prompt: "what branch") == haiku, "classified")
+        check(AgentLogic.routedModel(tier: nil, previous: nil, prompt: "x") == sonnet, "no answer means Sonnet")
+        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "continue") == opus, "a follow-up keeps Opus")
+        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "Fix it.") == opus, "fix it")
+        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "what is the time zone of the server config") == haiku, "a new question")
+        check(AgentLogic.routedModel(tier: "opus", previous: haiku, prompt: "continue") == opus, "a follow-up may go up")
+        check(AgentLogic.isFollowUp("ok, go ahead") && !AgentLogic.isFollowUp("continue the refactor of the whole store layer across all files"), "heuristic")
+        try blocking {
+            let picked = await AgentLogic.route(prompt: "rename across files", signals: .init(), previous: nil) { body in
+                check(String(decoding: body, as: UTF8.self).contains("rename across files"), "the prompt is sent")
+                return Data(try JSONSerialization.data(withJSONObject: ["message": ["content": #"{"model":"opus"}"#]]))
+            }
+            check(picked == opus, "mocked Ollama picks Opus: \(picked)")
+            let down = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil) { _ in throw URLError(.cannotConnectToHost) }
+            check(down == sonnet, "Ollama down means Sonnet")
+            let start = Date()
+            let slow = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil, timeout: 0.2) { _ in
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+                return Data()
+            }
+            check(slow == sonnet && Date().timeIntervalSince(start) < 2, "a slow Ollama times out to Sonnet")
+        }
     }),
 
     ("agent: requests encode as single JSON lines", {
@@ -48,8 +128,8 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         var items: [AgentItem] = []
         check(AgentLogic.apply(.session("s1"), to: &items) == "s1" && items.isEmpty, "session is returned, not shown")
         AgentLogic.apply(.toolUse(id: "t", tool: "Bash", summary: "ls", detail: ""), to: &items)
-        AgentLogic.apply(.toolResult(id: "t", content: "a\nb", isError: true), to: &items)
-        check(items.first?.kind == .tool(name: "Bash", summary: "ls", detail: "", result: "a\nb", isError: true), "result filled in")
+        AgentLogic.apply(.toolResult(id: "t", content: "a\nb", isError: true, auto: true), to: &items)
+        check(items.first?.kind == .tool(name: "Bash", summary: "ls", detail: "", result: "a\nb", isError: true, auto: true), "result filled in")
         AgentLogic.apply(.permissionRequest(id: "9", tool: "Edit", summary: "x", detail: ""), to: &items)
         let permission = items[1]
         check(AgentLogic.permissionID(of: permission.id) == "9", "permission id \(permission.id)")
@@ -57,9 +137,13 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered")
         AgentLogic.answer(permission.id, allow: true, in: &items)
         check(items[1].kind == .permission(tool: "Edit", summary: "x", detail: "", allowed: false), "answered only once")
-        check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 1), to: &items) == "s2", "result session")
+        check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 1, model: nil), to: &items) == "s2", "result session")
         check(items.last?.kind == .status("Done \u{00B7} 1 turn"), "status \(String(describing: items.last))")
-        AgentLogic.apply(.result(sessionID: nil, isError: true, text: "Context window exceeded", turns: 1), to: &items)
+        AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 4, model: "claude-sonnet-5-5"), to: &items, auto: true)
+        check(items.last?.kind == .status("Done \u{00B7} 4 turns \u{00B7} Auto \u{2192} Sonnet 5.5"), "auto status \(String(describing: items.last))")
+        AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 2, model: "claude-opus-5-5"), to: &items)
+        check(items.last?.kind == .status("Done \u{00B7} 2 turns \u{00B7} Opus 5.5"), "fixed model status")
+        AgentLogic.apply(.result(sessionID: nil, isError: true, text: "Context window exceeded", turns: 1, model: nil), to: &items)
         check(items.last?.kind == .error("Context window exceeded"), "error result")
         check(Set(items.map(\.id)).count == items.count, "ids are unique")
     }),
@@ -72,7 +156,7 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(!AgentLogic.needsSignIn("Rate limit reached"), "rate limit is not a sign-in")
         var items: [AgentItem] = []
         AgentLogic.apply(.signIn, to: &items)
-        AgentLogic.apply(.result(sessionID: "s", isError: true, text: "Not logged in · Please run /login", turns: 1), to: &items)
+        AgentLogic.apply(.result(sessionID: "s", isError: true, text: "Not logged in · Please run /login", turns: 1, model: nil), to: &items)
         check(items.map(\.kind) == [.signIn], "one sign-in item \(items)")
         check(AgentLogic.signInMessage.contains("claude setup-token") && AgentLogic.signInMessage.contains("/login"), "message")
     }),

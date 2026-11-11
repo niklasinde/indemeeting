@@ -18,9 +18,19 @@ final class AgentWindow {
 
     func show() {
         guard let model else { return }
-        if model.items.isEmpty, let folder = activityFolder() { model.choose(folder: folder) }
+        if model.items.isEmpty, model.prURL == nil, let folder = activityFolder() { model.choose(folder: folder) }
         model.loadFiles()
         window?.show()
+    }
+
+    /// Opens the window on a pull request, in the local checkout of its repository when there is one.
+    func show(pr target: GitHubLink.Target) {
+        guard let model else { return }
+        Task { @MainActor in
+            let checkout = await Task.detached { GitHubClaude.checkout(for: target.repo, under: GitHubClaudeModel.repositoriesRoot) }.value
+            model.open(pr: target, checkout: checkout)
+            window?.show()
+        }
     }
 
     static func makeWindow(_ view: AgentView) -> NSWindow {
@@ -55,10 +65,19 @@ struct AgentView: View {
             }
             .buttonStyle(.borderless)
             .help("The folder the agent works in")
+            if let pr = model.prURL.flatMap(GitHubLink.pullRequest(at:)) {
+                Label("\(pr.repo) #\(pr.number)", systemImage: "arrow.triangle.pull").font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            }
             Spacer()
             if model.sessionID != nil {
                 Text("Continuing session").font(.caption).foregroundStyle(.secondary)
             }
+            Picker("Model", selection: $model.model) {
+                ForEach(AgentLogic.models, id: \.id) { Text($0.name).tag($0.id) }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("The Claude model for the next prompt. Auto asks the local Ministral model to pick one.")
             Button("New Session") { model.newSession() }.disabled(model.items.isEmpty && model.sessionID == nil)
         }
         .padding(.horizontal, RecordingDetail.gutter)
@@ -166,8 +185,8 @@ private struct AgentItemRow: View {
             }
         case .text(let text):
             AnswerText(text: AgentLogic.linkifiedCodeReferences(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) })
-        case .tool(let name, let summary, let detail, let result, let isError):
-            AgentToolRow(name: name, summary: summary, detail: detail, result: result, isError: isError)
+        case .tool(let name, let summary, let detail, let result, let isError, let auto):
+            AgentToolRow(name: name, summary: summary, detail: detail, result: result, isError: isError, auto: auto)
         case .permission(let tool, let summary, let detail, let allowed):
             AgentPermissionRow(tool: tool, summary: summary, detail: detail, allowed: allowed, answer: answer)
         case .status(let text):
@@ -191,6 +210,7 @@ private struct AgentToolRow: View {
     let detail: String
     let result: String?
     let isError: Bool
+    let auto: Bool
     @State private var expanded = false
 
     var body: some View {
@@ -200,8 +220,17 @@ private struct AgentToolRow: View {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.caption2).frame(width: 10)
                     Image(systemName: result == nil ? "hourglass" : isError ? "xmark.circle" : "checkmark.circle")
                         .foregroundStyle(isError ? Color.red : .secondary)
-                    Text(name).fontWeight(.medium)
+                    Text(AgentLogic.displayName(name)).fontWeight(.medium)
                     Text(summary).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    if auto {
+                        Text("auto")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(Capsule().fill(Color.primary.opacity(0.08)))
+                            .help("Allowed without asking: a read-only command")
+                    }
                 }
                 .font(.callout)
                 .contentShape(Rectangle())
@@ -223,12 +252,14 @@ private struct AgentPermissionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Allow \(tool)?", systemImage: "hand.raised").font(.callout.weight(.medium))
-            if !summary.isEmpty {
-                Text(summary).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
-            }
-            if !detail.isEmpty, tool != "Bash" {
-                AgentCode(text: detail)
+            Label("Allow \(AgentLogic.displayName(tool))?", systemImage: "hand.raised").font(.callout.weight(.medium))
+            if tool == "Bash" {
+                AgentCode(text: detail, font: .callout, maxHeight: AgentCode.lines(10, font: .callout))
+            } else {
+                if !summary.isEmpty {
+                    Text(summary).font(.system(.callout, design: .monospaced)).textSelection(.enabled)
+                }
+                if !detail.isEmpty { AgentCode(text: detail) }
             }
             if let allowed {
                 Text(allowed ? "Allowed" : "Denied").font(.caption).foregroundStyle(.secondary)
@@ -247,16 +278,24 @@ private struct AgentPermissionRow: View {
 
 private struct AgentCode: View {
     let text: String
+    var font: Font.TextStyle = .caption
+    var maxHeight: CGFloat = 220
+
+    /// The height of `count` lines of monospaced text in `font`, with the box's padding.
+    static func lines(_ count: Int, font: NSFont.TextStyle) -> CGFloat {
+        let face = NSFont.monospacedSystemFont(ofSize: NSFont.preferredFont(forTextStyle: font).pointSize, weight: .regular)
+        return ceil(face.ascender - face.descender + face.leading) * CGFloat(count) + 16
+    }
 
     var body: some View {
         ScrollView {
             Text(text)
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(font, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
         }
-        .frame(maxHeight: 220)
+        .frame(maxHeight: maxHeight)
         .fixedSize(horizontal: false, vertical: true)
         .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.05)))
     }

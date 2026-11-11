@@ -6,9 +6,9 @@ enum AgentEvent: Equatable {
     case session(String)
     case text(String)
     case toolUse(id: String, tool: String, summary: String, detail: String)
-    case toolResult(id: String, content: String, isError: Bool)
+    case toolResult(id: String, content: String, isError: Bool, auto: Bool)
     case permissionRequest(id: String, tool: String, summary: String, detail: String)
-    case result(sessionID: String?, isError: Bool, text: String, turns: Int?)
+    case result(sessionID: String?, isError: Bool, text: String, turns: Int?, model: String?)
     case error(String)
     case signIn
     case idle
@@ -25,14 +25,16 @@ enum AgentEvent: Equatable {
         case "text": return .text(string("text"))
         case "tool_use":
             return .toolUse(id: string("id"), tool: string("tool"), summary: AgentLogic.summary(tool: string("tool"), input: input, cwd: cwd),
-                            detail: AgentLogic.pretty(input))
-        case "tool_result": return .toolResult(id: string("id"), content: string("content"), isError: object["isError"] as? Bool ?? false)
+                            detail: AgentLogic.detail(tool: string("tool"), input: input))
+        case "tool_result":
+            return .toolResult(id: string("id"), content: string("content"), isError: object["isError"] as? Bool ?? false,
+                               auto: object["auto"] as? Bool ?? false)
         case "permission_request":
-            return .permissionRequest(id: string("id"), tool: string("tool"),
-                                      summary: AgentLogic.summary(tool: string("tool"), input: input, cwd: cwd), detail: AgentLogic.pretty(input))
+            return .permissionRequest(id: string("id"), tool: string("tool"), summary: AgentLogic.summary(tool: string("tool"), input: input, cwd: cwd),
+                                      detail: AgentLogic.detail(tool: string("tool"), input: input))
         case "result":
             return .result(sessionID: object["sessionId"] as? String, isError: object["isError"] as? Bool ?? false, text: string("text"),
-                           turns: object["turns"] as? Int)
+                           turns: object["turns"] as? Int, model: object["model"] as? String)
         case "error": return object["auth"] as? Bool == true || AgentLogic.needsSignIn(string("message")) ? .signIn : .error(string("message"))
         case "idle": return .idle
         default: return nil
@@ -42,16 +44,17 @@ enum AgentEvent: Equatable {
 
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
-    case prompt(text: String, cwd: String, sessionID: String?)
+    case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil)
     case permission(id: String, allow: Bool)
     case interrupt
 
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID):
+        case .prompt(let text, let cwd, let sessionID, let model):
             object = ["type": "prompt", "text": text, "cwd": cwd]
             if let sessionID { object["sessionId"] = sessionID }
+            if let model { object["model"] = model }
         case .permission(let id, let allow): object = ["type": "permission", "id": id, "allow": allow]
         case .interrupt: object = ["type": "interrupt"]
         }
@@ -64,7 +67,7 @@ struct AgentItem: Identifiable, Equatable {
     enum Kind: Equatable {
         case user(String)
         case text(String)
-        case tool(name: String, summary: String, detail: String, result: String?, isError: Bool)
+        case tool(name: String, summary: String, detail: String, result: String?, isError: Bool, auto: Bool)
         case permission(tool: String, summary: String, detail: String, allowed: Bool?)
         case status(String)
         case error(String)
@@ -82,28 +85,29 @@ enum AgentLogic {
     // MARK: Transcript
 
     /// Folds one event into the transcript. Returns the session to keep, if the event names one.
+    /// `auto` says the model was picked by Auto, so the status line says so.
     @discardableResult
-    static func apply(_ event: AgentEvent, to items: inout [AgentItem]) -> String? {
+    static func apply(_ event: AgentEvent, to items: inout [AgentItem], auto: Bool = false) -> String? {
         switch event {
         case .ready, .idle: return nil
         case .session(let id): return id
         case .text(let text):
             items.append(AgentItem(id: "text-\(items.count)", kind: .text(text)))
         case .toolUse(let id, let tool, let summary, let detail):
-            items.append(AgentItem(id: "tool-\(id)", kind: .tool(name: tool, summary: summary, detail: detail, result: nil, isError: false)))
-        case .toolResult(let id, let content, let isError):
+            items.append(AgentItem(id: "tool-\(id)", kind: .tool(name: tool, summary: summary, detail: detail, result: nil, isError: false, auto: false)))
+        case .toolResult(let id, let content, let isError, let auto):
             guard let index = items.firstIndex(where: { $0.id == "tool-\(id)" }),
-                  case .tool(let name, let summary, let detail, _, _) = items[index].kind else { return nil }
-            items[index].kind = .tool(name: name, summary: summary, detail: detail, result: content, isError: isError)
+                  case .tool(let name, let summary, let detail, _, _, _) = items[index].kind else { return nil }
+            items[index].kind = .tool(name: name, summary: summary, detail: detail, result: content, isError: isError, auto: auto)
         case .permissionRequest(let id, let tool, let summary, let detail):
             items.append(AgentItem(id: "permission-\(id)-\(items.count)", kind: .permission(tool: tool, summary: summary, detail: detail, allowed: nil)))
-        case .result(let sessionID, let isError, let text, let turns):
+        case .result(let sessionID, let isError, let text, let turns, let model):
             if isError, needsSignIn(text) {
                 appendSignIn(to: &items)
             } else if isError {
                 items.append(AgentItem(id: "error-\(items.count)", kind: .error(text.isEmpty ? "The agent stopped with an error." : text)))
             } else {
-                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns))))
+                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns, model: model, auto: auto))))
             }
             return sessionID
         case .error(let message):
@@ -132,8 +136,9 @@ enum AgentLogic {
         return parts.count == 3 && parts[0] == "permission" ? String(parts[1]) : nil
     }
 
-    static func resultLine(turns: Int?) -> String {
-        turns.map { "Done \u{00B7} \($0) turn\($0 == 1 ? "" : "s")" } ?? "Done"
+    static func resultLine(turns: Int?, model: String? = nil, auto: Bool = false) -> String {
+        let model = model.map { (auto ? "Auto \u{2192} " : "") + modelName($0) }
+        return (["Done", turns.map { "\($0) turn\($0 == 1 ? "" : "s")" }, model] as [String?]).compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
     // MARK: Sign-in
@@ -179,14 +184,52 @@ enum AgentLogic {
         case "Glob": text = value("pattern") ?? ""
         default:
             if tool.hasPrefix("mcp__") {
-                let name = tool.split(separator: "_", omittingEmptySubsequences: true).dropFirst().joined(separator: " ")
-                let first = input.keys.sorted().compactMap { input[$0] as? String }.first
-                text = [name, first].compactMap { $0 }.joined(separator: ": ")
+                text = mcpSummary(input)
             } else {
                 text = input.keys.sorted().compactMap { input[$0] as? String }.first.map(firstLine) ?? ""
             }
         }
         return text.count > summaryLimit ? String(text.prefix(summaryLimit - 1)) + "\u{2026}" : text
+    }
+
+    /// MCP inputs in one line: strings bare (a pull request URL as `owner/repo#12`), other values as `key: value`.
+    private static func mcpSummary(_ input: [String: Any]) -> String {
+        input.keys.sorted().compactMap { key -> String? in
+            switch input[key] {
+            case let text as String:
+                guard !text.isEmpty else { return nil }
+                return GitHubLink.pullRequest(at: text).map { "\($0.repo)#\($0.number)" } ?? firstLine(text)
+            case let number as NSNumber: return "\(key): \(number)"
+            default: return nil
+            }
+        }.joined(separator: ", ")
+    }
+
+    /// What a tool row shows: `WorkTime · GitHub needs attention` for `mcp__worktime__github_needs_attention`, else the tool name.
+    static func displayName(_ tool: String) -> String {
+        let parts = tool.components(separatedBy: "__")
+        guard parts.count >= 3, parts[0] == "mcp" else { return tool }
+        var server = parts[1]
+        if server.hasPrefix("plugin_"), let last = server.split(separator: "_").last { server = String(last) }
+        let name = humanised(parts.dropFirst(2).joined(separator: "_"))
+        return humanised(server, capitaliseAll: true) + " \u{00B7} " + name
+    }
+
+    private static let knownWords = ["worktime": "WorkTime", "github": "GitHub", "gitlab": "GitLab", "pr": "PR", "prs": "PRs", "mcp": "MCP",
+                                     "api": "API", "url": "URL", "id": "ID", "ids": "IDs", "jira": "Jira", "slack": "Slack", "ci": "CI"]
+
+    private static func humanised(_ name: String, capitaliseAll: Bool = false) -> String {
+        name.split(whereSeparator: { $0 == "_" || $0 == "-" }).enumerated().map { index, word in
+            let lowered = word.lowercased()
+            if let known = knownWords[lowered] { return known }
+            return index == 0 || capitaliseAll ? lowered.prefix(1).uppercased() + lowered.dropFirst() : lowered
+        }.joined(separator: " ")
+    }
+
+    /// The expanded text of a call: a Bash command as it is, anything else as JSON.
+    static func detail(tool: String, input: [String: Any]) -> String {
+        if tool == "Bash", let command = input["command"] as? String { return command }
+        return pretty(input)
     }
 
     static func pretty(_ input: [String: Any]) -> String {
@@ -388,6 +431,114 @@ enum AgentLogic {
             return (gotoCLI, ["--goto", path + (line.map { ":\($0)" } ?? "")])
         }
         return (URL(fileURLWithPath: "/usr/bin/open"), [path])
+    }
+
+    // MARK: Pull requests
+
+    static let prSessionsKey = "agentPRSessions"
+
+    static func reviewPrompt(url: String, repo: String, hasCheckout: Bool) -> String {
+        "Review \(url). Use the worktime github_pr tool and `gh pr diff`; don't check out the branch."
+            + (hasCheckout ? "" : " There is no local checkout of \(repo), so read the code with gh.")
+    }
+
+    // MARK: Models
+
+    struct ModelChoice: Equatable {
+        let id: String
+        let name: String
+        let tier: String?
+    }
+
+    static let modelKey = "agentModel"
+    static let auto = "auto"
+    static let models = [ModelChoice(id: auto, name: "Auto", tier: nil),
+                         ModelChoice(id: "claude-opus-5-5", name: "Opus 5.5", tier: "opus"),
+                         ModelChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5", tier: "sonnet"),
+                         ModelChoice(id: "claude-haiku-5-5", name: "Haiku 5.5", tier: "haiku")]
+    static let tiers = ["haiku", "sonnet", "opus"]
+    static let fallbackTier = "sonnet"
+
+    static func modelName(_ id: String) -> String { models.first { $0.id == id }?.name ?? id }
+
+    static func modelID(tier: String) -> String? { models.first { $0.tier == tier }?.id }
+
+    /// The saved choice, or Auto when there is none or it is no longer offered.
+    static func storedModel(_ raw: String?) -> String {
+        raw.flatMap { raw in models.first { $0.id == raw }?.id } ?? auto
+    }
+
+    // MARK: Auto
+
+    struct RouteSignals: Equatable {
+        var mentions = 0
+        var isReview = false
+        var turns = 0
+    }
+
+    static let routeSystem = """
+        Pick the Claude model for a coding agent's next prompt. Answer with JSON {"model": "haiku" | "sonnet" | "opus"}.
+        haiku: quick lookups, status checks, single-fact questions.
+        sonnet: everyday coding, reviews of small diffs, explanations.
+        opus: multi-file changes, debugging, architecture, large reviews.
+        """
+
+    static let routeTimeout: TimeInterval = 3
+
+    static func routeRequestBody(prompt: String, signals: RouteSignals) -> [String: Any] {
+        let user = "Referenced files: \(signals.mentions)\nPull request review: \(signals.isReview ? "yes" : "no")\n"
+            + "Earlier turns in this session: \(signals.turns)\n\nPrompt:\n\(prompt.prefix(4000))"
+        let schema: [String: Any] = ["type": "object", "properties": ["model": ["type": "string", "enum": tiers]], "required": ["model"]]
+        return ["model": OllamaSummarizer.model, "stream": false, "keep_alive": "10m", "format": schema, "options": ["temperature": 0],
+                "messages": [["role": "system", "content": routeSystem], ["role": "user", "content": user]]]
+    }
+
+    /// The tier in an Ollama `/api/chat` reply, or nil when it holds none.
+    static func routeTier(fromReply data: Data) -> String? {
+        guard let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let content = (reply["message"] as? [String: Any])?["content"] as? String,
+              let answer = try? JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any],
+              let tier = answer["model"] as? String, tiers.contains(tier) else { return nil }
+        return tier
+    }
+
+    private static let followUps = ["continue", "go on", "keep going", "fix it", "fix that", "fix this", "fix them", "do it", "try again",
+                                    "again", "yes", "ok", "okay", "go ahead", "proceed", "and the rest", "next"]
+
+    /// A short prompt that carries on the previous turn rather than asking something new.
+    static func isFollowUp(_ prompt: String) -> Bool {
+        let text = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard text.split(separator: " ").count <= 6 else { return false }
+        return followUps.contains { text == $0 || text.hasPrefix($0 + " ") || text.hasPrefix($0 + ",") }
+    }
+
+    /// The model Auto runs a prompt on: the classified tier, Sonnet when there is none, and never below the previous
+    /// turn's model for a follow-up.
+    static func routedModel(tier: String?, previous: String?, prompt: String) -> String {
+        let picked = tier.flatMap(modelID) ?? modelID(tier: fallbackTier) ?? auto
+        guard let previous, isFollowUp(prompt), rank(previous) > rank(picked) else { return picked }
+        return previous
+    }
+
+    private static func rank(_ id: String) -> Int {
+        models.first { $0.id == id }?.tier.flatMap { tiers.firstIndex(of: $0) } ?? -1
+    }
+
+    /// Asks the local model through `ask` (the request body in, the reply out) and gives up after `timeout` seconds.
+    static func route(prompt: String, signals: RouteSignals, previous: String?, timeout: TimeInterval = routeTimeout,
+                      ask: @escaping @Sendable (Data) async throws -> Data) async -> String {
+        let body = (try? JSONSerialization.data(withJSONObject: routeRequestBody(prompt: prompt, signals: signals))) ?? Data()
+        let tier = await withTaskGroup(of: String?.self) { group in
+            group.addTask { (try? await ask(body)).flatMap(routeTier) }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        return routedModel(tier: tier, previous: previous, prompt: prompt)
     }
 
     static let quickActions: [(title: String, prompt: String)] = [

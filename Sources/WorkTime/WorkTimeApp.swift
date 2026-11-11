@@ -287,6 +287,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where AppURL.accepts(scheme: url.scheme) {
+            if let target = GitHubLink.parseAgent(url.absoluteString) {
+                AgentWindow.shared.show(pr: target)
+                continue
+            }
             guard let target = GitHubLink.parse(url.absoluteString) else {
                 mainWindow.show()
                 GitHubModel.shared.showLinkNotice("Couldn't open that link")

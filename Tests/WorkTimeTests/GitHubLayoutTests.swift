@@ -85,7 +85,7 @@ let githubLayoutTests: [(name: String, run: () throws -> Void)] = [
         let all = GitHubLayout.PageAction.allCases
         let wide = GitHubLayout.toolbar(width: 2000, present: all)
         check(wide.visible == all && wide.overflow.isEmpty, "a wide page shows every action, no More menu")
-        check(GitHubLayout.toolbar(width: 2000, present: all.filter { $0 != .terminal }).visible.count == 7, "no terminal means no terminal button")
+        check(GitHubLayout.toolbar(width: 2000, present: all.filter { $0 != .terminal }).visible.count == 8, "no terminal means no terminal button")
         let narrow = GitHubLayout.toolbar(width: 727, present: all)
         check(narrow.visible.contains(.openInBrowser) && narrow.visible.contains(.copy) && narrow.visible.contains(.ask)
               && narrow.visible.contains(.review), "the first four stay at 727")

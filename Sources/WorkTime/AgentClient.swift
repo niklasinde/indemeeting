@@ -49,7 +49,13 @@ final class AgentClient: @unchecked Sendable {
 final class AgentModel: ObservableObject {
     @Published private(set) var items: [AgentItem] = []
     @Published private(set) var busy = false
-    @Published private(set) var sessionID: String?
+    @Published private(set) var sessionID: String? {
+        didSet { if let prURL, let sessionID { Self.prSessions[prURL] = sessionID } }
+    }
+    @Published private(set) var prURL: String?
+    @Published var model = AgentLogic.storedModel(UserDefaults.standard.string(forKey: AgentLogic.modelKey)) {
+        didSet { UserDefaults.standard.set(model, forKey: AgentLogic.modelKey) }
+    }
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
     @Published var folder: String
@@ -57,6 +63,9 @@ final class AgentModel: ObservableObject {
 
     private let tokens: TokenStore
     private var client: AgentClient?
+    private var routing: Task<Void, Never>?
+    private var lastModel: String?
+    private var turnIsAuto = false
 
     init(folder: String? = nil, tokens: TokenStore = .claudeOAuth) {
         self.tokens = tokens
@@ -78,6 +87,7 @@ final class AgentModel: ObservableObject {
 
     func choose(folder: String) {
         guard folder != self.folder else { return }
+        prURL = nil
         self.folder = folder
         UserDefaults.standard.set(folder, forKey: AgentLogic.folderKey)
         newSession()
@@ -94,9 +104,31 @@ final class AgentModel: ObservableObject {
 
     func newSession() {
         if busy { stop() }
+        if let prURL { Self.prSessions[prURL] = nil }
         sessionID = nil
+        lastModel = nil
         items = []
         problem = nil
+    }
+
+    /// Points the window at a pull request: its checkout (or the home folder), the session it had before, and a review
+    /// prompt waiting to be sent when there is no session yet. Opening the one already shown changes nothing.
+    func open(pr target: GitHubLink.Target, checkout: URL?) {
+        guard prURL != target.url || (items.isEmpty && !busy) else { return }
+        if busy { stop() }
+        prURL = target.url
+        folder = checkout?.path ?? NSHomeDirectory()
+        lastModel = nil
+        problem = nil
+        sessionID = Self.prSessions[target.url]
+        items = sessionID == nil ? [] : [AgentItem(id: "status-0", kind: .status("Continuing the earlier session on this pull request"))]
+        draft = sessionID == nil ? AgentLogic.reviewPrompt(url: target.url, repo: target.repo, hasCheckout: checkout != nil) : ""
+        loadFiles()
+    }
+
+    private static var prSessions: [String: String] {
+        get { UserDefaults.standard.dictionary(forKey: AgentLogic.prSessionsKey) as? [String: String] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: AgentLogic.prSessionsKey) }
     }
 
     /// Return in the prompt: picks the first file while an `@` mention is being typed, sends otherwise.
@@ -116,7 +148,26 @@ final class AgentModel: ObservableObject {
         items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
         busy = true
-        client.send(.prompt(text: prompt, cwd: folder, sessionID: sessionID))
+        let auto = model == AgentLogic.auto, chosen = model, previous = lastModel, cwd = folder
+        let signals = AgentLogic.RouteSignals(mentions: AgentLogic.mentions(in: text).count, isReview: prURL != nil,
+                                              turns: items.filter { if case .user = $0.kind { true } else { false } }.count - 1)
+        routing = Task { @MainActor [weak self] in
+            let picked = auto ? await AgentLogic.route(prompt: text, signals: signals, previous: previous, ask: Self.askOllama) : chosen
+            guard let self, !Task.isCancelled else { return }
+            routing = nil
+            lastModel = picked
+            turnIsAuto = auto
+            client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked))
+        }
+    }
+
+    private nonisolated static func askOllama(_ body: Data) async throws -> Data {
+        var request = URLRequest(url: OllamaSummarizer.baseURL.appendingPathComponent("api/chat"))
+        request.httpMethod = "POST"
+        request.timeoutInterval = AgentLogic.routeTimeout
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        return try await URLSession.shared.data(for: request).0
     }
 
     func answer(_ item: AgentItem, allow: Bool) {
@@ -126,6 +177,12 @@ final class AgentModel: ObservableObject {
     }
 
     func stop() {
+        if let routing {
+            routing.cancel()
+            self.routing = nil
+            busy = false
+            return
+        }
         client?.send(.interrupt)
     }
 
@@ -184,7 +241,7 @@ final class AgentModel: ObservableObject {
     private func receive(_ line: String) {
         guard let event = AgentEvent.decode(line, cwd: folder) else { return }
         if case .idle = event { busy = false }
-        if let session = AgentLogic.apply(event, to: &items) { sessionID = session }
+        if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { sessionID = session }
     }
 
     private func exited(status: Int32, errors: String) {

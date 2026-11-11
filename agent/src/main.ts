@@ -1,14 +1,16 @@
 import { createInterface } from "node:readline";
 import { query, type McpServerConfig, type PermissionResult, type Query } from "@anthropic-ai/claude-agent-sdk";
+import { isReadOnlyCommand } from "./readonly.js";
 
 type Input =
-  | { type: "prompt"; text: string; cwd: string; sessionId?: string }
+  | { type: "prompt"; text: string; cwd: string; sessionId?: string; model?: string }
   | { type: "permission"; id: string; allow: boolean }
   | { type: "interrupt" };
 
 const model = process.env.WORKTIME_AGENT_MODEL ?? "claude-opus-5-5";
 const tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"];
 const readOnly = (tool: string) => ["Read", "Grep", "Glob"].includes(tool) || tool.startsWith("mcp__worktime__");
+const autoAllowed = new Set<string>();
 const resultLimit = 4000;
 const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].includes(key)));
@@ -33,7 +35,7 @@ function resultText(content: unknown): string {
   return text.length > resultLimit ? text.slice(0, resultLimit) + "\n…" : text;
 }
 
-function forward(message: any) {
+function forward(message: any, model: string) {
   switch (message.type) {
     case "system":
       if (message.subtype === "init") send({ type: "session", sessionId: message.session_id });
@@ -51,14 +53,17 @@ function forward(message: any) {
       if (!Array.isArray(message.message?.content)) break;
       for (const block of message.message.content) {
         if (block.type === "tool_result") {
-          send({ type: "tool_result", id: block.tool_use_id, content: resultText(block.content), isError: block.is_error === true });
+          send({
+            type: "tool_result", id: block.tool_use_id, content: resultText(block.content), isError: block.is_error === true,
+            auto: autoAllowed.delete(block.tool_use_id),
+          });
         }
       }
       break;
     case "result":
       send({
         type: "result", sessionId: message.session_id, isError: message.is_error === true || message.subtype !== "success",
-        text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns,
+        text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns, model,
       });
       break;
   }
@@ -72,10 +77,11 @@ function denyPending(reason: string) {
 async function run(input: Extract<Input, { type: "prompt" }>) {
   if (running) return send({ type: "error", message: "The agent is still working on the previous prompt." });
   const abort = new AbortController();
+  const promptModel = input.model || model;
   const current = query({
     prompt: input.text,
     options: {
-      model,
+      model: promptModel,
       cwd: input.cwd,
       resume: input.sessionId,
       tools,
@@ -84,8 +90,12 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       env,
       mcpServers: mcpServers(),
       abortController: abort,
-      canUseTool: (tool, toolInput) => new Promise<PermissionResult>((resolve) => {
+      canUseTool: (tool, toolInput, { toolUseID }) => new Promise<PermissionResult>((resolve) => {
         if (readOnly(tool)) return resolve({ behavior: "allow" });
+        if (tool === "Bash" && typeof toolInput.command === "string" && isReadOnlyCommand(toolInput.command)) {
+          autoAllowed.add(toolUseID);
+          return resolve({ behavior: "allow" });
+        }
         const id = String(++nextPermission);
         pending.set(id, resolve);
         send({ type: "permission_request", id, tool, input: toolInput });
@@ -96,13 +106,14 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
   let finished = false;
   try {
     for await (const message of current) {
-      forward(message);
+      forward(message, promptModel);
       finished ||= message.type === "result";
     }
   } catch (error) {
     if (!finished) send({ type: "error", message: abort.signal.aborted ? "Stopped." : String((error as Error)?.message ?? error) });
   } finally {
     denyPending("The prompt ended.");
+    autoAllowed.clear();
     running = undefined;
     send({ type: "idle" });
   }

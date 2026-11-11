@@ -34,6 +34,19 @@ enum GitHubLink {
         return target(owner: parts[0], repo: parts[1], number: parts[2])
     }
 
+    /// The link that opens a pull request in the Agent window.
+    static func agentLink(for pullRequestURL: String) -> String {
+        appLink(for: pullRequestURL).replacingOccurrences(of: "://pr?url=", with: "://agent?pr=")
+    }
+
+    /// The pull request an `agent?pr=<github pull request url>` link names, or nil for anything else.
+    static func parseAgent(_ text: String) -> Target? {
+        guard let link = URLComponents(string: text), AppURL.accepts(scheme: link.scheme), link.host?.lowercased() == "agent",
+              link.user == nil, link.password == nil, link.port == nil, link.fragment == nil, link.percentEncodedPath.isEmpty,
+              let query = link.queryItems, query.count == 1, query[0].name == "pr", let address = query[0].value else { return nil }
+        return pullRequest(at: address)
+    }
+
     /// `--open-link <url>`: prints the pull request a link names, or fails. Reads nothing and writes nothing.
     static func printFromCommandLine(_ text: String) -> Never {
         guard let target = parse(text) else {
@@ -44,7 +57,7 @@ enum GitHubLink {
         exit(0)
     }
 
-    private static func pullRequest(at address: String) -> Target? {
+    static func pullRequest(at address: String) -> Target? {
         guard let page = URLComponents(string: address), page.scheme?.lowercased() == "https", page.host?.lowercased() == "github.com",
               page.user == nil, page.password == nil, page.port == nil, page.query == nil, page.fragment == nil else { return nil }
         let parts = page.percentEncodedPath.dropFirst().split(separator: "/", omittingEmptySubsequences: false)
