@@ -59,7 +59,10 @@ final class AgentModel: ObservableObject {
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
     @Published var folder: String
-    @Published var draft = ""
+    /// Starting a prompt on Auto loads Ministral, so it is ready to route the prompt once it is sent.
+    @Published var draft = "" {
+        didSet { if oldValue.isEmpty, !draft.isEmpty, model == AgentLogic.auto, !OllamaSummarizer.isForced() { LocalLLM.shared.prepare() } }
+    }
 
     private let tokens: TokenStore
     private var client: AgentClient?
@@ -152,7 +155,7 @@ final class AgentModel: ObservableObject {
         let signals = AgentLogic.RouteSignals(mentions: AgentLogic.mentions(in: text).count, isReview: prURL != nil,
                                               turns: items.filter { if case .user = $0.kind { true } else { false } }.count - 1)
         routing = Task { @MainActor [weak self] in
-            let picked = auto ? await AgentLogic.route(prompt: text, signals: signals, previous: previous, ask: Self.askOllama) : chosen
+            let picked = auto ? await AgentLogic.route(prompt: text, signals: signals, previous: previous, ask: Self.classify) : chosen
             guard let self, !Task.isCancelled else { return }
             routing = nil
             lastModel = picked
@@ -161,13 +164,15 @@ final class AgentModel: ObservableObject {
         }
     }
 
-    private nonisolated static func askOllama(_ body: Data) async throws -> Data {
-        var request = URLRequest(url: OllamaSummarizer.baseURL.appendingPathComponent("api/chat"))
-        request.httpMethod = "POST"
-        request.timeoutInterval = AgentLogic.routeTimeout
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body
-        return try await URLSession.shared.data(for: request).0
+    /// The built-in model, or Ollama when testing with it; Auto runs on Sonnet when neither answers.
+    @Sendable nonisolated static func classify(system: String, user: String) async throws -> String {
+        if !OllamaSummarizer.isForced(), LocalLLM.isAvailable {
+            return try await LocalLLM.shared.generate(system: system, prompt: user, schema: AgentLogic.routeSchema, maxTokens: 32,
+                                                      temperature: 0, urgent: true).text
+        }
+        guard OllamaSummarizer.isAllowed() else { throw LocalLLMError.notInstalled }
+        return try await OllamaSummarizer.chat(system: system, prompt: user, schema: AgentLogic.routeSchema, temperature: 0,
+                                               keepAlive: "10m", timeout: AgentLogic.routeTimeout)
     }
 
     func answer(_ item: AgentItem, allow: Bool) {

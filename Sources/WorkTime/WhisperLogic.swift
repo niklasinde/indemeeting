@@ -12,9 +12,40 @@ struct WhisperFamily: Hashable {
     static let silero = WhisperFamily(name: "Silero VAD", about: "Finds the speech in the audio, so Whisper never hears silence.")
 }
 
+/// A model file downloaded from Hugging Face into the models folder, checked against its size and SHA-256.
+protocol DownloadableModel: Hashable, Identifiable, Sendable where ID == String {
+    var repo: String { get }
+    var file: String { get }
+    var bytes: Int64 { get }
+    var sha256: String { get }
+}
+
+extension DownloadableModel {
+    var fileName: String { id + "." + (file as NSString).pathExtension }
+    var remoteURL: URL { URL(string: "https://huggingface.co/\(repo)/resolve/main/\(file)")! }
+    var sizeText: String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+
+    func url(in folder: URL = AppPaths.models) -> URL { folder.appendingPathComponent(fileName) }
+
+    func isInstalled(in folder: URL = AppPaths.models) -> Bool {
+        (try? FileManager.default.attributesOfItem(atPath: url(in: folder).path)[.size] as? Int64) == bytes
+    }
+
+    /// Checks a downloaded file is this model, byte for byte.
+    func verify(_ file: URL) throws {
+        let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64
+        guard size == bytes else { throw WhisperModelError.wrongSize(expected: bytes, got: size ?? 0) }
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let chunk = try handle.read(upToCount: 8 << 20), !chunk.isEmpty { hash.update(data: chunk) }
+        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == sha256 else { throw WhisperModelError.wrongChecksum }
+    }
+}
+
 /// A whisper.cpp model that can be downloaded from Hugging Face. Add one to `all` to offer it in Settings; the list is
 /// ranked best quality first.
-struct WhisperModel: Hashable, Identifiable {
+struct WhisperModel: DownloadableModel {
     let id: String
     let name: String
     let family: WhisperFamily
@@ -56,15 +87,6 @@ struct WhisperModel: Hashable, Identifiable {
     static var families: [WhisperFamily] { all.map(\.family).reduce(into: []) { if !$0.contains($1) { $0.append($1) } } }
 
     var displayName: String { "\(family.name) \(name)" }
-    var fileName: String { id + ".bin" }
-    var remoteURL: URL { URL(string: "https://huggingface.co/\(repo)/resolve/main/\(file)")! }
-    var sizeText: String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
-
-    func url(in folder: URL = AppPaths.models) -> URL { folder.appendingPathComponent(fileName) }
-
-    func isInstalled(in folder: URL = AppPaths.models) -> Bool {
-        (try? FileManager.default.attributesOfItem(atPath: url(in: folder).path)[.size] as? Int64) == bytes
-    }
 
     static func installed(in folder: URL = AppPaths.models) -> [WhisperModel] { all.filter { $0.isInstalled(in: folder) } }
 
@@ -81,17 +103,6 @@ struct WhisperModel: Hashable, Identifiable {
 
     /// Whether to fetch the voice activity model: a Whisper model is downloaded and it is not.
     static func needsVAD(in folder: URL = AppPaths.models) -> Bool { !installed(in: folder).isEmpty && vadFile(in: folder) == nil }
-
-    /// Checks a downloaded file is this model, byte for byte.
-    func verify(_ file: URL) throws {
-        let size = try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? Int64
-        guard size == bytes else { throw WhisperModelError.wrongSize(expected: bytes, got: size ?? 0) }
-        let handle = try FileHandle(forReadingFrom: file)
-        defer { try? handle.close() }
-        var hash = SHA256()
-        while let chunk = try handle.read(upToCount: 8 << 20), !chunk.isEmpty { hash.update(data: chunk) }
-        guard hash.finalize().map({ String(format: "%02x", $0) }).joined() == sha256 else { throw WhisperModelError.wrongChecksum }
-    }
 }
 
 enum WhisperModelError: LocalizedError, Equatable {

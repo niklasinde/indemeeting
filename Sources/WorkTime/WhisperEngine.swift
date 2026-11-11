@@ -10,6 +10,15 @@ struct WhisperOptions {
     var beamSearch = true
 }
 
+extension WhisperLogic {
+    /// `pace` on this Mac's power source and power mode as they are now.
+    static func currentPace(quiet: Bool) -> (threads: Int32, qos: DispatchQoS) {
+        let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+        return pace(quiet: quiet, onAC: IOPSGetProvidingPowerSourceType(info).takeUnretainedValue() as String == kIOPMACPowerKey,
+                    lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled, cores: ProcessInfo.processInfo.activeProcessorCount)
+    }
+}
+
 /// A stretch of audio Whisper transcribed in one language.
 struct WhisperChunk {
     let start: TimeInterval
@@ -18,8 +27,8 @@ struct WhisperChunk {
     let segments: [TranscriptSegment]
 }
 
-#if canImport(whisper)
-import whisper
+#if canImport(ggml)
+import ggml
 
 /// Transcribes with a downloaded Whisper model through whisper.cpp, on the GPU with Metal.
 final class WhisperEngine: SpeechEngine, @unchecked Sendable {
@@ -44,16 +53,9 @@ final class WhisperEngine: SpeechEngine, @unchecked Sendable {
         self.context = context
         self.id = id
         self.options = options
-        let pace = WhisperLogic.pace(quiet: TranscriptionEngine.quiet(), onAC: Self.onACPower,
-                                     lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
-                                     cores: ProcessInfo.processInfo.activeProcessorCount)
+        let pace = WhisperLogic.currentPace(quiet: TranscriptionEngine.quiet())
         threads = pace.threads
         queue = DispatchQueue(label: "whisper", qos: pace.qos)
-    }
-
-    private static var onACPower: Bool {
-        let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
-        return IOPSGetProvidingPowerSourceType(info).takeUnretainedValue() as String == kIOPMACPowerKey
     }
 
     private static func context(file: URL) -> OpaquePointer? {

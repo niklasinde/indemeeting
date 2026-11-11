@@ -3,13 +3,14 @@ import SwiftUI
 /// A section of Settings that can be scrolled to: a downloadable model in Meetings, or the Jira or Slack page.
 enum SettingsAnchor: Hashable {
     case whisper
+    case ministral
     case speakers
     case jira
     case slack
 
     var tab: SettingsTab {
         switch self {
-        case .whisper, .speakers: return .meetings
+        case .whisper, .ministral, .speakers: return .meetings
         case .jira: return .jira
         case .slack: return .slack
         }
@@ -23,6 +24,7 @@ struct ModelOverview: View {
     @ObservedObject var speakers: SpeakerRecognitionModels
     @ObservedObject var tracker: ActivityTracker
     @ObservedObject private var listened = ListenedLanguages.shared
+    @ObservedObject private var ministral = LocalLLMModels.shared
     @AppStorage(TranscriptionEngine.storageKey) private var storedEngine: String?
     let show: (SettingsAnchor) -> Void
 
@@ -57,6 +59,9 @@ struct ModelOverview: View {
                 step("Speaker recognition", "FluidAudio", .download, detail: "\(SpeakerModel.sizeText) \u{00B7} tells the other participants apart",
                      state: ModelState(speakers.status), anchor: .speakers)
                 Divider().padding(.leading, 14)
+                step("Summaries", "Ministral 3 8B", .download, detail: ministralDetail,
+                     state: LocalLLM.isCompiled ? ministral.state : .unavailable, anchor: .ministral)
+                Divider().padding(.leading, 14)
                 step("Summaries", "Apple Intelligence", .builtIn, detail: models.summaryReason?.sentence ?? "AFM 3 Core, about 7 GB",
                      state: ModelState(summary: models.summaryReason))
                 Divider().padding(.leading, 14)
@@ -80,6 +85,11 @@ struct ModelOverview: View {
         let engine = TranscriptionEngine.selected(stored: storedEngine ?? TranscriptionEngine.stored(), installed: whisper.installed)
         if engine != .apple { return "\(range) \u{00B7} \(engine.displayName) transcribes meetings" }
         return "\(range) \u{00B7} " + (whisper.installed.isEmpty ? "Multilingual" : "Apple still transcribes meetings")
+    }
+
+    private var ministralDetail: String {
+        let size = LocalLLMModel.all.first?.sizeText ?? ""
+        return "\(size) \u{00B7} " + (ministral.loaded ? "loaded, let go after three idle minutes" : "also picks the model for Auto in the Agent window")
     }
 
     private var categoryState: ModelState {
@@ -124,7 +134,7 @@ struct ModelOverview: View {
 
     private func color(_ state: ModelState) -> Color {
         switch state {
-        case .ready: return .green
+        case .ready, .loaded: return .green
         case .downloading, .checking: return .orange
         case .notDownloaded, .off: return .secondary.opacity(0.5)
         case .unavailable: return .red

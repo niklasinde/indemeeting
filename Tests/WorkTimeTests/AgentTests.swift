@@ -76,17 +76,14 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil, model: "claude-haiku-5-5").line.contains(#""model":"claude-haiku-5-5""#), "sent")
     }),
 
-    ("agent: Auto asks Ollama for a tier with a schema and parses its reply", {
-        let body = AgentLogic.routeRequestBody(prompt: "Refactor @a.swift", signals: .init(mentions: 1, isReview: true, turns: 2))
-        let schema = body["format"] as? [String: Any]
-        let model = (schema?["properties"] as? [String: Any])?["model"] as? [String: Any]
-        check(body["model"] as? String == OllamaSummarizer.model && model?["enum"] as? [String] == ["haiku", "sonnet", "opus"], "schema")
-        let user = ((body["messages"] as? [[String: String]])?.last?["content"]) ?? ""
+    ("agent: Auto asks the local model for a tier with a schema and parses its answer", {
+        let model = (AgentLogic.routeSchema["properties"] as? [String: Any])?["model"] as? [String: Any]
+        check(model?["enum"] as? [String] == ["haiku", "sonnet", "opus"], "schema")
+        let user = AgentLogic.routeUser(prompt: "Refactor @a.swift", signals: .init(mentions: 1, isReview: true, turns: 2))
         check(user.contains("Referenced files: 1") && user.contains("review: yes") && user.contains("turns in this session: 2"), user)
-        let reply = { (content: String) in Data(try! JSONSerialization.data(withJSONObject: ["message": ["content": content]])) }
-        check(AgentLogic.routeTier(fromReply: reply(#"{"model":"opus"}"#)) == "opus", "opus")
-        check(AgentLogic.routeTier(fromReply: reply(#"{"model":"gpt"}"#)) == nil, "unknown tier")
-        check(AgentLogic.routeTier(fromReply: Data("nope".utf8)) == nil, "garbage")
+        check(AgentLogic.routeTier(fromAnswer: #"{"model": "opus"}"#) == "opus", "opus")
+        check(AgentLogic.routeTier(fromAnswer: #"{"model":"gpt"}"#) == nil, "unknown tier")
+        check(AgentLogic.routeTier(fromAnswer: "nope") == nil, "garbage")
     }),
 
     ("agent: Auto falls back to Sonnet and does not downgrade a follow-up", {
@@ -99,19 +96,19 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentLogic.routedModel(tier: "opus", previous: haiku, prompt: "continue") == opus, "a follow-up may go up")
         check(AgentLogic.isFollowUp("ok, go ahead") && !AgentLogic.isFollowUp("continue the refactor of the whole store layer across all files"), "heuristic")
         try blocking {
-            let picked = await AgentLogic.route(prompt: "rename across files", signals: .init(), previous: nil) { body in
-                check(String(decoding: body, as: UTF8.self).contains("rename across files"), "the prompt is sent")
-                return Data(try JSONSerialization.data(withJSONObject: ["message": ["content": #"{"model":"opus"}"#]]))
+            let picked = await AgentLogic.route(prompt: "rename across files", signals: .init(), previous: nil) { system, user in
+                check(system == AgentLogic.routeSystem && user.contains("rename across files"), "the prompt is sent")
+                return #"{"model":"opus"}"#
             }
-            check(picked == opus, "mocked Ollama picks Opus: \(picked)")
-            let down = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil) { _ in throw URLError(.cannotConnectToHost) }
-            check(down == sonnet, "Ollama down means Sonnet")
+            check(picked == opus, "a mocked model picks Opus: \(picked)")
+            let down = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil) { _, _ in throw LocalLLMError.notInstalled }
+            check(down == sonnet, "no local model means Sonnet")
             let start = Date()
-            let slow = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil, timeout: 0.2) { _ in
+            let slow = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil, timeout: 0.2) { _, _ in
                 try await Task.sleep(nanoseconds: 5_000_000_000)
-                return Data()
+                return ""
             }
-            check(slow == sonnet && Date().timeIntervalSince(start) < 2, "a slow Ollama times out to Sonnet")
+            check(slow == sonnet && Date().timeIntervalSince(start) < 2, "a slow model times out to Sonnet")
         }
     }),
 

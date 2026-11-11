@@ -53,6 +53,7 @@ enum ModelState: Int, Comparable {
     case checking
     case off
     case ready
+    case loaded
 
     init(_ status: SpeechModelStatus) {
         switch status {
@@ -85,6 +86,7 @@ enum ModelState: Int, Comparable {
         case .checking: return "Checking\u{2026}"
         case .off: return "Off"
         case .ready: return "Ready"
+        case .loaded: return "Loaded"
         }
     }
 
@@ -93,37 +95,48 @@ enum ModelState: Int, Comparable {
 
 /// What summarises meetings first; the others follow when it is missing or fails.
 enum SummaryEngine: String, CaseIterable {
-    case ollama
+    case ministral
     case claude
     case apple
+    /// Ollama, for testing only: offered in developer mode and never a fallback. A stored "ollama", from when Ollama ran
+    /// Ministral, reads as the built-in one.
+    case ollama = "ollama-dev"
 
     static let storageKey = "summaryEngine"
     static let appleModel = "apple-intelligence"
 
     var displayName: String {
         switch self {
-        case .ollama: return "Ministral (local)"
+        case .ministral: return "Ministral (on this Mac)"
         case .claude: return "Claude"
         case .apple: return "Apple"
+        case .ollama: return "Ollama (testing)"
         }
     }
 
     /// The model stored with a summary it makes.
     var model: String {
         switch self {
-        case .ollama: return OllamaSummarizer.model
+        case .ministral: return LocalLLMModel.all[0].id
         case .claude: return ClaudeSummarizer.model
         case .apple: return Self.appleModel
+        case .ollama: return OllamaSummarizer.model
         }
     }
 
-    static func stored(_ defaults: UserDefaults = .standard) -> SummaryEngine {
-        defaults.string(forKey: storageKey).flatMap(Self.init) ?? .ollama
+    /// The engines Settings offers.
+    static func offered(developer: Bool) -> [SummaryEngine] { developer ? allCases : allCases.filter { $0 != .ollama } }
+
+    static func stored(_ defaults: UserDefaults = .standard,
+                       environment: [String: String] = ProcessInfo.processInfo.environment) -> SummaryEngine {
+        if OllamaSummarizer.isForced(environment) { return .ollama }
+        let engine = defaults.string(forKey: storageKey).flatMap(Self.init) ?? .ministral
+        return engine == .ollama && !OllamaSummarizer.isAllowed(defaults, environment: environment) ? .ministral : engine
     }
 
-    /// The chosen engine, then the others in their usual order.
+    /// The chosen engine, then the others in their usual order; Ollama only when chosen.
     static func order(chosen: SummaryEngine) -> [SummaryEngine] {
-        [chosen] + allCases.filter { $0 != chosen }
+        [chosen] + offered(developer: false).filter { $0 != chosen }
     }
 
     /// The name of the model stored with a summary.
@@ -132,7 +145,7 @@ enum SummaryEngine: String, CaseIterable {
         case OllamaSummarizer.model: return "Ministral 3 8B"
         case appleModel: return "Apple Intelligence"
         case _ where model.hasPrefix("claude"): return "Claude"
-        default: return model
+        default: return LocalLLMModel.with(id: model)?.name ?? model
         }
     }
 }

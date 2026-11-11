@@ -22,6 +22,7 @@ final class SettingsWindow {
         guard tracker != nil else { return }
         models.refresh()
         whisper.refresh()
+        LocalLLMModels.shared.refresh()
         speakers.refresh()
         projects.refresh()
         if let tab { UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.storageKey) }
@@ -118,20 +119,23 @@ final class SpeechModels: ObservableObject {
     }
 }
 
-/// The downloaded Whisper models, and the downloads in progress.
+/// Downloaded model files of one catalogue, and the downloads in progress.
 @MainActor
-final class WhisperModels: ObservableObject {
-    @Published var statuses: [WhisperModel: SpeechModelStatus] = [:]
-    @Published var leftovers: [URL] = []
-    private var downloads: [WhisperModel: (task: URLSessionDownloadTask, progress: AnyCancellable)] = [:]
+class ModelDownloads<Model: DownloadableModel>: ObservableObject {
+    @Published var statuses: [Model: SpeechModelStatus] = [:]
+    private let catalogue: [Model]
+    private var downloads: [Model: (task: URLSessionDownloadTask, progress: AnyCancellable)] = [:]
 
-    var installed: [WhisperModel] { WhisperModel.all.filter { status(of: $0) == .installed } }
+    init(_ catalogue: [Model]) { self.catalogue = catalogue }
 
-    func status(of model: WhisperModel) -> SpeechModelStatus { statuses[model] ?? .notDownloaded }
+    var installed: [Model] { catalogue.filter { status(of: $0) == .installed } }
+
+    func status(of model: Model) -> SpeechModelStatus { statuses[model] ?? .notDownloaded }
+
+    func isDownloading(_ model: Model) -> Bool { downloads[model] != nil }
 
     func refresh() {
-        leftovers = WhisperModel.leftovers()
-        for model in WhisperModel.all where downloads[model] == nil {
+        for model in catalogue where downloads[model] == nil {
             if model.isInstalled() {
                 statuses[model] = .installed
             } else if case .failed = statuses[model] {
@@ -142,7 +146,7 @@ final class WhisperModels: ObservableObject {
         }
     }
 
-    func download(_ model: WhisperModel) {
+    func download(_ model: Model) {
         statuses[model] = .downloading(0)
         let task = URLSession.shared.downloadTask(with: model.remoteURL) { [weak self] file, response, error in
             let result = Result { try Self.install(model, file: file, response: response, error: error) }
@@ -157,39 +161,31 @@ final class WhisperModels: ObservableObject {
         task.resume()
     }
 
-    /// Fetches the small voice activity model once a Whisper model is downloaded, so Whisper skips silence.
-    func fetchVADIfNeeded() {
-        guard downloads[.vad] == nil, WhisperModel.needsVAD() else { return }
-        download(.vad)
-    }
-
-    func cancel(_ model: WhisperModel) {
+    func cancel(_ model: Model) {
         downloads[model]?.task.cancel()
     }
 
-    func remove(_ model: WhisperModel) {
+    func remove(_ model: Model) {
         try? FileManager.default.removeItem(at: model.url())
         statuses[model] = .notDownloaded
     }
 
-    func delete(_ leftover: URL) {
-        try? FileManager.default.removeItem(at: leftover)
-        leftovers = WhisperModel.leftovers()
-    }
+    /// Called once a download is in place.
+    func didInstall(_ model: Model) {}
 
-    private func finish(_ model: WhisperModel, _ result: Result<Void, Error>) {
+    private func finish(_ model: Model, _ result: Result<Void, Error>) {
         downloads[model] = nil
         switch result {
         case .success:
             statuses[model] = .installed
-            fetchVADIfNeeded()
+            didInstall(model)
         case .failure(let error as URLError) where error.code == .cancelled: statuses[model] = .notDownloaded
         case .failure(let error): statuses[model] = .failed(error.localizedDescription)
         }
     }
 
     /// Moves a finished download into the models folder once it is the expected file.
-    private nonisolated static func install(_ model: WhisperModel, file: URL?, response: URLResponse?, error: Error?) throws {
+    private nonisolated static func install(_ model: Model, file: URL?, response: URLResponse?, error: Error?) throws {
         if let error { throw error }
         if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 { throw WhisperModelError.http(status) }
         guard let file else { throw URLError(.cannotOpenFile) }
@@ -197,6 +193,58 @@ final class WhisperModels: ObservableObject {
         try FileManager.default.createDirectory(at: AppPaths.models, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: model.url())
         try FileManager.default.moveItem(at: file, to: model.url())
+    }
+}
+
+/// The downloaded Whisper models, and the downloads in progress.
+@MainActor
+final class WhisperModels: ModelDownloads<WhisperModel> {
+    @Published var leftovers: [URL] = []
+
+    init() { super.init(WhisperModel.all) }
+
+    override func refresh() {
+        leftovers = WhisperModel.leftovers()
+        super.refresh()
+    }
+
+    override func didInstall(_ model: WhisperModel) { fetchVADIfNeeded() }
+
+    /// Fetches the small voice activity model once a Whisper model is downloaded, so Whisper skips silence.
+    func fetchVADIfNeeded() {
+        guard !isDownloading(.vad), WhisperModel.needsVAD() else { return }
+        download(.vad)
+    }
+
+    func delete(_ leftover: URL) {
+        try? FileManager.default.removeItem(at: leftover)
+        leftovers = WhisperModel.leftovers()
+    }
+}
+
+/// The local language models, their downloads, and whether one is loaded.
+@MainActor
+final class LocalLLMModels: ModelDownloads<LocalLLMModel> {
+    static let shared = LocalLLMModels()
+
+    @Published private(set) var loaded = false
+
+    init() { super.init(LocalLLMModel.all) }
+
+    override func refresh() {
+        loaded = LocalLLM.shared.isLoaded
+        super.refresh()
+    }
+
+    override func remove(_ model: LocalLLMModel) {
+        LocalLLM.shared.unload()
+        super.remove(model)
+    }
+
+    var state: ModelState {
+        if loaded { return .loaded }
+        if !installed.isEmpty { return .ready }
+        return LocalLLMModel.all.contains { status(of: $0).isDownloading } ? .downloading : .notDownloaded
     }
 }
 
@@ -305,7 +353,8 @@ struct SettingsView: View {
     @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
     @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
     @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
-    @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ollama
+    @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ministral
+    @ObservedObject private var ministral = LocalLLMModels.shared
     @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
     @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
     @AppStorage(LiveModel.storageKey) private var liveModel = LiveModel.best
@@ -351,6 +400,7 @@ struct SettingsView: View {
         .onReceive(poll) { _ in
             models.refresh()
             whisper.refresh()
+            ministral.refresh()
             speakers.refresh()
             projects.refresh()
         }
@@ -445,16 +495,28 @@ struct SettingsView: View {
                     .disabled(!liveTranscription)
                 }
             }
-            section("Summary", footer: "Ministral runs on this Mac through Ollama. When the chosen engine is missing or "
-                    + "fails, the others take over.") {
+            section("Summary", footer: "Ministral runs on this Mac once it is downloaded below. When the chosen engine is "
+                    + "missing or fails, the others take over.") {
                 row("Summarise with") {
-                    Picker("Summarise with", selection: $summaryEngine) {
-                        ForEach(SummaryEngine.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    Picker("Summarise with", selection: Binding(get: { SummaryEngine.stored() }, set: { summaryEngine = $0 })) {
+                        ForEach(SummaryEngine.offered(developer: developerMode), id: \.self) { Text($0.displayName).tag($0) }
                     }
                     .labelsHidden()
                     .fixedSize()
                 }
             }
+            section("Ministral", footer: "Mistral\u{2019}s small language model, downloaded from Hugging Face and run on this Mac "
+                    + "with llama.cpp. It summarises meetings and picks the model for Auto in the Agent window. It is loaded when "
+                    + "needed and let go after three idle minutes.") {
+                ForEach(Array(LocalLLMModel.all.enumerated()), id: \.element) { index, model in
+                    if index > 0 { Divider().padding(.leading, 14) }
+                    modelRow(model.name, size: [model.sizeText, model.hint].compactMap { $0 }.joined(separator: " \u{00B7} "),
+                             badge: ministral.loaded && ministral.status(of: model) == .installed ? "Loaded" : nil,
+                             status: LocalLLM.isCompiled ? ministral.status(of: model) : .unsupported,
+                             download: { ministral.download(model) }, cancel: { ministral.cancel(model) }, remove: { ministral.remove(model) })
+                }
+            }
+            .id(SettingsAnchor.ministral)
             ForEach(WhisperModel.families, id: \.self) { family in
                 section(family.name, footer: family.about) {
                     ForEach(Array(WhisperModel.all.filter { $0.family == family }.enumerated()), id: \.element) { index, model in

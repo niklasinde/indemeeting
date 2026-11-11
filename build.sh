@@ -23,7 +23,7 @@ else
     echo "         rebuild. Run scripts/make-signing-identity.sh once to keep them."
 fi
 
-[ -d .deps/whisper.xcframework ] || scripts/build-whisper.sh
+[ -d .deps/ggml.xcframework ] || scripts/build-ggml.sh
 
 if swift build -c release $ARCHS; then
     BIN="$(swift build -c release $ARCHS --show-bin-path)/WorkTime"
@@ -31,7 +31,7 @@ elif [ $RELEASE = 1 ]; then
     echo "error: swift build failed"
     exit 1
 else
-    echo "swift build failed, falling back to swiftc (without KB-Whisper)"
+    echo "swift build failed, falling back to swiftc (without Whisper and Ministral)"
     BIN=.build/swiftc/WorkTime
     mkdir -p "$(dirname "$BIN")"
     swiftc -O -swift-version 5 -target "$(uname -m)-apple-macos26.0" -parse-as-library Sources/WorkTime/*.swift Sources/Shared/*.swift -o "$BIN"

@@ -44,9 +44,9 @@ Produces `WorkTime.app`, signed with `WorkTime.entitlements` and the hardened ru
 Swift 6.4 or Xcode); if SwiftPM fails, the script falls back to plain `swiftc`. `./build.sh --release <path>.app`
 builds a universal (arm64 + x86_64) app at that path and fails instead of signing ad-hoc.
 
-The first build also needs `cmake` (`brew install cmake`): `build.sh` runs `scripts/build-whisper.sh` when
-`.deps/whisper.xcframework` is missing, which compiles whisper.cpp for KB-Whisper (see below). Run that script once
-before a plain `swift build`; without it SwiftPM builds the app without KB-Whisper. SwiftPM also fetches the FluidAudio source
+The first build also needs `cmake` (`brew install cmake`): `build.sh` runs `scripts/build-ggml.sh` when
+`.deps/ggml.xcframework` is missing, which compiles whisper.cpp and llama.cpp for Whisper and Ministral (see below). Run
+that script once before a plain `swift build`; without it SwiftPM builds the app without either. SwiftPM also fetches the FluidAudio source
 package (speaker recognition, pinned in `Package.resolved`) from GitHub on the first build; the `swiftc` fallback
 builds without it.
 
@@ -245,12 +245,33 @@ A language is a `MeetingLanguage` case with its locale, names and headings; Sett
 - Transcription uses `SpeechAnalyzer` (macOS 26). English uses `SpeechTranscriber`. Swedish is not supported by
   `SpeechTranscriber` (checked on macOS 26.6), so it uses `DictationTranscriber`, the on-device dictation model in the same
   API. Missing language models are downloaded through `AssetInventory` on first use. No permission prompt is needed.
-- Summaries use Apple's on-device Foundation Models (`SystemLanguageModel`), which require Apple Intelligence. Its
+- Summaries use Ministral 3 8B on this Mac once it is downloaded (Settings > Meetings > Ministral), then Claude, then
+  Apple Intelligence; Settings > Meetings > Summary picks which goes first. See "Ministral" below.
+- Apple's on-device Foundation Models (`SystemLanguageModel`) require Apple Intelligence. Its
   context is about 4,096 tokens, so long transcripts are summarised in parts and the part summaries are combined. If the
   model is unavailable (Apple Intelligence off, Mac not eligible, model still downloading, language unsupported) the
   transcript is still saved, the meeting and the menu say why, and how to enable it in System Settings >
   Apple Intelligence & Siri. Re-run "Transcribe & summarise a recording…" afterwards. "Still downloading" is also what the
   API reports when the Mac and Siri languages differ (e.g. English (Sweden) vs English (US)), so the app says both.
+
+### Ministral
+
+Ministral 3 8B Instruct (`mistralai/Ministral-3-8B-Instruct-2512-GGUF`, Q4_K_M, 5.2 GB, Apache 2.0) runs inside the app
+with llama.cpp, all layers on the GPU. It is an opt-in download in Settings > Meetings > Ministral, checked against its
+size and SHA-256 and stored next to the Whisper models as `ministral-3-8b-instruct-2512-q4_k_m.gguf`; the catalogue is
+`LocalLLMModel.all` in `LocalLLMLogic.swift`. `LocalLLM` loads it on first use with a 16K context (q8_0 KV cache, flash
+attention) and lets it go after three idle minutes. Summaries run at Whisper's quiet pace; Auto routing in the Agent
+window runs at user-initiated priority and starts loading the model as soon as a prompt is typed on Auto. Answers that
+must be JSON (the summary and the `haiku | sonnet | opus` tier) are constrained by a GBNF grammar built from the same JSON
+schema the other engines use (`LocalLLMLogic.grammar`). Without the model, summaries fall back to Claude and Apple
+Intelligence, and Auto runs on Sonnet.
+
+Ollama is for testing only: with developer mode on, Settings offers "Ollama (testing)" as the summary engine and Auto
+falls back to it when Ministral is not downloaded; `WORKTIME_LLM=ollama` puts it first for both. It is never used in a
+normal install. To check the built-in model headlessly (load time, tokens per second, peak memory, and with `--audio`
+Whisper transcribing in the same process before and after):
+
+    .build/release/WorkTime --data-dir /tmp/worktime-data --check-local-llm [--transcript lines.txt] [--language sv-SE] [--audio clip.m4a]
 
 ### Speaker recognition
 
@@ -309,13 +330,15 @@ display name, family, Hugging Face repo and file, size, SHA-256 and the language
 entry there; Settings gets a section per family and offers a "Transcribe <language> with" picker for every language some
 model supports (a multilingual model listing `.english` would make English selectable too).
 
-whisper.cpp v1.9.4 (commit `927cfce`) is built from source by `scripts/build-whisper.sh` into `.deps/` (gitignored):
-one universal static library with the Metal shaders embedded (`GGML_METAL_EMBED_LIBRARY`), wrapped in
-`.deps/whisper.xcframework` with a `whisper` module map that also links Metal, Accelerate and libc++. SwiftPM uses it
-as a local `binaryTarget` and links it into the executable, so the app has no `Contents/Frameworks` and library
-validation stays on under the hardened runtime. It adds about 3.7 MB per architecture. Delete `.deps/` to rebuild it.
-`test.sh` compiles `WhisperLogic.swift` only; `WhisperEngine.swift` is behind `#if canImport(whisper)`, so the `swiftc`
-fallback builds without KB-Whisper. To try a model headlessly without changing
+whisper.cpp v1.9.4 (commit `927cfce`) and llama.cpp b10901 (commit `28ff095`, the same day and the same ggml 0.23.0)
+are built from source by `scripts/build-ggml.sh` into `.deps/` (gitignored). Each project embeds its own copy of ggml, so
+linking both would clash; `scripts/ggml/CMakeLists.txt` adds llama.cpp first and whisper.cpp then builds against its
+`ggml` target, so there is one ggml. The result is one universal static library with the Metal shaders embedded
+(`GGML_METAL_EMBED_LIBRARY`), wrapped in `.deps/ggml.xcframework` with a `ggml` module map (`whisper.h`, `llama.h` and the
+ggml headers) that also links Metal, Accelerate and libc++. SwiftPM uses it as a local `binaryTarget` and links it into
+the executable, so the app has no `Contents/Frameworks` and library validation stays on under the hardened runtime.
+Delete `.deps/` to rebuild it. `test.sh` compiles `WhisperLogic.swift` and `LocalLLMLogic.swift` only; `WhisperEngine.swift`
+and `LocalLLM.swift` are behind `#if canImport(ggml)`, so the `swiftc` fallback builds without either. To try a model headlessly without changing
 the saved choice, pass it as an argument default:
 
     .build/debug/WorkTime --process Meeting.m4a --language sv-SE -transcriptionEngine.sv-SE kb-whisper-tiny

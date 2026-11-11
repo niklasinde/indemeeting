@@ -484,21 +484,17 @@ enum AgentLogic {
         """
 
     static let routeTimeout: TimeInterval = 3
+    static let routeSchema: [String: Any] = ["type": "object", "properties": ["model": ["type": "string", "enum": tiers]], "required": ["model"]]
 
-    static func routeRequestBody(prompt: String, signals: RouteSignals) -> [String: Any] {
-        let user = "Referenced files: \(signals.mentions)\nPull request review: \(signals.isReview ? "yes" : "no")\n"
+    static func routeUser(prompt: String, signals: RouteSignals) -> String {
+        "Referenced files: \(signals.mentions)\nPull request review: \(signals.isReview ? "yes" : "no")\n"
             + "Earlier turns in this session: \(signals.turns)\n\nPrompt:\n\(prompt.prefix(4000))"
-        let schema: [String: Any] = ["type": "object", "properties": ["model": ["type": "string", "enum": tiers]], "required": ["model"]]
-        return ["model": OllamaSummarizer.model, "stream": false, "keep_alive": "10m", "format": schema, "options": ["temperature": 0],
-                "messages": [["role": "system", "content": routeSystem], ["role": "user", "content": user]]]
     }
 
-    /// The tier in an Ollama `/api/chat` reply, or nil when it holds none.
-    static func routeTier(fromReply data: Data) -> String? {
-        guard let reply = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = (reply["message"] as? [String: Any])?["content"] as? String,
-              let answer = try? JSONSerialization.jsonObject(with: Data(content.utf8)) as? [String: Any],
-              let tier = answer["model"] as? String, tiers.contains(tier) else { return nil }
+    /// The tier in the model's JSON answer, or nil when it holds none.
+    static func routeTier(fromAnswer answer: String) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [String: Any],
+              let tier = object["model"] as? String, tiers.contains(tier) else { return nil }
         return tier
     }
 
@@ -524,12 +520,13 @@ enum AgentLogic {
         models.first { $0.id == id }?.tier.flatMap { tiers.firstIndex(of: $0) } ?? -1
     }
 
-    /// Asks the local model through `ask` (the request body in, the reply out) and gives up after `timeout` seconds.
+    /// Asks the local model through `ask` (the system and user prompts in, its JSON answer out) and gives up after
+    /// `timeout` seconds.
     static func route(prompt: String, signals: RouteSignals, previous: String?, timeout: TimeInterval = routeTimeout,
-                      ask: @escaping @Sendable (Data) async throws -> Data) async -> String {
-        let body = (try? JSONSerialization.data(withJSONObject: routeRequestBody(prompt: prompt, signals: signals))) ?? Data()
+                      ask: @escaping @Sendable (_ system: String, _ user: String) async throws -> String) async -> String {
+        let user = routeUser(prompt: prompt, signals: signals)
         let tier = await withTaskGroup(of: String?.self) { group in
-            group.addTask { (try? await ask(body)).flatMap(routeTier) }
+            group.addTask { (try? await ask(routeSystem, user)).flatMap(routeTier) }
             group.addTask {
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 return nil

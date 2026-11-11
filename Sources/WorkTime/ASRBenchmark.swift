@@ -1,5 +1,5 @@
 import Foundation
-#if canImport(whisper)
+#if canImport(ggml)
 import FluidAudio
 
 /// `--benchmark-asr`: transcribes clips with one recogniser setup and writes `<config>.json` with the text per chunk,
@@ -46,7 +46,7 @@ enum ASRBenchmark {
         return results
     }
 
-    private static func peakMegabytes() -> Double? {
+    static func peakMegabytes() -> Double? {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
         let status = withUnsafeMutablePointer(to: &info) {

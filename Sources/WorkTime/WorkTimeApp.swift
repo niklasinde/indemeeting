@@ -62,6 +62,9 @@ enum Main {
         if let job = ASRBenchmarkLogic.arguments(CommandLine.arguments) {
             ASRBenchmark.runFromCommandLine(output: job.output, config: job.config, clips: job.clips)
         }
+        #if canImport(ggml)
+        if CommandLine.arguments.contains(LocalLLMCheck.flag) { LocalLLMCheck.runFromCommandLine(CommandLine.arguments) }
+        #endif
         if CommandLine.arguments.contains("--download-speaker-model") { downloadSpeakerModel() }
         if let hours = ActivityLogic.contextArguments(CommandLine.arguments) { printContext(hours: hours) }
         #if DEBUG
@@ -243,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         recorder.releaseAudioDevices()
         EmbeddedTerminalModel.shared.terminateAll()
+        LocalLLM.shared.unload(wait: true)
         tracker.flush()
         AppUpgrade.shared.relaunchIfRequested()
     }

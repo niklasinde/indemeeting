@@ -7,10 +7,11 @@ let testingPlugins = "/Library/Developer/CommandLineTools/usr/lib/swift/host/plu
 let testSettings: [SwiftSetting] = FileManager.default.fileExists(atPath: testingPlugins)
     ? [.unsafeFlags(["-plugin-path", testingPlugins])] : []
 
-// Built from source by scripts/build-whisper.sh (build.sh runs it). Without it the app builds without KB-Whisper.
-let whisperPath = ".deps/whisper.xcframework"
-let hasWhisper = FileManager.default.fileExists(atPath: URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent().appendingPathComponent(whisperPath).path)
+// whisper.cpp and llama.cpp on one ggml, built from source by scripts/build-ggml.sh (build.sh runs it). Without it the app
+// builds without Whisper and the local Ministral.
+let ggmlPath = ".deps/ggml.xcframework"
+let hasGGML = FileManager.default.fileExists(atPath: URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().appendingPathComponent(ggmlPath).path)
 
 let package = Package(
     name: "WorkTime",
@@ -22,10 +23,10 @@ let package = Package(
                    .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.99.0")],
     targets: [
         .executableTarget(name: "WorkTime",
-                          dependencies: [.product(name: "FluidAudio", package: "FluidAudio"), .product(name: "SwiftTerm", package: "SwiftTerm")] + (hasWhisper ? ["whisper"] : []),
+                          dependencies: [.product(name: "FluidAudio", package: "FluidAudio"), .product(name: "SwiftTerm", package: "SwiftTerm")] + (hasGGML ? ["ggml"] : []),
                           path: "Sources", sources: ["WorkTime", "Shared"]),
         .testTarget(name: "WorkTimeTests", dependencies: ["WorkTime"], path: "Tests/WorkTimeTests",
                     swiftSettings: testSettings)
-    ] + (hasWhisper ? [.binaryTarget(name: "whisper", path: whisperPath)] : []),
+    ] + (hasGGML ? [.binaryTarget(name: "ggml", path: ggmlPath)] : []),
     swiftLanguageModes: [.v5]
 )

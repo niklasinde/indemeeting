@@ -64,7 +64,11 @@ func blocking(_ body: @escaping @Sendable () async throws -> Void) throws {
         do { try await body() } catch { failure = error }
         done.signal()
     }
-    done.wait()
+    if Thread.isMainThread {
+        while done.wait(timeout: .now() + 0.01) == .timedOut { RunLoop.main.run(until: Date()) }
+    } else {
+        done.wait()
+    }
     if let failure { throw failure }
 }
 
@@ -78,7 +82,7 @@ private func mixedRMS(mic: [Float], system: [Float]) throws -> Double {
     return rms(try decode(url))
 }
 
-let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + countdownTests + storeTests + audioRetentionTests + recordingsMigrationTests + transcriptVersionTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + notchLayoutTests + notchPanelTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + slackTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests + ollamaSummarizerTests + liveTranscriptTests + agentTests
+let allTests: [(name: String, run: () throws -> Void)] = logicTests + speakerTests + autoStopTests + countdownTests + storeTests + audioRetentionTests + recordingsMigrationTests + transcriptVersionTests + activityTests + pluginTests + chatTests + githubTests + githubDetailTests + githubSelectionTests + githubLayoutTests + notchLayoutTests + notchPanelTests + githubActivityTests + githubCommentsTests + githubDiffTests + syntaxTests + githubBranchTests + githubClaudeTests + githubActionsTests + githubLinkTests + jiraTests + slackTests + mcpGitHubTests + embeddedTerminalTests + claudeResumeTests + phoneTests + recordingDeviceTests + claudeAPITests + sidebarTests + sessionsTests + upgradeTests + todoTests + asrBenchmarkTests + claudeSummarizerTests + localLLMTests + liveTranscriptTests + agentTests
 
 private let logicTests: [(name: String, run: () throws -> Void)] = [
     ("elapsedText formats hh:mm:ss", {
@@ -562,7 +566,8 @@ private let logicTests: [(name: String, run: () throws -> Void)] = [
         func source(_ engine: String?) -> String {
             ProcessingLogic.summaryMarkdown(summary, audioName: "a.m4a", language: .english, engine: engine)
         }
-        check(source(SummaryEngine.ollama.model).contains("English \u{00B7} on-device Ministral 3 8B_"), "Ministral")
+        check(source(SummaryEngine.ministral.model).contains("English \u{00B7} on-device Ministral 3 8B_"), "Ministral")
+        check(source(SummaryEngine.ollama.model).contains("English \u{00B7} on-device Ministral 3 8B_"), "Ministral through Ollama")
         check(source(SummaryEngine.apple.model).contains("English \u{00B7} on-device Apple Intelligence_"), "Apple")
         check(source(SummaryEngine.claude.model).contains("English \u{00B7} Claude_"), "Claude")
         check(source(nil).contains("English \u{00B7} on-device Apple Intelligence_"), "old meetings")

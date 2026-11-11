@@ -288,7 +288,7 @@ private enum SampleLibrary {
                                                      engine: "DictationTranscriber", segments: transcript),
                   to: ProcessingLogic.transcriptURL(for: standup))
         try write(ProcessingLogic.summaryMarkdown(standupSummary, audioName: standup.lastPathComponent, language: .swedish,
-                                                  engine: SummaryEngine.ollama.model),
+                                                  engine: SummaryEngine.ministral.model),
                   to: ProcessingLogic.summaryURL(for: standup))
         let checked = "Sara: Skriv release notes för 4.12"
         try MeetingMeta(checked: [checked: true]).encoded().write(to: ProcessingLogic.metaURL(for: standup))

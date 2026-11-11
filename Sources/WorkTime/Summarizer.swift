@@ -29,8 +29,11 @@ enum Summarizer {
     private static func summarise(_ lines: [String], with engine: SummaryEngine, language: MeetingLanguage,
                                   progress: @MainActor (ProcessingStage) -> Void) async throws -> MeetingSummary? {
         switch engine {
+        case .ministral:
+            guard LocalLLM.isAvailable else { return nil }
+            return try await LocalLLM.summarise(lines, language: language, progress: progress)
         case .ollama:
-            guard await OllamaSummarizer.isAvailable() else { return nil }
+            guard OllamaSummarizer.isAllowed(), await OllamaSummarizer.isAvailable() else { return nil }
             return try await OllamaSummarizer.summarise(lines, language: language, progress: progress)
         case .claude:
             guard ClaudeSummarizer.isAvailable else { return nil }
