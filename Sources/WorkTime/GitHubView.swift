@@ -361,6 +361,7 @@ private struct PullRequestRow: View {
     let show: (GitHubPR) -> Void
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var actions = GitHubActionsModel.shared
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         PullRequestSummaryRow(pr: pr, showsAuthor: showsAuthor, titleLines: titleLines,
@@ -383,7 +384,7 @@ private struct PullRequestRow: View {
                 if model.isWatched(pr) { Button("Stop Watching") { model.stopWatching(pr) } }
                 GitHubRowActions(pr: pr, targets: GitHubActions.targets(for: pr, marked: model.marked, in: model.visible), model: actions)
                 Divider()
-                Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) }
+                if showChat { Button("Ask About This Pull Request\u{2026}") { model.ask(about: pr) } }
                 Button("Open in Claude Code") { claude.openInClaudeCode(pr) }
                     .disabled(claude.checkout(pr) == nil)
                 Menu("Open in Claude") {

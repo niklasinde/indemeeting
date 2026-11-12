@@ -288,6 +288,7 @@ private struct AskPanelView: View {
     @ObservedObject private var resume = ResumeModel.shared
     @ObservedObject private var inCall = InCallHelp.shared
     @ObservedObject private var notices = NoticeCenter.shared
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         let shown = panels.shown
@@ -302,7 +303,7 @@ private struct AskPanelView: View {
                     }
                     if let card = resume.card { ResumeCardView(card: card, onClose: panel.collapse) }
                     if inCall.meeting != nil && !inCall.visible.isEmpty { InCallNotchStack() }
-                    if !panel.peeking { AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover) }
+                    if !panel.peeking && showChat { AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover) }
                     if !panel.peeking && shown.contains(panel.list) {
                         switch panel.list {
                         case .gitHub: WaitingPullRequests(onOpen: panel.collapse, onHold: panel.hold)

@@ -17,7 +17,7 @@ final class ChatWindow {
 
     /// Opens the window; `scope` starts an empty chat about it and `chat` shows a stored one.
     func show(scope: ChatScope? = nil, chat: Chat? = nil) {
-        guard let model else { return }
+        guard let model, SidebarLogic.chatShown() else { return }
         model.start()
         if let chat { model.open(chat) } else if let scope { model.newChat(scope: scope) }
         window?.show()
@@ -25,7 +25,7 @@ final class ChatWindow {
 
     /// Opens a new general chat and sends `question` as its first message.
     func ask(_ question: String) {
-        guard !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard SidebarLogic.chatShown(), !question.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         show(scope: .general)
         model?.send(question)
     }

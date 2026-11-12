@@ -375,6 +375,7 @@ struct MainView: View {
     @ObservedObject private var github = GitHubModel.shared
     @ObservedObject private var upgrade = AppUpgrade.shared
     @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
     @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
 
     private var columns: Binding<NavigationSplitViewVisibility> {
@@ -442,6 +443,10 @@ struct MainView: View {
             library.refresh()
         }
         .onReceive(recorder.$meeting) { library.recording = $0 }
+        .onChange(of: showChat) {
+            let section = SidebarLogic.visibleSection(library.section, showChat: showChat)
+            if section != library.section { library.show(section) }
+        }
         .confirmationDialog("Move \(library.selected?.audio.lastPathComponent ?? "") to the Trash?",
                             isPresented: $library.confirmingDelete) {
             Button("Move to Trash", role: .destructive) { deleteSelected() }
@@ -568,7 +573,7 @@ struct MainView: View {
                     .help(library.audioUnavailable(entry) ?? (Diarizer.isReady ? "Tell the speakers apart again without transcribing"
                           : "Download \(SpeakerModel.name) in Settings first"))
                 Button("Export as Markdown\u{2026}") { library.exportMarkdown(entry) }
-                if let id = library.meeting(of: entry)?.id {
+                if showChat, let id = library.meeting(of: entry)?.id {
                     Button("Ask About This Meeting\u{2026}") { ChatWindow.shared.show(scope: .meeting(id, label: library.title(of: entry))) }
                 }
                 Divider()
@@ -592,10 +597,11 @@ struct MainView: View {
 
 struct SectionSidebar: View {
     @ObservedObject var library: RecordingLibrary
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach(SidebarLogic.pages, content: row)
+            ForEach(SidebarLogic.pages(showChat: showChat), content: row)
             Spacer()
             ForEach(SidebarLogic.pinned, content: row)
         }
@@ -751,9 +757,13 @@ struct ContinueButton: View {
 }
 
 struct ChatCommand: View {
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
+
     var body: some View {
-        Button("Chat") { ChatWindow.shared.show() }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+        if showChat {
+            Button("Chat") { ChatWindow.shared.show() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+        }
     }
 }
 

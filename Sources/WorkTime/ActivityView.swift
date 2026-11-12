@@ -189,6 +189,7 @@ struct ActivityView: View {
     @ObservedObject var model: ActivityModel
     @ObservedObject var tracker: ActivityTracker
     @State private var confirmingDayDelete = false
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -217,10 +218,12 @@ struct ActivityView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Activity").font(.system(size: 20, weight: .medium))
                 Spacer()
-                Button { ChatWindow.shared.show(scope: model.mode == .day ? .day(containing: model.date) : .week(containing: model.date)) } label: {
-                    Label("Ask", systemImage: "bubble.left.and.text.bubble.right")
+                if showChat {
+                    Button { ChatWindow.shared.show(scope: model.mode == .day ? .day(containing: model.date) : .week(containing: model.date)) } label: {
+                        Label("Ask", systemImage: "bubble.left.and.text.bubble.right")
+                    }
+                    .help("Ask about this \(model.mode.rawValue.lowercased())")
                 }
-                .help("Ask about this \(model.mode.rawValue.lowercased())")
                 Button { model.copyContext() } label: {
                     Label(model.copied ? "Copied" : "Copy Context", systemImage: model.copied ? "checkmark" : "doc.on.doc")
                 }
@@ -493,11 +496,12 @@ struct BlockRow: View {
 struct BlockMenu: View {
     let block: ActivityBlock
     let model: ActivityModel
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         let settings = model.tracker.settings
         let app = block.key.idle ? nil : block.key.appName
-        if !block.key.idle {
+        if !block.key.idle && showChat {
             Button("Ask About This\u{2026}") { ChatWindow.shared.show(scope: .block(block)) }
             Divider()
         }
@@ -535,6 +539,7 @@ struct ProjectPicker: View {
     let block: ActivityBlock
     @ObservedObject var model: ActivityModel
     @State private var newName = ""
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -560,7 +565,9 @@ struct ProjectPicker: View {
                 Button("Create", action: create).disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             Divider()
-            Button { ChatWindow.shared.show(scope: .block(block)) } label: { Label("Ask About This", systemImage: "bubble.left.and.text.bubble.right") }
+            if showChat {
+                Button { ChatWindow.shared.show(scope: .block(block)) } label: { Label("Ask About This", systemImage: "bubble.left.and.text.bubble.right") }
+            }
             Button(role: .destructive) { model.delete(block) } label: { Label("Delete", systemImage: "trash") }
         }
         .padding(16)

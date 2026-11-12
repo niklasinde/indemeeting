@@ -8,25 +8,29 @@ struct AskButton: View {
     let notes: Bool
     @State private var chats: [Chat] = []
     @State private var claudeProblem: String?
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     var body: some View {
         Menu {
-            Button("New Chat About This Meeting") { ChatWindow.shared.show(scope: .meeting(meeting.id, label: title)) }
-            Button("New Chat About My Notes") { ChatWindow.shared.show(scope: .notes(meeting.id, label: title)) }
-            Divider()
-            Button("Open in Claude\u{2026}") { claudeProblem = GitHubClaudeModel.shared.openInClaude(meeting, title: title) }
-            if !chats.isEmpty {
+            if showChat {
+                Button("New Chat About This Meeting") { ChatWindow.shared.show(scope: .meeting(meeting.id, label: title)) }
+                Button("New Chat About My Notes") { ChatWindow.shared.show(scope: .notes(meeting.id, label: title)) }
+                Divider()
+            }
+            Button("Open in Claude\u{2026}", action: openInClaude)
+            if showChat && !chats.isEmpty {
                 Divider()
                 ForEach(chats) { chat in Button(chat.title) { ChatWindow.shared.show(chat: chat) } }
             }
         } label: {
-            Label(chats.isEmpty ? "Ask" : "Ask \u{00B7} \(chats.count)", systemImage: "bubble.left.and.text.bubble.right")
+            Label(!showChat || chats.isEmpty ? "Ask" : "Ask \u{00B7} \(chats.count)", systemImage: "bubble.left.and.text.bubble.right")
                 .labelStyle(.titleAndIcon)
         } primaryAction: {
+            guard showChat else { return openInClaude() }
             ChatWindow.shared.show(scope: notes ? .notes(meeting.id, label: title) : .meeting(meeting.id, label: title))
         }
         .fixedSize()
-        .help(notes ? "Ask about these notes" : "Ask about this meeting")
+        .help(showChat ? (notes ? "Ask about these notes" : "Ask about this meeting") : "Open this meeting in Claude")
         .onAppear(perform: reload)
         .onReceive(NotificationCenter.default.publisher(for: MeetingStore.chatsDidChange)) { _ in reload() }
         .alert("Open in Claude", isPresented: Binding(get: { claudeProblem != nil }, set: { if !$0 { claudeProblem = nil } })) {
@@ -34,6 +38,10 @@ struct AskButton: View {
         } message: {
             Text(claudeProblem ?? "")
         }
+    }
+
+    private func openInClaude() {
+        claudeProblem = GitHubClaudeModel.shared.openInClaude(meeting, title: title)
     }
 
     private func reload() {

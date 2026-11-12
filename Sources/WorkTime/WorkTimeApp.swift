@@ -360,6 +360,7 @@ struct MenuContent: View {
     @AppStorage(MeetingWatcher.automaticKey) private var startStopAutomatically = true
     @AppStorage(MeetingWatcher.countdownKey) private var countdownSeconds = RecordingCountdown.defaultLength
     @AppStorage(AskPanel.shownKey) private var showAskBar = true
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
     @AppStorage(LiveTranscriptLogic.enabledKey) private var liveTranscription = true
     @ObservedObject private var listened = ListenedLanguages.shared
     @ObservedObject private var github = GitHubModel.shared
@@ -408,8 +409,10 @@ struct MenuContent: View {
             Button("Open summary") { openApp(meeting) }
         }
         Button("Transcribe & summarise a recording\u{2026}") { processor.chooseRecording() }
-        Button("Chat\u{2026}") { ChatWindow.shared.show() }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
+        if showChat {
+            Button("Chat\u{2026}") { ChatWindow.shared.show() }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+        }
         Button("Main Agent\u{2026}") { AgentHub.shared.show() }
         Menu("Languages: \(listened.summary)") {
             ForEach(MeetingLanguage.allCases) { language in

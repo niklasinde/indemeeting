@@ -433,6 +433,7 @@ struct PageActionBar: View {
     @ObservedObject private var claude = GitHubClaudeModel.shared
     @ObservedObject private var terminals = EmbeddedTerminalModel.shared
     @ObservedObject private var pageActions = GitHubActionsModel.shared
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
     private var isOpen: Bool { (detail?.state ?? pr.state) == .open }
     private var isClosed: Bool { (detail?.state ?? pr.state) == .closed }
@@ -518,8 +519,10 @@ struct PageActionBar: View {
     }
 
     @ViewBuilder private var askItems: some View {
-        Button("Ask About This Pull Request\u{2026}", action: ask)
-        Divider()
+        if showChat {
+            Button("Ask About This Pull Request\u{2026}", action: ask)
+            Divider()
+        }
         ForEach(GitHubClaude.Preset.headless) { preset in Button(preset.title) { claude.ask(pr, detail, preset) } }
     }
 

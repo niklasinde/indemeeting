@@ -12,6 +12,7 @@ extension AppAppearance {
 struct GeneralSettingsView: View {
     @AppStorage(AppAppearance.storageKey) private var appearance = AppAppearance.system
     @AppStorage(SidebarLogic.hiddenKey) private var sidebarHidden = false
+    @AppStorage(SidebarLogic.showChatKey) private var showChat = true
     @AppStorage(AudioRetention.developerModeKey) private var developerMode = false
     @ObservedObject private var upgrade = AppUpgrade.shared
 
@@ -29,8 +30,12 @@ struct GeneralSettingsView: View {
                 }
             }
             SettingsSection("Main window", footer: nil) {
-                SettingsRow("Show sidebar", detail: "Meetings, Activity, GitHub, Chat and Main (\u{2303}\u{2318}S)") {
+                SettingsRow("Show sidebar", detail: SidebarLogic.sidebarDetail(showChat: showChat)) {
                     toggle("Show sidebar", isOn: Binding(get: { !sidebarHidden }, set: { sidebarHidden = !$0 }))
+                }
+                Divider().padding(.leading, 14)
+                SettingsRow("Show Chat", detail: SidebarSection.chat.help) {
+                    toggle("Show Chat", isOn: $showChat)
                 }
             }
             SettingsSection("Developer", footer: "A new recording\u{2019}s audio is deleted from this Mac for good once its transcript "
