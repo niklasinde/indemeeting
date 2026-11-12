@@ -28,6 +28,7 @@ extension MCPServer {
         var topics = AppPaths.topicAgents
         var assistants = AssistantFiles()
         var workspaces = WorkspaceSource()
+        var notices = NoticeSources()
         var replyTimeout: TimeInterval = 10
         /// Slack mentions and unread DMs as Markdown, nil when Slack is not signed in.
         var slack: () -> String? = { MCPServer.slackAttention() }
@@ -155,6 +156,7 @@ extension MCPServer {
                 }
                 sections.append("## Agents\n" + ((try? AgentOverview.markdown(scoped(args).file, now: now(), active: true, limit: 10))
                                                   ?? "WorkTime has not written its agents yet.\n"))
+                if let notices = noticeAttention(sources.notices) { sections.append("## Notifications from agents\n" + notices) }
                 if scope.id == nil || Workspaces.workspace(scope.id, in: workspaces)?.slack != nil, let slack = sources.slack() {
                     sections.append("## Slack\n" + slack)
                 }
@@ -192,23 +194,29 @@ extension MCPServer {
 
     /// Writes the request where the app looks and waits for its answer.
     static func deliver(_ request: AgentInbox.Request, inbox: URL, timeout: TimeInterval) throws -> AgentInbox.Reply {
+        try exchange(AgentInbox.encode(request), id: request.id, name: AgentInbox.requestName(request.id), inbox: inbox, timeout: timeout,
+                     what: "the prompt")
+    }
+
+    /// Leaves `data` in the inbox under `name` and waits for the app's reply file with the same id.
+    static func exchange<Reply: Decodable>(_ data: Data, id: String, name: String, inbox: URL, timeout: TimeInterval, what: String) throws -> Reply {
         let fileManager = FileManager.default
         try? fileManager.createDirectory(at: inbox, withIntermediateDirectories: true)
-        let requestURL = inbox.appendingPathComponent(AgentInbox.requestName(request.id))
-        let replyURL = inbox.appendingPathComponent(AgentInbox.replyName(request.id))
-        do { try AgentInbox.encode(request).write(to: requestURL, options: .atomic) } catch {
-            throw MCPToolError("Could not hand the prompt to WorkTime: \(error.localizedDescription)")
+        let requestURL = inbox.appendingPathComponent(name)
+        let replyURL = inbox.appendingPathComponent(AgentInbox.replyName(id))
+        do { try data.write(to: requestURL, options: .atomic) } catch {
+            throw MCPToolError("Could not hand \(what) to WorkTime: \(error.localizedDescription)")
         }
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if let data = try? Data(contentsOf: replyURL), let reply = AgentInbox.decode(AgentInbox.Reply.self, from: data) {
+            if let data = try? Data(contentsOf: replyURL), let reply = AgentInbox.decode(Reply.self, from: data) {
                 try? fileManager.removeItem(at: replyURL)
                 return reply
             }
             Thread.sleep(forTimeInterval: 0.1)
         }
         try? fileManager.removeItem(at: requestURL)
-        throw MCPToolError("WorkTime did not take the prompt within \(Int(timeout)) seconds. Is the app running?")
+        throw MCPToolError("WorkTime did not take \(what) within \(Int(timeout)) seconds. Is the app running?")
     }
 
     /// Slack mentions still needing the user and unread DMs, with the token the app saved, read without renewing it; nil when Slack is not set up.

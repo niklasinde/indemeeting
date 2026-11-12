@@ -46,6 +46,10 @@ test("an assistant's allowlist refuses unlisted MCP tools in every mode and leav
     assert.equal(preToolDecision("mcp__other__thing", {}, cwd, rules, mode, allowed).kind, "deny", mode);
     assert.deepEqual(preToolDecision("mcp__worktime__time_report", {}, cwd, [], mode, allowed), { kind: "allow" }, mode);
     assert.deepEqual(preToolDecision("Read", {}, cwd, [], mode, allowed), { kind: "allow" }, mode);
+    for (const tool of ["notify", "scheduled_notifications", "cancel_notification"]) {
+      assert.deepEqual(preToolDecision(`mcp__worktime__${tool}`, {}, cwd, [], mode, allowed), { kind: "allow" }, `${tool} ${mode}`);
+      assert.deepEqual(preToolDecision(`mcp__worktime__${tool}`, {}, cwd, [], mode), { kind: "allow" }, `${tool} ${mode}`);
+    }
     assert.deepEqual(preToolDecision("Bash", { command: "rm -rf build" }, cwd, [], mode, allowed), { kind: "defer" }, mode);
   }
   assert.deepEqual(preToolDecision("mcp__worktime__send_to_agent", {}, cwd, [], "default", ["mcp__worktime__send_to_agent"]), { kind: "ask" });

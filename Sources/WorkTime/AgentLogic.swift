@@ -247,13 +247,15 @@ enum AgentLogic {
     }
 
     /// The sidecar's environment: the app's, with `node` first on the PATH and never an API key.
-    static func childEnvironment(_ base: [String: String], nodeFolder: String, mcpCommand: String?, workspace: String? = nil) -> [String: String] {
+    static func childEnvironment(_ base: [String: String], nodeFolder: String, mcpCommand: String?, workspace: String? = nil,
+                                 agent: String? = nil) -> [String: String] {
         var environment = base
         environment["ANTHROPIC_API_KEY"] = nil
         environment["ANTHROPIC_AUTH_TOKEN"] = nil
         environment["PATH"] = [nodeFolder, base["PATH"], "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"].compactMap { $0 }.joined(separator: ":")
         environment["WORKTIME_MCP_COMMAND"] = mcpCommand
         environment[Workspaces.envKey] = workspace
+        environment[NoticeSource.agentEnvKey] = agent
         return environment
     }
 
@@ -549,6 +551,7 @@ enum AgentLogic {
         to a Jira ticket or Slack thread. Delegate to them the same way, with send_to_agent and their key or name. \
         jira_issue, jira_search, slack_thread and slack_search read Jira and Slack; nothing can post there, so draft any reply \
         as text for the user.
+        Use notify when something needs the user and they may not be watching; with at, it reminds them later.
         """
 
     /// Main's prompt for a workspace: what it is and sees, then the shared guidance.

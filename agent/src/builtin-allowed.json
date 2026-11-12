@@ -2,6 +2,7 @@
   "tools": ["Read", "Grep", "Glob"],
   "mcpPrefix": "mcp__worktime__",
   "alwaysAsk": ["mcp__worktime__send_to_agent"],
+  "everyAgent": ["mcp__worktime__notify", "mcp__worktime__scheduled_notifications", "mcp__worktime__cancel_notification"],
   "commands": [
     { "name": "ls", "anyArgs": true },
     { "name": "cat", "anyArgs": true },

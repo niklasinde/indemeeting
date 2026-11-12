@@ -21,10 +21,11 @@ export function sessionOptions(input: PromptOptions, model: string, mode: Mode):
   };
 }
 
-/// WorkTime's MCP server, started through the app's binary; a Main's workspace reaches it so its tools default to that workspace.
+/// WorkTime's MCP server, started through the app's binary; a Main's workspace reaches it so its tools default to that workspace,
+/// and the agent's key so notify knows who sent a notification.
 export function mcpServers(env: NodeJS.ProcessEnv): Record<string, McpServerConfig> {
   const command = env.WORKTIME_MCP_COMMAND;
-  const workspace = env.WORKTIME_WORKSPACE;
   if (!command) return {};
-  return { worktime: { type: "stdio", command, args: ["--mcp"], ...(workspace ? { env: { WORKTIME_WORKSPACE: workspace } } : {}) } };
+  const passed = Object.fromEntries(["WORKTIME_WORKSPACE", "WORKTIME_AGENT"].flatMap((key) => (env[key] ? [[key, env[key] as string]] : [])));
+  return { worktime: { type: "stdio", command, args: ["--mcp"], ...(Object.keys(passed).length > 0 ? { env: passed } : {}) } };
 }

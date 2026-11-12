@@ -86,6 +86,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/AssistantLogic.swift \
     Sources/WorkTime/ResumeLogic.swift \
     Sources/WorkTime/MCPResume.swift \
+    Sources/WorkTime/NoticeLogic.swift \
+    Sources/WorkTime/MCPNotify.swift \
     Sources/WorkTime/InCallLogic.swift \
     Sources/WorkTime/InCallStore.swift \
     Tests/WorkTimeTests/Tests.swift \
@@ -136,6 +138,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/ClaudeImportTests.swift \
     Tests/WorkTimeTests/WorkspaceTests.swift \
     Tests/WorkTimeTests/AssistantTests.swift \
+    Tests/WorkTimeTests/NoticeTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

@@ -15,9 +15,10 @@ export function parseMode(value: unknown): Mode {
 export type Decision = { kind: "ask" } | { kind: "allow"; rule?: string; readOnly?: boolean } | { kind: "defer" } | { kind: "deny"; reason: string };
 
 /// An assistant's MCP allowlist: tools of other servers and unlisted ones are refused, whatever the mode or the rules. Claude in
-/// Chrome keeps its own rules, and tools that are not MCP tools follow the permission mode.
+/// Chrome keeps its own rules, notify and its scheduling tools are open to every agent, and tools that are not MCP tools follow
+/// the permission mode.
 export function mcpDenied(tool: string, allowed: string[] | undefined): boolean {
-  return allowed !== undefined && tool.startsWith("mcp__") && !isChromeTool(tool) && !allowed.includes(tool);
+  return allowed !== undefined && tool.startsWith("mcp__") && !isChromeTool(tool) && !allowed.includes(tool) && !builtInAllowed.everyAgent.includes(tool);
 }
 
 /// Claude in Chrome acts in the user's own browser, so only its reads run without asking, in every mode and whatever the rules.

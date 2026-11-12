@@ -111,6 +111,7 @@ struct TodoNotchList: View {
     let onHold: (Bool) -> Void
     let onType: (String) -> Void
     @ObservedObject private var model = TodoModel.shared
+    @ObservedObject private var notices = NoticeCenter.shared
     @State private var checking: Set<TodoRow.ID> = []
     @State private var adding = false
     @State private var draft = ""
@@ -135,6 +136,21 @@ struct TodoNotchList: View {
 
     private var rows: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if !notices.waiting.isEmpty {
+                heading("From agents", top: 0)
+                ForEach(notices.waiting) { notice in
+                    NoticeRow(notice: notice, open: { notices.open(notice.id) }, remove: { notices.dismiss(notice.id) })
+                    separator
+                }
+            }
+            if !notices.pending.isEmpty {
+                heading("Scheduled", top: notices.waiting.isEmpty ? 0 : 10)
+                ForEach(notices.pending) { notice in
+                    NoticeRow(notice: notice, open: nil, remove: { notices.dismiss(notice.id) })
+                    separator
+                }
+            }
+            if !notices.notices.isEmpty { heading(model.title, top: 10) }
             ForEach(model.todos.prefix(TodoLogic.todoLimit)) { todo in
                 row(.todo(todo.id), text: todo.text, detail: nil)
                     .contextMenu { Button("Delete", role: .destructive) { model.delete(todo.id) } }
@@ -146,18 +162,22 @@ struct TodoNotchList: View {
                 newReminder
             }
             if !model.meeting.isEmpty {
-                Text("From meetings")
-                    .font(.caption.bold())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.top, 14)
-                    .padding(.bottom, 4)
+                heading("From meetings", top: 14)
                 ForEach(model.meeting.prefix(TodoLogic.meetingLimit)) { item in
                     row(.meeting(item.id), text: item.task, detail: [item.owner, item.title].compactMap { $0 }.joined(separator: " \u{00B7} "))
                     if item.id != model.meeting.prefix(TodoLogic.meetingLimit).last?.id { separator }
                 }
             }
         }
+    }
+
+    private func heading(_ text: String, top: CGFloat) -> some View {
+        Text(text)
+            .font(.caption.bold())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.top, top)
+            .padding(.bottom, 4)
     }
 
     private var separator: some View {
@@ -278,6 +298,43 @@ struct TodoNotchList: View {
         adding = false
         focused = false
         onHold(false)
+    }
+}
+
+/// A notification from an agent: click to open its link, the cross to dismiss it, or to cancel it while it is scheduled.
+private struct NoticeRow: View {
+    let notice: AgentNotice
+    let open: (() -> Void)?
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: open == nil ? "clock" : notice.urgency == .high ? "exclamationmark.circle.fill" : "bell.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(notice.urgency == .high ? Color.orange : Color.accentColor)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(notice.title).lineLimit(2)
+                Text(detail).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: remove) { Image(systemName: "xmark").font(.caption.bold()).foregroundStyle(.secondary) }
+                .buttonStyle(.plain)
+                .help(open == nil ? "Cancel" : "Dismiss")
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .contentShape(Rectangle())
+        .onTapGesture { open?() }
+        .transition(.opacity)
+    }
+
+    private var detail: String {
+        var parts = [notice.source.title ?? notice.source.label(titles: [:])]
+        let time = notice.date.formatted(date: Calendar.current.isDateInToday(notice.date) ? .omitted : .abbreviated, time: .shortened)
+        parts.append(notice.state == .missed ? "missed \(time)" : time)
+        if let body = notice.body { parts.append(body) }
+        return parts.joined(separator: " \u{00B7} ")
     }
 }
 

@@ -15,4 +15,6 @@ test("the MCP server gets the Main's workspace only when there is one", () => {
   assert.deepEqual(mcpServers({ WORKTIME_MCP_COMMAND: "/app" }), { worktime: { type: "stdio", command: "/app", args: ["--mcp"] } });
   assert.deepEqual(mcpServers({ WORKTIME_MCP_COMMAND: "/app", WORKTIME_WORKSPACE: "personal" }).worktime,
     { type: "stdio", command: "/app", args: ["--mcp"], env: { WORKTIME_WORKSPACE: "personal" } });
+  assert.deepEqual(mcpServers({ WORKTIME_MCP_COMMAND: "/app", WORKTIME_WORKSPACE: "work", WORKTIME_AGENT: "topic:abc" }).worktime,
+    { type: "stdio", command: "/app", args: ["--mcp"], env: { WORKTIME_WORKSPACE: "work", WORKTIME_AGENT: "topic:abc" } });
 });

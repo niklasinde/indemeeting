@@ -552,6 +552,12 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   (listed in Settings > Agent as "Main (Work) may message Reviewer"); other agents, other workspaces and unclear names still ask,
   and only a Main can use such a rule. Bash commands writing with `>` or `>>`, `mkdir`, `cp`, `mv`, `rm`, `touch` and `tee`
   run without asking when everything they write is in the agent's own scratchpad (`/tmp/claude-<uid>/…/scratchpad`).
+- **Notifications.** Any agent, and Claude Code sessions with the plugin, can call `notify(title, body?, link?, urgency?, at?)`:
+  the running app posts a macOS notification (now, or at `at`: ISO 8601 or `HH:mm`, up to 30 days ahead) and keeps it under
+  From agents / Scheduled in the notch bar's Reminders list until opened or dismissed. A click opens the link (a pull request
+  on its GitHub page here, an agent key in Agents, anything else in the browser) and the row names the sender.
+  `scheduled_notifications` and `cancel_notification` (own ones, or any from a Main) manage the schedule; repeats within a
+  minute collapse, ten per minute per sender at most. All three run without asking, even for assistants with a tool list.
 - **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.
   Type `@` to pick a file of the folder (`git ls-files`, or a bounded walk); `@path:10-40` adds a line range. On send the
   referenced files are listed by absolute path under the prompt, not inlined. `path/file.swift:123` references and Markdown

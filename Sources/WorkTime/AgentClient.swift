@@ -583,7 +583,8 @@ final class AgentModel: ObservableObject {
             return nil
         }
         let childEnvironment = AgentLogic.childEnvironment(environment, nodeFolder: node.deletingLastPathComponent().path,
-                                                           mcpCommand: Bundle.main.executablePath, workspace: workspace ?? assistant?.workspace)
+                                                           mcpCommand: Bundle.main.executablePath, workspace: workspace ?? assistant?.workspace,
+                                                           agent: isMain ? workspace.map(Workspaces.mainKey) : agentKey)
         do {
             let client = try AgentClient(node: node, script: script, environment: childEnvironment, onLine: { [weak self] line in
                 Task { @MainActor [weak self] in self?.receive(line) }

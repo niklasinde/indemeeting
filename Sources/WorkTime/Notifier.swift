@@ -61,6 +61,28 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
+    /// An agent's notification, at once or with a calendar trigger at its time so it shows even while the app is busy or quit.
+    static func postNotice(_ notice: AgentNotice) {
+        let content = UNMutableNotificationContent()
+        content.title = notice.title
+        content.subtitle = notice.source.title ?? ""
+        content.body = notice.body ?? ""
+        content.sound = .default
+        content.userInfo = [NoticeLogic.userInfoKey: notice.id]
+        if notice.urgency == .high { content.interruptionLevel = .timeSensitive }
+        let trigger = notice.at.map {
+            UNCalendarNotificationTrigger(dateMatching: Calendar.current.dateComponents([.year, .month, .day, .hour, .minute, .second], from: $0),
+                                          repeats: false)
+        }
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: NoticeLogic.identifier(notice.id), content: content, trigger: trigger))
+    }
+
+    static func withdrawNotice(_ id: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [NoticeLogic.identifier(id)])
+        center.removeDeliveredNotifications(withIdentifiers: [NoticeLogic.identifier(id)])
+    }
+
     func withdrawMeetingStarted() {
         center.removeDeliveredNotifications(withIdentifiers: [Self.meetingIdentifier])
     }
@@ -89,6 +111,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let content = response.notification.request.content
         let action = response.actionIdentifier
+        if let id = content.userInfo[NoticeLogic.userInfoKey] as? String {
+            if action == UNNotificationDefaultActionIdentifier { await NoticeCenter.shared.open(id) }
+            return
+        }
         if let path = content.userInfo[Self.meetingKey] as? String {
             if action == UNNotificationDefaultActionIdentifier { await onOpen(URL(fileURLWithPath: path)) }
             return

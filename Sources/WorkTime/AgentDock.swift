@@ -243,6 +243,14 @@ final class AgentInboxWatcher {
 
     private func poll() {
         let fileManager = FileManager.default
+        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where NoticeLogic.isRequest(name) {
+            let url = folder.appendingPathComponent(name)
+            let data = try? Data(contentsOf: url)
+            try? fileManager.removeItem(at: url)
+            guard let request = data.flatMap({ AgentInbox.decode(NoticeRequest.self, from: $0) }) else { continue }
+            try? AgentInbox.encode(NoticeCenter.shared.handle(request)).write(to: folder.appendingPathComponent(AgentInbox.replyName(request.id)),
+                                                                               options: .atomic)
+        }
         for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where AgentInbox.isRequest(name) {
             let url = folder.appendingPathComponent(name)
             let data = try? Data(contentsOf: url)

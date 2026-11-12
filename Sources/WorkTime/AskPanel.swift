@@ -24,7 +24,7 @@ final class AskPanel {
         }
         let models = [GitHubModel.shared.objectWillChange, JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange,
                       SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange, ResumeModel.shared.objectWillChange,
-                      InCallHelp.shared.objectWillChange]
+                      InCallHelp.shared.objectWillChange, NoticeCenter.shared.objectWillChange]
         lists = Publishers.MergeMany(models).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
@@ -287,6 +287,7 @@ private struct AskPanelView: View {
     @ObservedObject private var slack = SlackModel.shared
     @ObservedObject private var resume = ResumeModel.shared
     @ObservedObject private var inCall = InCallHelp.shared
+    @ObservedObject private var notices = NoticeCenter.shared
 
     var body: some View {
         let shown = panels.shown
@@ -369,6 +370,7 @@ private struct AskPanelView: View {
             .frame(width: 17, height: 17)
             .overlay(alignment: .topTrailing) {
                 if list == .slack && slack.badge > 0 { NotchBadge(count: slack.badge).offset(x: 7, y: -5) }
+                if list == .todo && !notices.waiting.isEmpty { NotchBadge(count: notices.waiting.count).offset(x: 7, y: -5) }
             }
             .opacity(!panel.expanded || panel.list == list ? 1 : 0.45)
             .animation(.easeOut(duration: 0.12), value: panel.list)
