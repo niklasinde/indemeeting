@@ -119,6 +119,20 @@ let githubLinkTests: [(name: String, run: () throws -> Void)] = [
         for text in bad { check(GitHubLink.pasted(text) == nil, "rejects \(text)") }
     }),
 
+    ("the pull requests a transcript mentions are found in order, once each, as links, addresses or owner/repo#number", {
+        let text = "See [niklasinde/papercut#236 Assistant: run](https://github.com/niklasinde/papercut/pull/236), then "
+            + "https://github.com/quiddly-com/finq.api/pull/2483/files and quiddly-com/finq.admin-ui#664.\n"
+            + "Comment: <https://github.com/o/r/pull/7#discussion_r123>, again o/r#7."
+        let found = GitHubLink.mentions(in: text)
+        check(found == [GitHubLink.Target(repo: "niklasinde/papercut", number: 236), finqAPI,
+                        GitHubLink.Target(repo: "quiddly-com/finq.admin-ui", number: 664), GitHubLink.Target(repo: "o/r", number: 7)],
+              "found \(found)")
+        let none = ["#236 alone", "https://github.com/o/r/issues/5", "https://github.com/o/r/commit/abc", "https://github.com/o/r/pull/0",
+                    "https://example.com/a/b#12", "path/to/file.swift#12x", "https://gitlab.com/o/r/pull/3", "x/o/r#4"]
+        for text in none { check(GitHubLink.mentions(in: text).isEmpty, "nothing in \(text): \(GitHubLink.mentions(in: text))") }
+        check(GitHubLink.mentions(in: "https://github.com/o/r/pull/12345x").isEmpty, "a number running into letters is not a pull request")
+    }),
+
     ("the copied app link opens the same pull request it was copied from", {
         check(GitHubLink.appLink(for: finqAPI.url) == encodedFinqAPI, "copy string uses worktime://")
         check(GitHubLink.appLink(for: "https://github.com/quiddly-com/finq.api/pull/2483") == encodedFinqAPI, "copy string from the page address")

@@ -548,9 +548,16 @@ final class AgentModel: ObservableObject {
 
     /// Opens a pull request page with its agent; the app delegate sets it, the same as for `worktime://agent` links from outside.
     static var openAgentLink: ((GitHubLink.Target) -> Void)?
+    /// Opens a pull request on the GitHub page, the same as a `worktime://pr` link; the app delegate sets it.
+    static var openPullRequestLink: ((GitHubLink.Target) -> Void)?
 
     func open(_ url: URL) -> OpenURLAction.Result {
         if let target = GitHubLink.parseAgent(url.absoluteString), let open = Self.openAgentLink {
+            open(target)
+            return .handled
+        }
+        if NSApp.currentEvent?.modifierFlags.contains(.command) != true, url.scheme?.hasPrefix("http") == true,
+           let target = GitHubLink.pasted(url.absoluteString), let open = Self.openPullRequestLink {
             open(target)
             return .handled
         }

@@ -781,8 +781,10 @@ private struct AgentItemRow: View {
                         .background(RoundedRectangle(cornerRadius: 12).fill(Color.accentColor.opacity(0.15)))
                 }
             }
+            .transcriptPullRequests(in: text)
         case .text(let text):
             AnswerText(text: AgentLogic.linkifiedCodeReferences(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) })
+                .transcriptPullRequests(in: text)
         case .tool(let name, let summary, let detail, let result, let isError, let auto, let rule):
             AgentToolRow(name: name, summary: summary, detail: detail, result: result, isError: isError, auto: auto, rule: rule)
         case .permission(let tool, let summary, let detail, let offer, let allowed):

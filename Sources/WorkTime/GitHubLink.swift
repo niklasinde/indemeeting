@@ -60,6 +60,18 @@ enum GitHubLink {
         return nil
     }
 
+    /// Every pull request a piece of text mentions, in order and once each: GitHub pull request pages (any tab of them,
+    /// on their own or as Markdown link targets) and `owner/repo#number`. Issues, commits and a bare `#number` are not.
+    static func mentions(in text: String) -> [Target] {
+        let page = #/(?i:https?://(?:www\.)?github\.com)/([^/\s()\[\]<>]+)/([^/\s()\[\]<>]+)/pull/([0-9]+)(?![0-9A-Za-z])/#
+        let short = #/(?:^|[^\w./\x23-])([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)#([0-9]+)(?![\w])/#
+        let found: [(at: String.Index, target: Target?)] = [page, short].flatMap { pattern in
+            text.matches(of: pattern).map { ($0.range.lowerBound, target(owner: String($0.1), repo: String($0.2), number: String($0.3))) }
+        }
+        var seen = Set<String>()
+        return found.sorted { $0.at < $1.at }.compactMap(\.target).filter { seen.insert($0.url).inserted }
+    }
+
     /// `--open-link <url>`: prints the pull request a link names, or fails. Reads nothing and writes nothing.
     static func printFromCommandLine(_ text: String) -> Never {
         guard let target = parse(text) else {

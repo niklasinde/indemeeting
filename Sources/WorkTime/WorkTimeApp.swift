@@ -228,6 +228,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ChatWindow.shared.configure(store: store) { [weak self] in self?.mainWindow.show(meeting: $0, at: $1) }
         AgentHub.shared.showPage = { [weak self] in self?.mainWindow.show(section: .agent) }
         AgentModel.openAgentLink = { [weak self] in self?.openAgent($0) }
+        AgentModel.openPullRequestLink = { [weak self] in self?.openPullRequest($0) }
+        TranscriptPullRequestMenu.shared.start()
         AssistantStore.shared.start()
         AgentStateWriter.shared.start()
         AgentInboxWatcher.shared.start()
@@ -301,9 +303,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openAgent(_ target: GitHubLink.Target) {
+        openPullRequest(target)
+        PRAgents.shared.open(target)
+    }
+
+    func openPullRequest(_ target: GitHubLink.Target) {
         mainWindow.showGitHub()
         GitHubModel.shared.open(target)
-        PRAgents.shared.open(target)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -327,8 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 GitHubModel.shared.showLinkNotice("Couldn't open that link")
                 continue
             }
-            mainWindow.showGitHub()
-            GitHubModel.shared.open(target)
+            openPullRequest(target)
         }
     }
 }
