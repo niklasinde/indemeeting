@@ -220,7 +220,10 @@ let reminderTests: [(name: String, run: () throws -> Void)] = [
         check(store.items.first?.notes == "https://github.com/acme/api/pull/7\nAdded by Claude Code \u{00B7} api", "\(String(describing: store.items.first?.notes))")
         check((try? run("add_reminder", ["title": "x", "due": "yesterday"]).get()) == nil, "bad due refused before the app is asked")
         let listed = (try? run("reminders", ["due_before": "2026-11-13"]).get()) ?? ""
-        check(listed.hasPrefix("- id r1 \u{00B7} Home \u{00B7} Merge it \u{00B7} due 2026-11-13"), listed)
+        check(listed.hasPrefix("Filtered by due_before \u{201C}2026-11-13\u{201D}\n- id r1 \u{00B7} Home \u{00B7} Merge it \u{00B7} due 2026-11-13"), listed)
+        let narrowed = (try? run("reminders", ["due_after": "2026-11-13", "priority": "none", "query": "merge"]).get()) ?? ""
+        check(narrowed.hasPrefix("Filtered by due_after") && narrowed.contains("priority") && narrowed.contains("Merge it"), narrowed)
+        check((try? run("reminders", ["priority": "urgent"]).get()) == nil, "unknown priority refused before the app is asked")
         if case .failure(let error) = run("reminders", ["list": "Groceries"]) {
             check(error.localizedDescription.contains("The lists are: Work, Home"), error.localizedDescription)
         } else {

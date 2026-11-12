@@ -60,9 +60,14 @@ struct ReminderRequest: Codable, Equatable {
     var draft: ReminderDraft?
     var list: String?
     var dueBefore: Date?
+    var dueAfter: Date?
+    var priority: ReminderPriority?
+    var query: String?
     var reminder: String?
     var source: NoticeSource
     var created: Date
+
+    var filter: ReminderFilter { ReminderFilter(dueBefore: dueBefore, dueAfter: dueAfter, priority: priority, query: query) }
 }
 
 /// The app's Reminders with what agents need on top of the notch bar's todos: details, adding with a due date, one by id.
@@ -126,14 +131,14 @@ enum ReminderLogic {
 
     /// `due_before` as a date: a day counts in full, otherwise as notify reads `at`, past or not.
     static func dueBefore(_ text: String, now: Date, timeZone: TimeZone = .current) -> Result<Date, NoticeError> {
-        if let day = day(text, timeZone: timeZone), let next = calendar(timeZone).date(byAdding: .day, value: 1, to: day) { return .success(next) }
-        guard let date = NoticeLogic.parse(text, now: now, timeZone: timeZone) else {
-            return .failure(NoticeError("due_before must be a date like 2026-11-13, an ISO 8601 date-time or HH:mm, not \(text)."))
-        }
-        return .success(date)
+        FilterLogic.bound(text, name: "due_before", end: true, now: now, timeZone: timeZone)
     }
 
-    private static func day(_ text: String, timeZone: TimeZone) -> Date? {
+    static func dayText(_ date: Date, timeZone: TimeZone = .current) -> String {
+        dueText(ReminderDue(date: date, allDay: true), timeZone: timeZone)
+    }
+
+    static func day(_ text: String, timeZone: TimeZone) -> Date? {
         let text = text.trimmingCharacters(in: .whitespaces)
         guard text.wholeMatch(of: #/\d{4}-\d{2}-\d{2}/#) != nil else { return nil }
         let formatter = DateFormatter()
@@ -143,7 +148,7 @@ enum ReminderLogic {
         return formatter.date(from: text)
     }
 
-    private static func calendar(_ timeZone: TimeZone) -> Calendar {
+    static func calendar(_ timeZone: TimeZone) -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
         return calendar
@@ -244,7 +249,7 @@ enum ReminderLogic {
                     case .failure(let error): return reply(false, nil, error.message)
                     }
                 }
-                let open = open(try await store.reminders(in: ids), dueBefore: request.dueBefore)
+                let open = open(try await store.reminders(in: ids), filter: request.filter)
                 guard !open.isEmpty else { return reply(true, nil, "No open reminders.\n") }
                 let lines = open.prefix(listLimit).map { line($0, list: title($0.list), timeZone: timeZone) }
                 return reply(true, nil, lines.joined(separator: "\n") + (open.count > listLimit ? "\n\(open.count - listLimit) more not shown." : "") + "\n")
@@ -259,11 +264,9 @@ enum ReminderLogic {
         }
     }
 
-    /// Open reminders, due ones soonest first, only those due before `dueBefore` when it is set.
-    static func open(_ reminders: [AgentReminder], dueBefore: Date?) -> [AgentReminder] {
-        let open = reminders.filter { reminder in
-            !reminder.completed && (dueBefore.map { before in reminder.due.map { $0.date < before } ?? false } ?? true)
-        }
+    /// Open reminders matching the filter, due ones soonest first.
+    static func open(_ reminders: [AgentReminder], filter: ReminderFilter) -> [AgentReminder] {
+        let open = reminders.filter { !$0.completed && filter.matches($0) }
         return open.enumerated().sorted { a, b in
             switch (a.element.due?.date, b.element.due?.date) {
             case let (x?, y?) where x != y: x < y

@@ -343,15 +343,22 @@ extension MeetingStore {
 
     /// The `--context` summary of the last `hours`.
     func contextMarkdown(hours: Double, now: Date = Date()) throws -> String {
-        let range = now.addingTimeInterval(-hours * 3600)..<now
-        return ActivityLogic.contextMarkdown(blocks: try blocks(in: range), meetings: try meetingLines(in: range), range: range,
-                                             rules: try rules(), projects: try projects(), directory: try ticketDirectory())
+        try contextMarkdown(range: now.addingTimeInterval(-hours * 3600)..<now)
     }
 
-    func weekReport(containing date: Date) throws -> ActivityLogic.WeekReport {
+    /// The summary of `range`, of the blocks that pass `filter`; meetings are left out when a filter narrows the activity.
+    func contextMarkdown(range: Range<Date>, filter: ActivityFilter = ActivityFilter()) throws -> String {
+        let rules = try rules(), projects = try projects()
+        let blocks = try blocks(in: range).filter { filter.matches($0, rules: rules, projects: projects) }
+        return ActivityLogic.contextMarkdown(blocks: blocks, meetings: filter.isEmpty ? try meetingLines(in: range) : [], range: range,
+                                             rules: rules, projects: projects, directory: try ticketDirectory())
+    }
+
+    func weekReport(containing date: Date, filter: ActivityFilter = ActivityFilter()) throws -> ActivityLogic.WeekReport {
         let days = ActivityLogic.week(containing: date)
-        return ActivityLogic.WeekReport(days: days, blocks: try blocks(in: days.first!.lowerBound..<days.last!.upperBound),
-                                        rules: try rules(), projects: try projects(), directory: try ticketDirectory())
+        let rules = try rules(), projects = try projects()
+        let blocks = try blocks(in: days.first!.lowerBound..<days.last!.upperBound).filter { filter.matches($0, rules: rules, projects: projects) }
+        return ActivityLogic.WeekReport(days: days, blocks: blocks, rules: rules, projects: projects, directory: try ticketDirectory())
     }
 
     /// The meetings that start in `range`, for the context summary.

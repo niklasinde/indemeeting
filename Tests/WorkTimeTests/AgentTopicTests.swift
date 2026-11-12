@@ -168,7 +168,7 @@ let agentTopicTests: [(name: String, run: () throws -> Void)] = [
         check(message(run(empty, "slack_search", ["query": "x"])) == MCPServer.slackNotSetUp, "slack not set up")
         check(message(run(empty, "jira_issue", ["key": "nope"])).hasPrefix("key must be a Jira key"), "key checked first")
         check(message(run(empty, "slack_thread", ["url": "nope"])).hasPrefix("url must be a Slack message link"), "link checked first")
-        check(message(run(empty, "jira_search", ["jql": " "])) == "jql is required.", "jql")
+        check(message(run(empty, "jira_search", ["jql": " "])) == "jql or a filter is required.", "jql")
 
         let paths = PathLog()
         let jira = MCPServer.JiraAccess(client: JiraClient(site: "acme.atlassian.net", email: "me@acme.com", token: "t", transport: { request in

@@ -37,19 +37,23 @@ extension MCPServer {
                 return try send(add)
             },
             MCPTool(name: "reminders",
-                    description: "The user's open Apple Reminders, due ones soonest first: id, list, title, due, priority and link.",
+                    description: "The user's open Apple Reminders, due ones soonest first: id, list, title, due, priority and link. "
+                        + "Optional filters, all combined: list, due_before, due_after, priority, query; the answer says which applied.",
                     properties: ["list": ["type": "string", "description": "Only this list, by name."],
                                  "due_before": ["type": "string",
-                                                "description": "Only reminders due before this: a date (that day counts), ISO 8601 or HH:mm."]]) { args in
+                                                "description": "Only reminders due before this: a date (that day counts), ISO 8601 or HH:mm."],
+                                 "due_after": ["type": "string", "description": "Only reminders due at or after this: a date, ISO 8601 or HH:mm."],
+                                 "priority": ["type": "string", "enum": ReminderPriority.allCases.map(\.rawValue), "description": "Only this priority."],
+                                 "query": ["type": "string", "description": "Only reminders whose title or notes contain this."]]) { args in
                 var list = request(.list)
                 list.list = text(args, "list")
-                if let raw = text(args, "due_before") {
-                    switch ReminderLogic.dueBefore(raw, now: list.created, timeZone: sources.timeZone) {
-                    case .success(let date): list.dueBefore = date
-                    case .failure(let error): throw MCPToolError(error.message)
-                    }
-                }
-                return try send(list)
+                list.dueBefore = try FilterLogic.bound(args, "due_before", end: true, now: list.created, timeZone: sources.timeZone)
+                list.dueAfter = try FilterLogic.bound(args, "due_after", end: false, now: list.created, timeZone: sources.timeZone)
+                list.priority = try FilterLogic.choice(args, "priority", allowed: ReminderPriority.allCases.map(\.rawValue)).flatMap(ReminderPriority.init(rawValue:))
+                list.query = text(args, "query")
+                let applied = FilterLogic.applied(["list": list.list, "due_before": text(args, "due_before"), "due_after": text(args, "due_after"),
+                                                   "priority": list.priority?.rawValue, "query": list.query])
+                return FilterLogic.header(applied) + (try send(list))
             },
             MCPTool(name: "complete_reminder",
                     description: "Marks one of the user's Apple Reminders as completed, by the id add_reminder or reminders gave.",

@@ -120,26 +120,46 @@ extension MCPServer {
         return [
             MCPTool(name: "activity_context",
                     description: "What the user worked on in the last hours: active time, projects, apps, repositories and branches, "
-                        + "tickets, websites, Claude Code sessions, recent writing and meetings, as Markdown.",
-                    properties: ["hours": ["type": "number", "minimum": 0.25, "maximum": 168, "description": "Hours back from now, 8 when left out."]]) {
-                try store().contextMarkdown(hours: min(max(number($0["hours"]) ?? 8, 0.25), 168), now: now())
+                        + "tickets, websites, Claude Code sessions, recent writing and meetings, as Markdown. Optional filters, all combined: "
+                        + "since and until (instead of hours), app, repo, branch, ticket, project, category; the answer says which applied.",
+                    properties: ["hours": ["type": "number", "minimum": 0.25, "maximum": 168, "description": "Hours back from now, 8 when left out."],
+                                 "since": ["type": "string", "description": "Start of the period instead of hours: YYYY-MM-DD or an ISO 8601 date-time."],
+                                 "until": ["type": "string", "description": "End of the period, now when left out: YYYY-MM-DD (that day counts) or ISO 8601."]]
+                        .merging(ActivityFilter.properties) { $1 }) { args in
+                    let date = now(), filter = try ActivityFilter(args)
+                    let since = try FilterLogic.bound(args, "since", end: false, now: date)
+                    let until = try FilterLogic.bound(args, "until", end: true, now: date)
+                    let end = until ?? date
+                    let start = since ?? end.addingTimeInterval(-hours(args) * 3600)
+                    guard start < end else { throw MCPToolError("since must be before until, which is now when left out.") }
+                    let range = start..<end
+                    let applied = FilterLogic.applied(["since": FilterLogic.text(args, "since"), "until": FilterLogic.text(args, "until")]) + filter.applied
+                    return FilterLogic.header(applied) + (try store().contextMarkdown(range: range, filter: filter))
             },
             MCPTool(name: "time_report",
-                    description: "Hours for one week per day and project, with totals per branch and per ticket, as Markdown.",
-                    properties: ["week_start": ["type": "string", "description": "Any day of the week as YYYY-MM-DD; this week when left out."]]) {
-                let day = try ($0["week_start"] as? String).map(date) ?? now()
-                return ActivityLogic.markdown(try store().weekReport(containing: day))
+                    description: "Hours for one week per day and project, with totals per branch and per ticket, as Markdown. Optional filters, "
+                        + "all combined: app, repo, branch, ticket, project, category; the answer says which applied.",
+                    properties: ["week_start": ["type": "string", "description": "Any day of the week as YYYY-MM-DD; this week when left out."]]
+                        .merging(ActivityFilter.properties) { $1 }) { args in
+                let day = try (args["week_start"] as? String).map(date) ?? now(), filter = try ActivityFilter(args)
+                return FilterLogic.header(filter.applied) + ActivityLogic.markdown(try store().weekReport(containing: day, filter: filter))
             },
             MCPTool(name: "search_meetings",
                     description: "Finds meetings whose title, transcript, summary or notes contain every word (as a word prefix). "
-                        + "Returns ids for get_meeting, best matches first.",
-                    properties: ["query": ["type": "string", "description": "Words to search for."], "limit": limit]) {
-                guard let query = $0["query"] as? String, !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+                        + "Returns ids for get_meeting, best matches first. Optional filters, all combined: since, until, with, source, status, "
+                        + "min_minutes, has_action_items; the answer says which applied.",
+                    properties: ["query": ["type": "string", "description": "Words to search for."], "limit": limit]
+                        .merging(MeetingFilter.properties) { $1 }) { args in
+                guard let query = args["query"] as? String, !query.trimmingCharacters(in: .whitespaces).isEmpty else {
                     throw MCPToolError("query is required")
                 }
-                let found = try store().searchMeetings(query, limit: count($0["limit"]))
-                guard !found.isEmpty else { return "No meetings match \u{201C}\(query)\u{201D}.\n" }
-                return found.map { meetingLine($0.meeting) + "\n  " + $0.snippet.replacingOccurrences(of: "\n", with: " ") }
+                let filter = try MeetingFilter(args.filter { $0.key != "query" }, now: now())
+                let store = try store()
+                let found = try store.searchMeetings(query, limit: filter.isEmpty ? count(args["limit"]) : searchPool)
+                let kept = try filter.apply(found.map(\.meeting), in: store).map(\.id)
+                let shown = found.filter { kept.contains($0.meeting.id) }.prefix(count(args["limit"]))
+                guard !shown.isEmpty else { return FilterLogic.header(filter.applied) + "No meetings match \u{201C}\(query)\u{201D}.\n" }
+                return FilterLogic.header(filter.applied) + shown.map { meetingLine($0.meeting) + "\n  " + $0.snippet.replacingOccurrences(of: "\n", with: " ") }
                     .joined(separator: "\n") + "\n"
             },
             MCPTool(name: "get_meeting",
@@ -154,13 +174,22 @@ extension MCPServer {
                 let text = meetingLine(meeting) + "\n\n" + ProcessingLogic.exportMarkdown(content)
                 return cut(text, at: max(Int(number($0["max_characters"]) ?? Double(outputLimit)), 1000))
             },
-            MCPTool(name: "recent_meetings", description: "The latest meetings, newest first, with ids for get_meeting.",
-                    properties: ["limit": limit]) {
-                let meetings = try store().meetings().sorted { $0.created > $1.created }.prefix(count($0["limit"]))
-                return meetings.isEmpty ? "No meetings yet.\n" : meetings.map(meetingLine).joined(separator: "\n") + "\n"
+            MCPTool(name: "recent_meetings",
+                    description: "The latest meetings, newest first, with ids for get_meeting. Optional filters, all combined: since, until, with, "
+                        + "source, status, min_minutes, has_action_items, query (in the title or notes); the answer says which applied.",
+                    properties: ["limit": limit, "query": ["type": "string", "description": "Only meetings whose title or notes contain this."]]
+                        .merging(MeetingFilter.properties) { $1 }) { args in
+                let filter = try MeetingFilter(args, now: now())
+                let store = try store()
+                let meetings = try filter.apply(try store.meetings(), in: store).sorted { $0.created > $1.created }.prefix(count(args["limit"]))
+                return FilterLogic.header(filter.applied) + (meetings.isEmpty ? "No meetings yet.\n" : meetings.map(meetingLine).joined(separator: "\n") + "\n")
             },
         ]
     }
+
+    static let searchPool = 500
+
+    static func hours(_ args: [String: Any]) -> Double { min(max(number(args["hours"]) ?? 8, 0.25), 168) }
 
     static func meetingLine(_ meeting: Meeting) -> String {
         "- id \(meeting.id) \u{00B7} " + [ActivityLogic.dateText(meeting.created) + " " + meeting.created.formatted(date: .omitted, time: .shortened),

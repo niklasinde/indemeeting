@@ -80,12 +80,14 @@ extension MCPServer {
                 }
             },
             MCPTool(name: "jira_search",
-                    description: "Jira issues matching a JQL query, read-only: key, summary, status, priority, last update and link.",
+                    description: "Jira issues matching a JQL query and/or filters, read-only: key, summary, status, priority, last update and link. "
+                        + "Filters (assignee, status, project, type, priority, text, updated_since, updated_before) are combined with jql by AND "
+                        + "and the answer shows the JQL that ran. At least jql or one filter is needed.",
                     properties: ["jql": ["type": "string", "description": "A JQL query, e.g. project = ISD AND text ~ \"Intrum\" ORDER BY updated DESC."],
-                                 "max": ["type": "integer", "minimum": 1, "maximum": JiraLogic.searchLimit, "description": "How many issues, 20 when left out."]],
-                    required: ["jql"]) { args in
-                let jql = (args["jql"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !jql.isEmpty else { throw MCPToolError("jql is required.") }
+                                 "max": ["type": "integer", "minimum": 1, "maximum": JiraLogic.searchLimit, "description": "How many issues, 20 when left out."]]
+                        .merging(JQLFilter.properties) { $1 }) { args in
+                let jql = JQLFilter.compose(jql: args["jql"] as? String, clauses: try JQLFilter.clauses(args))
+                guard !jql.isEmpty else { throw MCPToolError("jql or a filter is required.") }
                 let max = min(count(args["max"], fallback: 20), JiraLogic.searchLimit), date = now()
                 return try jira { access in
                     JiraLogic.searchMarkdown(try await access.client.search(jql: jql, max: max), jql: jql, site: access.site, now: date)
@@ -108,19 +110,22 @@ extension MCPServer {
             },
             MCPTool(name: "slack_search",
                     description: "Slack messages matching a search, newest first, read-only, with channel, author and link. Takes Slack's "
-                        + "search syntax (in:#channel, from:@name, after:2026-01-31).",
+                        + "search syntax (in:#channel, from:@name, after:2026-01-31), or the filters channel, from, since, until and has, "
+                        + "combined with the query by AND; the answer says which applied. At least query or one filter is needed.",
                     properties: ["query": ["type": "string", "description": "What to search for."],
                                  "max": ["type": "integer", "minimum": 1, "maximum": SlackLogic.searchCountLimit,
-                                         "description": "How many messages, 20 when left out."]],
-                    required: ["query"]) { args in
-                let query = (args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !query.isEmpty else { throw MCPToolError("query is required.") }
+                                         "description": "How many messages, 20 when left out."]].merging(SlackSearchFilter.properties) { $1 }) { args in
+                let filters = try SlackSearchFilter.modifiers(args, now: now())
+                let query = ([(args["query"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)] + filters.terms)
+                    .filter { !$0.isEmpty }.joined(separator: " ")
+                guard !query.isEmpty else { throw MCPToolError("query or a filter is required.") }
                 let max = min(count(args["max"], fallback: 20), SlackLogic.searchCountLimit)
+                let header = FilterLogic.header(filters.applied)
                 return try slack { access in
                     try await access.run { client in
                         let messages = try await client.search(query, count: max, teamID: "")
                         let names = await client.names(messages.flatMap { SlackLogic.mentionedUsers(in: $0.text) + [$0.author].compactMap { $0 } })
-                        return SlackLogic.searchMarkdown(messages, query: query, names: names)
+                        return header + SlackLogic.searchMarkdown(messages, query: query, names: names)
                     }
                 }
             },

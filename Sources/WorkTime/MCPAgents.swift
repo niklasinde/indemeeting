@@ -84,6 +84,8 @@ extension MCPServer {
         }
     }
 
+    static let attentionSections = ["pull_requests", "agents", "notifications", "slack", "meetings"]
+
     static let agentProperty: [String: Any] = ["type": "string",
                                                "description": "A pull request url, a topic agent's key (topic:<id>) or name, or an assistant's role name or key, as agents_overview lists them."]
 
@@ -108,8 +110,11 @@ extension MCPServer {
                         + "user's permission (with the tool it asks for), finished with a result the user has not seen, errored, working, "
                         + "idle. Each with its pull request url, worktime://agent link, folder, session id, last prompt and last result.",
                     properties: ["active_only": ["type": "boolean", "description": "Leave out idle agents. False when left out."],
-                                 "workspace": workspaceProperty]) {
-                AgentOverview.markdown(try scoped($0).file, now: now(), active: $0["active_only"] as? Bool ?? false)
+                                 "workspace": workspaceProperty].merging(AgentFilter.properties) { $1 }) { args in
+                let filter = try AgentFilter(args)
+                var file = try scoped(args).file
+                file.agents = file.agents.filter(filter.matches)
+                return FilterLogic.header(filter.applied) + AgentOverview.markdown(file, now: now(), active: args["active_only"] as? Bool ?? false)
             },
             MCPTool(name: "agent_session",
                     description: "A compact transcript of one agent's Claude Code session: the user's prompts, the assistant's replies, "
@@ -145,28 +150,39 @@ extension MCPServer {
             MCPTool(name: "attention",
                     description: "What needs the user right now, in one place: pull requests waiting on them, agents waiting for permission "
                         + "or with unseen results, Slack mentions they have not answered, read or dismissed and unread DMs (when signed in), and open action items from the last "
-                        + "two weeks of meetings. Start here for \u{201C}what do I need to look at\u{201D}.",
-                    properties: ["workspace": workspaceProperty]) { args in
+                        + "two weeks of meetings. Start here for \u{201C}what do I need to look at\u{201D}. Optional filters: section "
+                        + "limits it to one of those parts, kind and status narrow its agents; the answer says which applied.",
+                    properties: ["workspace": workspaceProperty,
+                                 "section": ["type": "string", "enum": attentionSections, "description": "Only this part."],
+                                 "kind": AgentFilter.properties["kind"]!, "status": AgentFilter.properties["status"]!]) { args in
                 let scope = try sources.workspaces.scope(args)
                 let workspaces = sources.workspaces.file().workspaces
+                let only = try FilterLogic.choice(args, "section", allowed: attentionSections)
+                let filter = try AgentFilter(args, names: ["kind", "status"])
+                func wanted(_ section: String) -> Bool { only == nil || only == section }
                 var sections: [String] = []
-                if let tool = github.first(where: { $0.name == "github_needs_attention" }) {
+                if wanted("pull_requests"), let tool = github.first(where: { $0.name == "github_needs_attention" }) {
                     sections.append("## Pull requests\n" + ((try? tool.run(["limit": 8, "workspace": scope.id ?? Workspaces.allChoice]))
                                                             ?? "The GitHub cache could not be read.\n"))
                 }
-                sections.append("## Agents\n" + ((try? AgentOverview.markdown(scoped(args).file, now: now(), active: true, limit: 10))
-                                                  ?? "WorkTime has not written its agents yet.\n"))
-                if let notices = noticeAttention(sources.notices) { sections.append("## Notifications from agents\n" + notices) }
-                if scope.id == nil || Workspaces.workspace(scope.id, in: workspaces)?.slack != nil, let slack = sources.slack() {
+                if wanted("agents") {
+                    sections.append("## Agents\n" + ((try? scoped(args).file).map { file in
+                        var file = file
+                        file.agents = file.agents.filter(filter.matches)
+                        return AgentOverview.markdown(file, now: now(), active: true, limit: 10)
+                    } ?? "WorkTime has not written its agents yet.\n"))
+                }
+                if wanted("notifications"), let notices = noticeAttention(sources.notices) { sections.append("## Notifications from agents\n" + notices) }
+                if wanted("slack"), scope.id == nil || Workspaces.workspace(scope.id, in: workspaces)?.slack != nil, let slack = sources.slack() {
                     sections.append("## Slack\n" + slack)
                 }
-                if let items = try? openedStore(opened).openActionItems(limit: 10, since: TodoLogic.meetingCutoff(now: now())) {
+                if wanted("meetings"), let items = try? openedStore(opened).openActionItems(limit: 10, since: TodoLogic.meetingCutoff(now: now())) {
                     sections.append("## Meeting action items (not tied to a workspace)\n" + (items.isEmpty ? "None open.\n" : items.map {
                         "- \(ActivityLogic.dateText($0.date)) \u{00B7} \($0.title) (meeting id \($0.meeting)) \u{00B7} "
                             + ($0.owner.map { "\($0): " } ?? "") + $0.task
                     }.joined(separator: "\n") + "\n"))
                 }
-                return cut(sections.joined(separator: "\n"), at: outputLimit)
+                return cut(FilterLogic.header(FilterLogic.applied(["section": only]) + filter.applied) + sections.joined(separator: "\n"), at: outputLimit)
             },
             MCPTool(name: "send_to_agent",
                     description: "Sends a prompt to an agent in WorkTime, marked as from Main: a pull request's agent, a topic agent "

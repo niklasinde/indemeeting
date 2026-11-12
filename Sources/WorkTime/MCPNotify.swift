@@ -51,11 +51,13 @@ extension MCPServer {
                 return NoticeLogic.replyText(reply, scheduled: notice.at, timeZone: sources.timeZone)
             },
             MCPTool(name: "scheduled_notifications",
-                    description: "Notifications waiting for their time, soonest first, with id, time, title and who scheduled them.",
-                    properties: [:]) { _ in
-                let pending = NoticeLogic.pending(sources.notices())
-                return pending.isEmpty ? "No scheduled notifications.\n"
-                    : pending.map { NoticeLogic.line($0, timeZone: sources.timeZone) }.joined(separator: "\n") + "\n"
+                    description: "Notifications waiting for their time, soonest first, with id, time, title and who scheduled them. "
+                        + "Optional filters, all combined: source, urgency, due_before, due_after, query; the answer says which applied.",
+                    properties: NoticeFilter.properties) { args in
+                let filter = try NoticeFilter(args, now: now(), timeZone: sources.timeZone)
+                let pending = NoticeLogic.pending(sources.notices()).filter(filter.matches)
+                return FilterLogic.header(filter.applied) + (pending.isEmpty ? "No scheduled notifications.\n"
+                    : pending.map { NoticeLogic.line($0, timeZone: sources.timeZone) }.joined(separator: "\n") + "\n")
             },
             MCPTool(name: "cancel_notification",
                     description: "Cancels a scheduled notification by its id. Agents can cancel their own; a Main can cancel any.",
