@@ -30,23 +30,42 @@ extension MCPServer {
             MCPTool(name: "github_prs",
                     description: "Pull requests from the app's GitHub cache, most recently updated first: repo and number, title, url, author, "
                         + "draft, review decision, checks, unresolved threads, new comments and whether they wait on the user. "
+                        + "Optional filters, all combined: repo, author, query, waiting_on_me, draft, checks and review. "
                         + "Read-only; the GitHub view in the app refreshes the cache.",
-                    properties: ["kind": ["type": "string", "enum": kinds,
-                                          "description": "created (default), review_requested, assigned, mentioned or reviewed."],
+                    properties: ["kind": ["type": "string", "enum": kinds + ["all"],
+                                          "description": "created (default), review_requested, assigned, mentioned, reviewed, or all for every "
+                                            + "cached list, each pull request once."],
                                  "state": ["type": "string", "enum": states, "description": "open (default), merged, closed or all."],
+                                 "repo": ["type": "string", "description": "owner/repo or a bare repo name of any owner, ignoring case; "
+                                            + "several comma-separated."],
+                                 "author": ["type": "string", "description": "GitHub login ignoring case, or me for the signed-in user."],
+                                 "query": ["type": "string", "description": "Words that must all appear in the title (ticket keys included), "
+                                            + "owner/repo#number, author or labels, ignoring case."],
+                                 "waiting_on_me": ["type": "boolean", "description": "true for only those waiting on the user, false for none of them."],
+                                 "draft": ["type": "boolean", "description": "true for only drafts, false for no drafts."],
+                                 "checks": ["type": "string", "enum": Array(checkNames.keys).sorted(), "description": "failing, pending or passing."],
+                                 "review": ["type": "string", "enum": Array(reviewNames.keys).sorted(),
+                                            "description": "The review decision: approved, changes_requested or review_required."],
                                  "limit": limitSchema("pull requests", 20)]) { args in
                 let kindName = args["kind"] as? String ?? GitHubKind.created.rawValue
-                guard let kind = GitHubKind(rawValue: kindName) else { throw MCPToolError("kind must be one of \(kinds.joined(separator: ", "))") }
+                let kind = GitHubKind(rawValue: kindName)
+                guard kind != nil || kindName == "all" else {
+                    throw MCPToolError("kind must be one of \((kinds + ["all"]).joined(separator: ", "))")
+                }
                 let stateName = args["state"] as? String ?? "open"
                 guard let state = GitHubLogic.StateFilter.allCases.first(where: { $0.rawValue.lowercased() == stateName }) else {
                     throw MCPToolError("state must be one of \(states.joined(separator: ", "))")
                 }
+                var (filter, applied) = try pullRequestFilter(args, state: state)
+                let listName = kind?.tabTitle ?? "All lists"
+                let matching = applied.isEmpty ? "" : " matching " + applied.joined(separator: ", ")
                 return try answer { store, prs in
-                    let rows = GitHubLogic.filter(prs[kind] ?? [], GitHubLogic.Filter(state: state))
-                    guard !rows.isEmpty else { return "No \(stateName) pull requests in the \(kind.tabTitle.lowercased()) list.\n" }
+                    if filter.author?.lowercased() == "me", let me = GitHubLogic.me(in: prs) { filter.author = me }
+                    let rows = GitHubLogic.filter(kind.map { prs[$0] ?? [] } ?? GitHubLogic.unique(prs), filter)
+                    guard !rows.isEmpty else { return "No \(stateName) pull requests in the \(listName.lowercased()) list\(matching).\n" }
                     let shown = rows.prefix(count(args["limit"], fallback: 20))
                     let cached = try cachedText(store)
-                    return "\(kind.tabTitle), \(stateName): \(shown.count) of \(rows.count) pull requests, \(cached)\n"
+                    return "\(([listName, stateName] + applied).joined(separator: ", ")): \(shown.count) of \(rows.count) pull requests, \(cached)\n"
                         + shown.map { pullRequestLine($0, now: now()) }.joined()
                 }
             },
@@ -81,7 +100,7 @@ extension MCPServer {
                     properties: ["limit": limitSchema("pull requests", 10), "workspace": workspaceProperty]) { args in
                 let scope = try workspaces.scope(args)
                 return try answer { store, prs in
-                    let unique = Workspaces.filter(Array(Dictionary(prs.values.joined().map { ($0.url, $0) }) { $1 }.values), in: scope, file: workspaces.file())
+                    let unique = Workspaces.filter(GitHubLogic.unique(prs), in: scope, file: workspaces.file())
                     let rows = GitHubLogic.sorted(unique.filter { pr in
                         let signals = GitHubLogic.signals(pr)
                         return signals.waitingOnMe || signals.newFeedback > 0
@@ -94,6 +113,33 @@ extension MCPServer {
                 }
             },
         ]
+    }
+
+    static let checkNames: [String: GitHubPR.Checks] = ["failing": .failed, "pending": .running, "passing": .passed]
+    static let reviewNames: [String: GitHubPR.Review] = ["approved": .approved, "changes_requested": .changesRequested,
+                                                         "review_required": .required]
+
+    /// The list filter the github_prs arguments ask for, and each filter applied as text for the answer's header.
+    static func pullRequestFilter(_ args: [String: Any], state: GitHubLogic.StateFilter) throws -> (GitHubLogic.Filter, [String]) {
+        func text(_ key: String) -> String? {
+            (args[key] as? String).map { $0.trimmingCharacters(in: .whitespaces) }.flatMap { $0.isEmpty ? nil : $0 }
+        }
+        func named<Value>(_ key: String, _ names: [String: Value]) throws -> Value? {
+            guard let name = text(key) else { return nil }
+            guard let value = names[name.lowercased()] else {
+                throw MCPToolError("\(key) must be one of \(names.keys.sorted().joined(separator: ", "))")
+            }
+            return value
+        }
+        let filter = GitHubLogic.Filter(state: state, repo: text("repo"), query: text("query") ?? "", author: text("author"),
+                                        draft: args["draft"] as? Bool, checks: try named("checks", checkNames),
+                                        review: try named("review", reviewNames), waitingOnMe: args["waiting_on_me"] as? Bool)
+        let applied = [filter.repo.map { "repo \($0)" }, filter.author.map { "author \($0)" },
+                       filter.query.isEmpty ? nil : "query \"\(filter.query)\"",
+                       filter.waitingOnMe.map { $0 ? "waiting on you" : "not waiting on you" },
+                       filter.draft.map { $0 ? "drafts" : "no drafts" },
+                       text("checks").map { "checks \($0.lowercased())" }, text("review").map { "review \($0.lowercased())" }]
+        return (filter, applied.compactMap { $0 })
     }
 
     /// One pull request on two lines: the heading with its url, then the facts that matter for the list.

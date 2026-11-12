@@ -174,6 +174,33 @@ let githubTests: [(name: String, run: () throws -> Void)] = [
         check(GitHubLogic.repos(in: all) == ["acme/api", "acme/ui"], "repository list")
     }),
 
+    ("filters match a bare or listed repository, the author or me, drafts, checks, review decision and waiting on me", {
+        func row(_ number: Int, repo: String, author: String, draft: Bool = false, checks: GitHubPR.Checks = .none,
+                 review: GitHubPR.Review? = nil, requested: [String] = []) -> GitHubPR {
+            GitHubPR(url: "https://github.com/\(repo)/pull/\(number)", number: number, title: "QDLY-\(number): Change", repo: repo,
+                     isDraft: draft, updated: now.addingTimeInterval(Double(-number)), review: review, checks: checks, author: author,
+                     activity: GitHubActivity(me: "niklas", requested: requested))
+        }
+        let all = [row(1, repo: "acme/API", author: "Niklas", draft: true, checks: .failed),
+                   row(2, repo: "other/api", author: "elin", checks: .running, review: .approved, requested: ["niklas"]),
+                   row(3, repo: "acme/ui", author: "sara", checks: .passed, review: .changesRequested)]
+        func numbers(_ filter: GitHubLogic.Filter) -> [Int] { GitHubLogic.filter(all, filter).map(\.number) }
+        check(numbers(.init(repo: "api")) == [1, 2], "a bare name matches any owner")
+        check(numbers(.init(repo: "ACME/api")) == [1], "owner/name ignoring case")
+        check(numbers(.init(repo: "acme/api, ui")) == [1, 3], "comma-separated")
+        check(numbers(.init(author: "NIKLAS")) == [1] && numbers(.init(author: "me")) == [1], "author and me")
+        check(numbers(.init(draft: true)) == [1] && numbers(.init(draft: false)) == [2, 3], "drafts")
+        check(numbers(.init(checks: .failed)) == [1] && numbers(.init(checks: .running)) == [2], "checks")
+        check(numbers(.init(review: .changesRequested)) == [3], "review decision")
+        check(numbers(.init(waitingOnMe: true)) == [2] && numbers(.init(waitingOnMe: false)) == [1, 3], "waiting on me")
+        check(numbers(.init(query: "qdly-3")) == [3] && numbers(.init(query: "other/api#2")) == [2], "ticket key and owner/repo#n")
+        check(numbers(.init(repo: "api", author: "elin", checks: .running)) == [2], "combined")
+        let duplicate = row(2, repo: "other/api", author: "elin")
+        check(GitHubLogic.unique([.created: [all[0]], .reviewRequested: [duplicate, all[2]], .mentioned: [all[1]]]).map(\.number) == [1, 2, 3],
+              "each url once")
+        check(GitHubLogic.Filter(draft: false).refinements == 1, "a new filter counts as a refinement")
+    }),
+
     ("the header counts and says where a page may be cut off", {
         check(GitHubLogic.header(count: 47, kind: .created, capped: false) == "47 created", "plain")
         check(GitHubLogic.header(count: 50, kind: .reviewRequested, capped: true) == "50+ review requested", "capped")

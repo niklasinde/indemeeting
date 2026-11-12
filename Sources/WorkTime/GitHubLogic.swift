@@ -393,10 +393,16 @@ enum GitHubLogic {
         var hideBotOnly = false
         var sort = GitHubSort.updated
         var status = GitHubStatusTab.all
+        var author: String?
+        var draft: Bool?
+        var checks: GitHubPR.Checks?
+        var review: GitHubPR.Review?
+        var waitingOnMe: Bool?
 
         /// How many of the filters behind the Filters menu differ from their defaults.
         var refinements: Int {
-            [state != .open, repo != nil, sort != .updated, hideBotOnly].filter { $0 }.count + quick.count
+            [state != .open, repo != nil, sort != .updated, hideBotOnly, author != nil, draft != nil, checks != nil, review != nil,
+             waitingOnMe != nil].filter { $0 }.count + quick.count
         }
 
         var withoutRefinements: Filter { Filter(query: query, status: status) }
@@ -408,20 +414,47 @@ enum GitHubLogic {
         let words = filter.query.lowercased().split(separator: " ").map(String.init)
         let quick = filter.quick
         let passing = prs.filter { pr in
-            guard filter.state.includes(pr.state), filter.repo == nil || filter.repo == pr.repo,
-                  filter.status.includes(pr, reviewer: reviewer) else { return false }
+            guard filter.state.includes(pr.state), matchesRepo(pr.repo, filter.repo), matchesAuthor(pr, filter.author),
+                  filter.draft.map({ $0 == pr.isDraft }) ?? true, filter.checks.map({ $0 == pr.checks }) ?? true,
+                  filter.review.map({ $0 == pr.review }) ?? true, filter.status.includes(pr, reviewer: reviewer) else { return false }
             if mergeable && !isMergeable(pr) { return false }
-            if !quick.isEmpty || filter.hideBotOnly {
+            if !quick.isEmpty || filter.hideBotOnly || filter.waitingOnMe != nil {
                 let signals = signals(pr)
-                guard quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly) else { return false }
+                guard quick.allSatisfy(signals.matches), !(filter.hideBotOnly && signals.botOnly),
+                      filter.waitingOnMe.map({ $0 == signals.waitingOnMe }) ?? true else { return false }
             }
-            let haystack = "\(pr.repo) #\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
+            let haystack = "\(pr.repo) #\(pr.number) \(pr.repo)#\(pr.number) \(pr.title) \(pr.author ?? "") \(pr.labels.joined(separator: " "))".lowercased()
             return words.allSatisfy { haystack.contains($0) }
         }
         let shown = sorted(passing, by: filter.sort)
         guard reviewer else { return shown }
         let mine = shown.filter { status($0, reviewer: true) == .myTurn }
         return mine + shown.filter { status($0, reviewer: true) != .myTurn }
+    }
+
+    /// A wanted repository is `owner/name` or a bare name of any owner, several comma-separated, ignoring case.
+    static func matchesRepo(_ repo: String, _ wanted: String?) -> Bool {
+        let names = (wanted ?? "").lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let full = repo.lowercased()
+        return names.isEmpty || names.contains { $0.contains("/") ? $0 == full : $0 == repoName(full).name }
+    }
+
+    /// A login ignoring case, or `me` for the signed-in user.
+    static func matchesAuthor(_ pr: GitHubPR, _ wanted: String?) -> Bool {
+        guard let wanted, !wanted.isEmpty else { return true }
+        let login = wanted.lowercased() == "me" ? pr.activity?.me : wanted
+        return login.map { !$0.isEmpty && pr.author?.lowercased() == $0.lowercased() } ?? false
+    }
+
+    /// The signed-in user's login as the cached discussions know it.
+    static func me(in prs: [GitHubKind: [GitHubPR]]) -> String? {
+        prs.values.joined().lazy.compactMap { $0.activity?.me }.first { !$0.isEmpty }
+    }
+
+    /// Every cached pull request once, whichever lists it is in.
+    static func unique(_ prs: [GitHubKind: [GitHubPR]]) -> [GitHubPR] {
+        var seen = Set<String>()
+        return GitHubKind.allCases.flatMap { prs[$0] ?? [] }.filter { seen.insert($0.url).inserted }
     }
 
     /// How many pull requests each status tab would show with the rest of the filter.

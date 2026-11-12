@@ -73,6 +73,28 @@ let mcpGitHubTests: [(name: String, run: () throws -> Void)] = [
         check(call(mcp, "github_prs", #"{"state":"later"}"#).isError, "unknown state")
     }),
 
+    ("github_prs filters by repo, author, query, waiting on me, draft, checks and review, across every list with kind all", {
+        let directory = try folder()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let mcp = server(.success(try seeded(directory)))
+        let everywhere = call(mcp, "github_prs", #"{"kind":"all","state":"all"}"#)
+        check(everywhere.text.hasPrefix("All lists, all: 3 of 3 pull requests"), everywhere.text)
+        let web = call(mcp, "github_prs", #"{"kind":"all","repo":"WEB","author":"elin","waiting_on_me":true,"checks":"passing","review":"review_required"}"#)
+        check(web.text.hasPrefix("All lists, open, repo WEB, author elin, waiting on you, checks passing, review review_required: 1 of 1 pull requests"),
+              web.text)
+        check(web.text.contains("acme/web#3"), web.text)
+        let mineOnly = call(mcp, "github_prs", #"{"kind":"all","state":"all","author":"me","query":"qdly-2"}"#)
+        check(mineOnly.text.hasPrefix("All lists, all, author me, query \"qdly-2\": 1 of 1") && mineOnly.text.contains("acme/api#5"), mineOnly.text)
+        check(call(mcp, "github_prs", #"{"query":"acme/api#7","checks":"failing","draft":false}"#).text.contains("acme/api#7"), "owner/repo#n")
+        let none = call(mcp, "github_prs", #"{"draft":true}"#)
+        check(!none.isError && none.text == "No open pull requests in the created list matching drafts.\n", none.text)
+        let badChecks = call(mcp, "github_prs", #"{"checks":"red"}"#)
+        check(badChecks.isError && badChecks.text.contains("failing, passing, pending"), badChecks.text)
+        let badReview = call(mcp, "github_prs", #"{"review":"lgtm"}"#)
+        check(badReview.isError && badReview.text.contains("approved, changes_requested, review_required"), badReview.text)
+        check(call(mcp, "github_prs", #"{"kind":"any"}"#).text.contains("reviewed, all"), "kind lists all")
+    }),
+
     ("github_pr shows the cached detail by url or by owner/repo#number", {
         let directory = try folder()
         defer { try? FileManager.default.removeItem(at: directory) }
