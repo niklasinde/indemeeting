@@ -298,7 +298,7 @@ let claudeAPITests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("only Settings, the summariser and the command-line check use the Claude API: the MCP server and the phone API never mention it", {
-        let allowed: Set<String> = ["SettingsWindow.swift", "WorkTimeApp.swift", "ClaudeSummarizer.swift"]
+        let allowed: Set<String> = ["SettingsView.swift", "WorkTimeApp.swift", "ClaudeSummarizer.swift"]
         for file in try sourceFiles() {
             let name = file.lastPathComponent
             guard !name.hasPrefix("ClaudeAPI") else { continue }

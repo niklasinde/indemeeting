@@ -79,6 +79,7 @@ final class RecordingLibrary: ObservableObject {
     @Published var confirmingDelete = false
     /// The page shown: the meetings, or the Activity, GitHub or Main page instead of the selected meeting.
     @Published private(set) var section = SidebarLogic.defaultSection
+    private(set) var returnSection = SidebarLogic.defaultSection
     /// A moment in the selected meeting that the transcript should scroll to.
     @Published var seekTarget: TimeInterval?
     /// The meeting being recorded, listed before its file exists.
@@ -110,6 +111,7 @@ final class RecordingLibrary: ObservableObject {
 
     func show(_ section: SidebarSection) {
         guard !section.opensWindow else { return }
+        returnSection = SidebarLogic.returnSection(from: self.section, to: section, saved: returnSection)
         self.section = section
     }
 
@@ -451,7 +453,16 @@ struct MainView: View {
         case .activity: ActivityView(model: activity, tracker: activity.tracker)
         case .gitHub: GitHubView(model: .shared)
         case .agent: AgentsPage(hub: .shared)
+        case .settings: settings
         default: MeetingsView(recorder: recorder, processor: processor, library: library, playback: playback) { newMeeting() }
+        }
+    }
+
+    private var settings: some View {
+        let model = SettingsModel.shared
+        return SettingsView(models: model.speech, whisper: model.whisper, speakers: model.speakers, projects: model.projects,
+                            tracker: activity.tracker, backTitle: library.returnSection.title) {
+            library.show(library.returnSection)
         }
     }
 
@@ -581,26 +592,28 @@ struct SectionSidebar: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            ForEach(SidebarSection.allCases) { section in
-                Button { open(section) } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: section.systemImage).frame(width: 20)
-                        Text(section.title)
-                    }
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(library.section == section ? Color.primary.opacity(0.08) : .clear))
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(section.help)
-            }
+            ForEach(SidebarLogic.pages, content: row)
             Spacer()
+            ForEach(SidebarLogic.pinned, content: row)
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 8)
+        .padding(8)
+    }
+
+    private func row(_ section: SidebarSection) -> some View {
+        Button { open(section) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: section.systemImage).frame(width: 20)
+                Text(section.title)
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6).fill(library.section == section ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(section.help)
     }
 
     private func open(_ section: SidebarSection) {

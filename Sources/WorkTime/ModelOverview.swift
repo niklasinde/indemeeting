@@ -1,22 +1,5 @@
 import SwiftUI
 
-/// A section of Settings that can be scrolled to: a downloadable model in Meetings, or the Jira or Slack page.
-enum SettingsAnchor: Hashable {
-    case whisper
-    case ministral
-    case speakers
-    case jira
-    case slack
-
-    var tab: SettingsTab {
-        switch self {
-        case .whisper, .ministral, .speakers: return .meetings
-        case .jira: return .jira
-        case .slack: return .slack
-        }
-    }
-}
-
 /// Which model does each step, whether it comes with macOS or is downloaded, and whether it is ready.
 struct ModelOverview: View {
     @ObservedObject var models: SpeechModels

@@ -3,40 +3,24 @@ import Combine
 import Speech
 import SwiftUI
 
+/// The models the Settings page shows, and how the rest of the app opens that page in the main window.
 @MainActor
-final class SettingsWindow {
-    static let shared = SettingsWindow()
+final class SettingsModel {
+    static let shared = SettingsModel()
 
     @Published var anchor: SettingsAnchor?
 
-    private let models = SpeechModels()
-    let whisper = WhisperModels()
-    let speakers = SpeakerRecognitionModels()
+    var speech = SpeechModels()
+    var whisper = WhisperModels()
+    var speakers = SpeakerRecognitionModels()
     let projects = ActivityProjectsModel()
-    var tracker: ActivityTracker?
-    private lazy var window = AppWindow { [unowned self] in
-        Self.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers, projects: projects, tracker: tracker!))
-    }
+    var open: () -> Void = {}
 
     func show(tab: SettingsTab? = nil, anchor: SettingsAnchor? = nil) {
-        guard tracker != nil else { return }
-        models.refresh()
-        whisper.refresh()
-        LocalLLMModels.shared.refresh()
-        speakers.refresh()
-        projects.refresh()
-        if let tab { UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.storageKey) }
-        window.show()
+        let page = SettingsTab.opening(tab: tab, anchor: anchor, stored: UserDefaults.standard.string(forKey: SettingsTab.storageKey))
+        UserDefaults.standard.set(page.rawValue, forKey: SettingsTab.storageKey)
+        open()
         self.anchor = anchor
-    }
-
-    static func makeWindow(_ view: SettingsView) -> NSWindow {
-        let controller = NSHostingController(rootView: view)
-        controller.sizingOptions = .preferredContentSize
-        let window = NSWindow(contentViewController: controller)
-        window.title = "Settings"
-        window.styleMask = [.titled, .closable]
-        return window
     }
 }
 
@@ -298,46 +282,15 @@ final class SpeakerRecognitionModels: ObservableObject {
     }
 }
 
-enum SettingsTab: String, CaseIterable {
-    case meetings = "Meetings"
-    case activity = "Activity"
-    case privacy = "Privacy"
-    case projects = "Projects"
-    case notchBar = "Notch bar"
-    case gitHub = "GitHub"
-    case jira = "Jira"
-    case slack = "Slack"
-    case models = "Models"
-    case agent = "Agent"
-    case iphone = "iPhone"
-
-    static let storageKey = "settingsTab"
-
-    var title: String { self == .notchBar ? "Top notch bar" : rawValue }
-
-    var symbol: String {
-        switch self {
-        case .meetings: return "waveform"
-        case .activity: return "chart.bar.fill"
-        case .privacy: return "hand.raised.fill"
-        case .projects: return "folder.fill"
-        case .notchBar: return "rectangle.topthird.inset.filled"
-        case .gitHub: return "chevron.left.forwardslash.chevron.right"
-        case .jira: return "ticket.fill"
-        case .slack: return "number"
-        case .models: return "cpu.fill"
-        case .agent: return "sparkles"
-        case .iphone: return "iphone"
-        }
-    }
-
+extension SettingsTab {
     var tint: Color {
         switch self {
+        case .general: return .gray
         case .meetings: return .red
         case .activity: return .orange
         case .privacy: return .blue
         case .projects: return .cyan
-        case .notchBar: return .gray
+        case .notchBar: return Color(white: 0.15)
         case .gitHub: return Color(white: 0.3)
         case .jira: return .teal
         case .slack: return .purple
@@ -355,7 +308,9 @@ struct SettingsView: View {
     @ObservedObject var projects: ActivityProjectsModel
     @ObservedObject var tracker: ActivityTracker
     @ObservedObject private var listened = ListenedLanguages.shared
-    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.meetings
+    let backTitle: String
+    let back: () -> Void
+    @AppStorage(SettingsTab.storageKey) private var tab = SettingsTab.general
     @AppStorage(TranscriptionEngine.beamSearchKey) private var beamSearch = true
     @AppStorage(TranscriptionEngine.quietKey) private var quiet = true
     @AppStorage(SummaryEngine.storageKey) private var summaryEngine = SummaryEngine.ministral
@@ -366,24 +321,24 @@ struct SettingsView: View {
     @State private var target: SettingsAnchor?
 
     private let poll = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-    /// Pages scroll, so the window fits a laptop screen.
-    static let size = CGSize(width: 760, height: 640)
-
     var body: some View {
         HStack(spacing: 0) {
-            List(SettingsTab.allCases, id: \.self, selection: Binding(get: { tab }, set: { if let tab = $0 { self.tab = tab } })) { tab in
-                Label {
-                    Text(tab.title)
-                } icon: {
-                    Image(systemName: tab.symbol)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 20, height: 20)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(tab.tint.gradient))
+            VStack(alignment: .leading, spacing: 0) {
+                Button(action: back) {
+                    Label(backTitle, systemImage: "chevron.left").font(.callout.weight(.medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+                .help("Back to \(backTitle)")
+                ScrollView {
+                    VStack(spacing: 2) { ForEach(SettingsTab.allCases, id: \.self, content: pageRow) }
+                        .padding(8)
                 }
             }
-            .listStyle(.sidebar)
-            .frame(width: 190)
+            .frame(width: 200)
             Divider()
             ScrollViewReader { proxy in
                 ScrollView {
@@ -392,28 +347,53 @@ struct SettingsView: View {
                         page { reveal($0, proxy: proxy) }
                     }
                     .padding(24)
+                    .frame(maxWidth: 720, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .onChange(of: tab) { scroll(proxy) }
-                .onReceive(SettingsWindow.shared.$anchor.compactMap { $0 }) { anchor in
-                    SettingsWindow.shared.anchor = nil
+                .onReceive(SettingsModel.shared.$anchor.compactMap { $0 }) { anchor in
+                    SettingsModel.shared.anchor = nil
                     reveal(anchor, proxy: proxy)
                 }
             }
         }
-        .frame(width: Self.size.width, height: Self.size.height)
-        .onReceive(poll) { _ in
-            models.refresh()
-            whisper.refresh()
-            ministral.refresh()
-            speakers.refresh()
-            projects.refresh()
-        }
+        .onAppear(perform: refresh)
+        .onReceive(poll) { _ in refresh() }
         .onChange(of: listened.languages) { models.refresh() }
+    }
+
+    private func pageRow(_ page: SettingsTab) -> some View {
+        Button { tab = page } label: {
+            HStack(spacing: 8) {
+                Image(systemName: page.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 20, height: 20)
+                    .background(RoundedRectangle(cornerRadius: 5).fill(page.tint.gradient))
+                Text(page.title)
+            }
+            .foregroundStyle(.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 6).fill(tab == page ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(tab == page ? .isSelected : [])
+    }
+
+    private func refresh() {
+        models.refresh()
+        whisper.refresh()
+        ministral.refresh()
+        speakers.refresh()
+        projects.refresh()
     }
 
     @ViewBuilder private func page(show: @escaping (SettingsAnchor) -> Void) -> some View {
         switch tab {
+        case .general: GeneralSettingsView()
         case .meetings: meetings
         case .activity: ActivitySettingsView(tracker: tracker, projects: projects)
         case .privacy: PrivacySettingsView(tracker: tracker, projects: projects)
@@ -575,15 +555,6 @@ struct SettingsView: View {
             }
             ChatSettingsSection()
             ClaudeAPISettingsSection()
-            section("Developer", footer: "A new recording\u{2019}s audio is deleted from this Mac for good once its transcript "
-                    + "and summary are saved. Recordings made in developer mode keep their audio, also after it is turned off.") {
-                row("Developer mode", detail: "Keep the audio of new recordings") {
-                    Toggle("Developer mode", isOn: $developerMode)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                        .labelsHidden()
-                }
-            }
         }
     }
 

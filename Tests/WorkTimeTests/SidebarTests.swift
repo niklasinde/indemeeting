@@ -5,11 +5,19 @@ import Foundation
 
 let sidebarTests: [(name: String, run: () throws -> Void)] = [
     ("sidebar lists Meetings above Activity, GitHub, Chat and Agent, with no Claude API row", {
-        check(SidebarSection.allCases.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Main"],
-              "order \(SidebarSection.allCases.map(\.title))")
-        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat], "chat opens its window, Main is a page")
+        check(SidebarLogic.pages.map(\.title) == ["Meetings", "Activity", "GitHub", "Chat", "Main"],
+              "order \(SidebarLogic.pages.map(\.title))")
+        check(SidebarLogic.pinned == [.settings], "Settings sits at the bottom")
+        check(SidebarSection.allCases.filter(\.opensWindow) == [.chat], "chat opens its window, Main and Settings are pages")
         check(SidebarSection(rawValue: "claudeAPI") == nil, "the removed Claude API row no longer exists")
         check(SidebarLogic.defaultSection == .meetings, "default section")
+    }),
+
+    ("Settings goes back to the page it was opened from", {
+        check(SidebarLogic.returnSection(from: .gitHub, to: .settings, saved: .meetings) == .gitHub, "remembers the page left")
+        check(SidebarLogic.returnSection(from: .settings, to: .settings, saved: .gitHub) == .gitHub, "reopening Settings keeps it")
+        check(SidebarLogic.returnSection(from: .settings, to: .activity, saved: .gitHub) == .gitHub, "leaving keeps it")
+        check(SidebarLogic.returnSection(from: .meetings, to: .activity, saved: .gitHub) == .gitHub, "other moves keep it")
     }),
 
     ("sidebar visibility is stored under its own key and defaults to shown", {

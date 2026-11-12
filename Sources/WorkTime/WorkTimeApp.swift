@@ -203,6 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotKey: GlobalHotKey?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
+        AppAppearance.stored().apply()
         RecordingsMigration.runAtLaunch(store: store, busy: recorder.isBusy)
         meetingWatcher.start()
         sourceTracker.start()
@@ -235,10 +236,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker
-        SettingsWindow.shared.speakers.store = store
-        SettingsWindow.shared.projects.store = store
-        SettingsWindow.shared.tracker = tracker
-        SettingsWindow.shared.whisper.fetchVADIfNeeded()
+        SettingsModel.shared.speakers.store = store
+        SettingsModel.shared.projects.store = store
+        SettingsModel.shared.open = { [weak self] in self?.mainWindow.show(section: .settings) }
+        SettingsModel.shared.whisper.fetchVADIfNeeded()
         recorder.live.languages = { [store] in MeetingPipeline.languages(for: $0, store: store) }
         OnboardingWindow.shared.showIfSetupNeeded()
         processor.resumeUnfinished()
@@ -308,7 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where AppURL.accepts(scheme: url.scheme) {
             if SlackLogic.isCallback(url) {
-                SettingsWindow.shared.show(tab: .slack, anchor: .slack)
+                SettingsModel.shared.show(tab: .slack, anchor: .slack)
                 Task { await SlackModel.shared.finishSignIn(url) }
                 continue
             }
@@ -438,7 +439,7 @@ struct MenuContent: View {
 
 struct SettingsButton: View {
     var body: some View {
-        Button("Settings\u{2026}") { SettingsWindow.shared.show() }
+        Button("Settings\u{2026}") { SettingsModel.shared.show() }
             .keyboardShortcut(",")
     }
 }

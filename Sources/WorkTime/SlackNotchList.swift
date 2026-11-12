@@ -130,6 +130,6 @@ struct SlackNotchList: View {
 
     private func setUp() {
         onOpen()
-        SettingsWindow.shared.show(anchor: .slack)
+        SettingsModel.shared.show(anchor: .slack)
     }
 }

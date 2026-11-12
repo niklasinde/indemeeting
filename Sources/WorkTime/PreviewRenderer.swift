@@ -94,7 +94,7 @@ enum PreviewRenderer {
                 save(window, to: output.appendingPathComponent("activity-week-\(mode).png"))
             }
             window.orderOut(nil)
-            await renderSettings(to: output, store: store)
+            await renderSettings(to: output, store: store, folder: folder)
             await renderChat(to: output, store: store)
             let unavailable = MeetingStore.openDefault(at: URL(fileURLWithPath: "/dev/null/meetings.sqlite"))
             let (brokenLibrary, _, brokenWindow) = makeWindow(store: unavailable, folder: folder)
@@ -202,16 +202,30 @@ enum PreviewRenderer {
     }
 
     @MainActor
-    private static func renderSettings(to output: URL, store: MeetingStore) async {
-        let projects = ActivityProjectsModel()
-        projects.store = store
-        projects.refresh()
-        let tracker = ActivityTracker(store: store)
-        for tab in [SettingsTab.activity, .privacy, .projects, .notchBar, .gitHub, .jira, .slack, .iphone] {
+    private static func renderSettings(to output: URL, store: MeetingStore, folder: URL) async {
+        SettingsModel.shared.projects.store = store
+        let (library, _, window) = makeWindow(store: store, folder: folder)
+        library.show(.gitHub)
+        func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, _ speakers: SpeakerRecognitionModels,
+                          appearance: NSAppearance.Name, to url: URL) async {
+            SettingsModel.shared.speech = models
+            SettingsModel.shared.whisper = whisper
+            SettingsModel.shared.speakers = speakers
+            library.show(.meetings)
+            library.show(.settings)
+            window.appearance = NSAppearance(named: appearance)
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            save(window, to: url)
+        }
+        defer {
+            window.orderOut(nil)
+            UserDefaults.standard.removeObject(forKey: SettingsTab.storageKey)
+        }
+        for tab in [SettingsTab.general, .activity, .privacy, .projects, .notchBar, .gitHub, .jira, .slack, .iphone] {
             UserDefaults.standard.set(tab.rawValue, forKey: SettingsTab.storageKey)
             let name = tab.rawValue.lowercased().replacingOccurrences(of: " ", with: "-")
             for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-                await saveSettings(SpeechModels(), WhisperModels(), SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
+                await saveSettings(SpeechModels(), WhisperModels(), SpeakerRecognitionModels(), appearance: appearance,
                                    to: output.appendingPathComponent("settings-\(name)-\(appearance == .aqua ? "light" : "dark").png"))
             }
         }
@@ -221,7 +235,7 @@ enum PreviewRenderer {
         let overviewWhisper = WhisperModels()
         overviewWhisper.statuses = [WhisperModel.all[2]: .installed]
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            await saveSettings(overview, overviewWhisper, SpeakerRecognitionModels(), projects, tracker, appearance: appearance,
+            await saveSettings(overview, overviewWhisper, SpeakerRecognitionModels(), appearance: appearance,
                                to: output.appendingPathComponent("settings-models-\(appearance == .aqua ? "light" : "dark").png"))
         }
         UserDefaults.standard.set(SettingsTab.meetings.rawValue, forKey: SettingsTab.storageKey)
@@ -235,7 +249,7 @@ enum PreviewRenderer {
             KnownVoice(id: Int64($0.offset), name: $0.element, embedding: [], updated: Date(timeIntervalSinceNow: -86_400 * Double($0.offset)))
         }
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-            await saveSettings(models, whisper, speakers, projects, tracker, appearance: appearance, to: output.appendingPathComponent(
+            await saveSettings(models, whisper, speakers, appearance: appearance, to: output.appendingPathComponent(
                 "settings-\(appearance == .aqua ? "light" : "dark").png"))
         }
         let downloading = SpeechModels()
@@ -245,21 +259,8 @@ enum PreviewRenderer {
         whisperDownloading.statuses = [tiny: .installed, small: .downloading(0.42), large: .failed("The network connection was lost.")]
         let speakersDownloading = SpeakerRecognitionModels()
         speakersDownloading.status = .downloading(0.6)
-        await saveSettings(downloading, whisperDownloading, speakersDownloading, projects, tracker, appearance: .aqua,
+        await saveSettings(downloading, whisperDownloading, speakersDownloading, appearance: .aqua,
                            to: output.appendingPathComponent("settings-downloading-light.png"))
-    }
-
-    @MainActor
-    private static func saveSettings(_ models: SpeechModels, _ whisper: WhisperModels, _ speakers: SpeakerRecognitionModels,
-                                     _ projects: ActivityProjectsModel, _ tracker: ActivityTracker,
-                                     appearance: NSAppearance.Name, to url: URL) async {
-        let window = SettingsWindow.makeWindow(SettingsView(models: models, whisper: whisper, speakers: speakers, projects: projects, tracker: tracker))
-        window.appearance = NSAppearance(named: appearance)
-        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
-        window.orderBack(nil)
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-        save(window, to: url)
-        window.orderOut(nil)
     }
 
     @MainActor
