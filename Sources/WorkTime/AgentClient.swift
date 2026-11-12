@@ -113,6 +113,8 @@ final class AgentModel: ObservableObject {
     @Published private(set) var chromeProblem: String?
     /// Bumped when the transcript is replaced rather than added to: another session, a restored one, a new one.
     @Published private(set) var transcriptRevision = 0
+    /// What this session has done since it was shown, for the work map; kept in memory only.
+    @Published private(set) var workMap = WorkMap()
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
     @Published var folder: String
@@ -251,7 +253,12 @@ final class AgentModel: ObservableObject {
     private func replaceItems(_ new: [AgentItem]) {
         items = new
         transcriptRevision += 1
+        workMap = WorkMap()
     }
+
+    #if DEBUG
+    func preview(workMap: WorkMap) { self.workMap = workMap }
+    #endif
 
     /// Continues an earlier session: its folder, and its transcript read back from Claude Code's file.
     func switchTo(_ entry: AgentSessionEntry) {
@@ -473,6 +480,7 @@ final class AgentModel: ObservableObject {
         guard refreshAssistant(), let client = runningClient() else { return false }
         problem = nil
         items.append(AgentItem(id: "user-\(items.count)", kind: .user(text)))
+        workMap.prompt(model: model, at: Date())
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
         busy = true
         let auto = model == AgentLogic.auto, chosen = model, previous = lastModel, cwd = folder
@@ -484,6 +492,7 @@ final class AgentModel: ObservableObject {
             guard let self, !Task.isCancelled else { return }
             routing = nil
             lastModel = picked
+            workMap.use(model: picked)
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
                                 appendSystemPrompt: system, mode: permissionMode, chrome: chrome,
@@ -517,6 +526,7 @@ final class AgentModel: ObservableObject {
             routing.cancel()
             self.routing = nil
             busy = false
+            workMap.finish(at: Date())
             return
         }
         client?.send(.interrupt)
@@ -589,6 +599,7 @@ final class AgentModel: ObservableObject {
             client?.send(.target(id: object?["id"] as? String ?? "", key: key))
             return
         }
+        if let object { workMap.receive(object, cwd: folder, at: Date()) }
         guard var event = AgentEvent.decode(line, cwd: folder) else { return }
         if case .permissionRequest(let id, let tool, let summary, let detail, _) = event, isMain, let workspace,
            let rule = AgentDelegation.rule(tool: tool, input: object?["input"] as? [String: Any] ?? [:], workspace: workspace) {
@@ -619,6 +630,7 @@ final class AgentModel: ObservableObject {
         client = nil
         guard busy else { return }
         busy = false
+        workMap.finish(at: Date())
         resultSeen = visiblePanes > 0
         if AgentLogic.needsSignIn(errors) { return AgentLogic.appendSignIn(to: &items) }
         let tail = errors.split(whereSeparator: \.isNewline).suffix(3).joined(separator: "\n")

@@ -376,17 +376,20 @@ struct AgentView: View {
     var listHidden: Binding<Bool>?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            AgentPanel(model: model)
+        GeometryReader { proxy in
+            let wide = proxy.size.width >= AgentWorkMap.sideMinWidth
+            VStack(alignment: .leading, spacing: 0) {
+                header(wide: wide)
+                Divider()
+                AgentWorkMapSplit(model: model, wide: wide) { AgentPanel(model: model) }
+            }
         }
         .frame(minWidth: 420, minHeight: 440)
     }
 
     private var isMain: Bool { model.isMain && model.prURL == nil }
 
-    private var header: some View {
+    private func header(wide: Bool) -> some View {
         HStack(spacing: 10) {
             if let listHidden {
                 Button { listHidden.wrappedValue.toggle() } label: { Image(systemName: "sidebar.squares.left") }
@@ -414,8 +417,8 @@ struct AgentView: View {
             AgentWorktreeNote(folder: model.folder)
             Spacer()
             ViewThatFits(in: .horizontal) {
-                controls(compact: false)
-                controls(compact: true)
+                controls(compact: false, wide: wide)
+                controls(compact: true, wide: wide)
             }
         }
         .padding(.horizontal, RecordingDetail.gutter)
@@ -425,7 +428,7 @@ struct AgentView: View {
     }
 
     /// Icons only when the pane is too narrow for their titles, so the header never widens the transcript under it.
-    private func controls(compact: Bool) -> some View {
+    private func controls(compact: Bool, wide: Bool) -> some View {
         HStack(spacing: 10) {
             Group {
                 if isMain {
@@ -440,6 +443,7 @@ struct AgentView: View {
             .labelStyle(CompactLabelStyle(compact: compact))
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).labelStyle(CompactLabelStyle(compact: compact))
+            AgentWorkMapToggle(model: model, wide: wide).labelStyle(.iconOnly)
             AgentOverflowMenu(model: model)
         }
     }

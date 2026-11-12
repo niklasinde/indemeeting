@@ -23,6 +23,7 @@ enum AgentPreview {
 
         app.activate(ignoringOtherApps: true)
         Task { @MainActor in
+            await workMap(to: output)
             await wide(to: output)
             for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
                 model.preview(sample(), files: files)
@@ -105,6 +106,48 @@ enum AgentPreview {
         agent.open(pr: GitHubLink.Target(repo: pr.repo, number: pr.number), checkout: URL(fileURLWithPath: repo))
         await shot("new-below", NSSize(width: 1530, height: 1000), appearances: [.aqua])
         if let stored { defaults.set(stored, forKey: DockPlacement.choiceKey) } else { defaults.removeObject(forKey: DockPlacement.choiceKey) }
+    }
+
+    /// The work map beside the transcript of a working agent, and alone as its popover shows it.
+    @MainActor
+    private static func workMap(to output: URL) async {
+        let model = AgentModel(folder: repo)
+        model.preview(sample(), busy: true)
+        model.preview(workMap: sampleWorkMap(cwd: repo))
+        AgentModel.defaults.set(true, forKey: AgentWorkMap.shownKey)
+        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            await save(AgentView(model: model), size: NSSize(width: 1100, height: 760), appearance: appearance,
+                       to: output.appendingPathComponent("agent-workmap-\(name).png"))
+            await save(AgentWorkMapView(model: model), size: NSSize(width: AgentWorkMap.popoverSize.width, height: AgentWorkMap.popoverSize.height),
+                       appearance: appearance, to: output.appendingPathComponent("agent-workmap-panel-\(name).png"))
+        }
+        AgentModel.defaults.removeObject(forKey: AgentWorkMap.shownKey)
+    }
+
+    /// Four model steps of a session that read files, ran commands and asked GitHub, with a call still running.
+    static func sampleWorkMap(cwd: String) -> WorkMap {
+        var map = WorkMap(), time = Date().addingTimeInterval(-60), calls = 0
+        func call(_ tool: String, _ input: [String: Any], after wait: TimeInterval, took: TimeInterval?) {
+            calls += 1
+            time += wait
+            map.receive(["type": "tool_use", "id": "\(calls)", "tool": tool, "input": input], cwd: cwd, at: time)
+            guard let took else { return }
+            time += took
+            map.receive(["type": "tool_result", "id": "\(calls)"], cwd: cwd, at: time)
+        }
+        map.prompt(model: "claude-opus-5-5", at: time)
+        call("Read", ["file_path": cwd + "/CLAUDE.md"], after: 2.1, took: 0.012)
+        call("Grep", ["pattern": "release-notes", "path": cwd], after: 1.4, took: 0.094)
+        call("Read", ["file_path": cwd + "/agent/src/main.ts"], after: 0.9, took: 0.021)
+        call("Bash", ["command": "swift build", "description": "Build the app"], after: 3.2, took: 31.4)
+        map.receive(["type": "hook", "id": "h1", "name": "PostToolUse:Bash", "phase": "started"], cwd: cwd, at: time)
+        map.receive(["type": "hook", "id": "h1", "phase": "ended"], cwd: cwd, at: time + 0.048)
+        call("mcp__claude-in-chrome__navigate", ["url": "https://github.com/niklasinde/worktime/pull/42"], after: 1.8, took: 1.2)
+        call("mcp__worktime__send_to_agent", ["agent": "Reviewer", "text": "Review the migration"], after: 1.1, took: 0.31)
+        call("Bash", ["command": "git status --short", "description": "See what changed"], after: 1.8, took: 0.058)
+        map.receive(["type": "context", "tokens": 20_400, "max": 200_000, "percent": 10], cwd: cwd, at: time)
+        call("Bash", ["command": "gh pr view 42", "description": "Check develop for the QDLY-8332 release note"], after: 1.8, took: nil)
+        return map
     }
 
     @MainActor

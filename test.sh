@@ -77,6 +77,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/AgentRules.swift \
     Sources/WorkTime/AgentOverviewLogic.swift \
     Sources/WorkTime/AgentSessionLogic.swift \
+    Sources/WorkTime/AgentWorkMapLogic.swift \
     Sources/WorkTime/MCPAgents.swift \
     Sources/WorkTime/MCPTopics.swift \
     Sources/WorkTime/AgentTopicLogic.swift \
@@ -128,6 +129,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/AgentTests.swift \
     Tests/WorkTimeTests/AgentOverviewTests.swift \
     Tests/WorkTimeTests/AgentSessionTests.swift \
+    Tests/WorkTimeTests/AgentWorkMapTests.swift \
     Tests/WorkTimeTests/AgentTopicTests.swift \
     Tests/WorkTimeTests/ResumeTests.swift \
     Tests/WorkTimeTests/InCallTests.swift \

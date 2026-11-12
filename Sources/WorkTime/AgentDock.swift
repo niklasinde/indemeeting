@@ -92,16 +92,19 @@ struct AgentDockPane: View {
     let page: GitHubDetailModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            AgentPanel(model: model, gutter: 16)
+        GeometryReader { proxy in
+            let wide = proxy.size.width >= AgentWorkMap.sideMinWidth
+            VStack(spacing: 0) {
+                header(wide: wide)
+                Divider()
+                AgentWorkMapSplit(model: model, wide: wide) { AgentPanel(model: model, gutter: 16) }
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { model.reveal = { [weak page] in page?.reveal(file: $0) ?? false } }
     }
 
-    private var header: some View {
+    private func header(wide: Bool) -> some View {
         let folder = (model.folder as NSString).abbreviatingWithTildeInPath
         return HStack(spacing: 8) {
             Circle().fill(model.busy ? Color.green : .secondary.opacity(0.5)).frame(width: 7, height: 7)
@@ -120,6 +123,7 @@ struct AgentDockPane: View {
             AgentPermissionPicker(model: model)
             AgentModelPicker(model: model)
             AgentNewSessionButton(model: model).buttonStyle(.bordered).labelStyle(.titleOnly)
+            AgentWorkMapToggle(model: model, wide: wide).labelStyle(.iconOnly)
             AgentOverflowMenu(model: model)
             Divider().frame(height: 14)
             DockPlacementMenu()

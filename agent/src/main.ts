@@ -4,6 +4,7 @@ import { query, type HookCallback, type PermissionResult, type Query } from "@an
 import { chromeResultStatus, chromeServerStatus, isChromeTool } from "./chrome.js";
 import { mcpServers, sessionOptions, type PromptOptions } from "./options.js";
 import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
+import { contextWindow, hookMessage, reportedContext, usageContext } from "./workmap.js";
 import { delegateTool, hasDelegateRules, matchDelegate, parseRules, suggestRules, type Rule } from "./rules.js";
 
 type Input =
@@ -34,6 +35,18 @@ let mode: Mode = "default";
 const hookAllowed = new Set<string>();
 /// A hook waits as long as the user takes to answer.
 const hookTimeout = 24 * 3600;
+/// The context window of the models used so far, and the model turn the context was last reported for.
+let knownWindow: number | undefined;
+let reportedTurn: string | undefined;
+
+/// How full the context window is after a model turn: asked of the session, else worked out from the turn's usage.
+function reportContext(usage: unknown) {
+  const fallback = () => usageContext(usage, knownWindow);
+  const report = (context: Record<string, unknown> | undefined) => context && send(context);
+  const current = running?.query;
+  if (!current) return report(fallback());
+  current.getContextUsage({ detail: "summary" }).then((answer) => report(reportedContext(answer) ?? fallback()), () => report(fallback()));
+}
 
 /// The key the app would deliver this send_to_agent call to, resolved by the same code as the tool; undefined when unclear.
 function resolveTarget(input: Record<string, unknown>): Promise<string | undefined> {
@@ -107,6 +120,9 @@ function forward(message: any, model: string) {
         send({ type: "session", sessionId: message.session_id });
         const chrome = chromeServerStatus(message.mcp_servers);
         if (chrome && !chrome.connected) send({ type: "chrome", ...chrome });
+      } else {
+        const hook = hookMessage(message);
+        if (hook) send(hook);
       }
       break;
     case "assistant":
@@ -119,6 +135,10 @@ function forward(message: any, model: string) {
           send({ type: "tool_use", id: block.id, tool: block.name, input: block.input ?? {} });
           if (isChromeTool(block.name)) chromeCalls.add(block.id);
         }
+      }
+      if (!message.parent_tool_use_id && message.message?.id && message.message.id !== reportedTurn) {
+        reportedTurn = message.message.id;
+        reportContext(message.message.usage);
       }
       break;
     case "user":
@@ -136,6 +156,7 @@ function forward(message: any, model: string) {
       }
       break;
     case "result":
+      knownWindow = contextWindow(message.modelUsage) ?? knownWindow;
       send({
         type: "result", sessionId: message.session_id, isError: message.is_error === true || message.subtype !== "success",
         text: message.result ?? (message.errors ?? []).join("\n"), turns: message.num_turns, model, permissionMode: mode,
@@ -166,6 +187,7 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       env,
       mcpServers: mcpServers(process.env),
       abortController: abort,
+      includeHookEvents: true,
       hooks: { PreToolUse: [{ hooks: [preToolUse(input)], timeout: hookTimeout }] },
       canUseTool: async (tool, toolInput, { toolUseID }) => {
         if (hookAllowed.delete(toolUseID)) return { behavior: "allow" };
