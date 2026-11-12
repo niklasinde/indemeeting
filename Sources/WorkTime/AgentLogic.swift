@@ -50,7 +50,7 @@ enum AgentEvent: Equatable {
 }
 
 /// How an agent's tool calls are approved, picked per agent beside the model. The sidecar applies the read-only list
-/// and saved rules first and asks about send_to_agent in every mode; bypassing permissions is never offered.
+/// and saved rules first and asks about send_to_agent in every mode unless a delegate rule allows it; bypassing permissions is never offered.
 enum AgentPermissionMode: String, CaseIterable, Identifiable {
     case ask = "default", auto, acceptEdits, plan
 
@@ -90,7 +90,7 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
     var help: String {
         switch self {
         case .ask: "Asks before every edit and command that is not read-only or allowed by your rules"
-        case .auto: "A classifier approves or denies calls; you are asked when it cannot decide. Send to agent always asks."
+        case .auto: "A classifier approves or denies calls; you are asked when it cannot decide. Send to agent asks unless you allowed Main to message that agent."
         case .acceptEdits: "Edits files without asking; commands still ask"
         case .plan: "Reads and plans only; nothing is changed"
         }
@@ -105,8 +105,10 @@ enum AgentPermissionMode: String, CaseIterable, Identifiable {
 /// What the window sends the sidecar, one JSON object per line.
 enum AgentRequest {
     case prompt(text: String, cwd: String, sessionID: String?, model: String? = nil, appendSystemPrompt: String? = nil, mode: AgentPermissionMode = .ask,
-                chrome: Bool = false, fork: Bool = false, allowedTools: [String]? = nil)
+                chrome: Bool = false, fork: Bool = false, allowedTools: [String]? = nil, delegateFrom: String? = nil)
     case permission(id: String, allow: Bool)
+    /// The answer to the sidecar's `resolve_target`: the key send_to_agent would deliver to, nil when it is unclear.
+    case target(id: String, key: String?)
     case mode(AgentPermissionMode)
     case rules([AgentRule])
     case interrupt
@@ -114,9 +116,10 @@ enum AgentRequest {
     var line: String {
         var object: [String: Any]
         switch self {
-        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome, let fork, let allowedTools):
+        case .prompt(let text, let cwd, let sessionID, let model, let appendSystemPrompt, let mode, let chrome, let fork, let allowedTools, let delegateFrom):
             object = ["type": "prompt", "text": text, "cwd": cwd, "permissionMode": mode.rawValue]
             if let allowedTools { object["allowedMcpTools"] = allowedTools }
+            if let delegateFrom { object["delegateFrom"] = delegateFrom }
             if chrome { object["chrome"] = true }
             if let sessionID {
                 object["sessionId"] = sessionID
@@ -126,6 +129,9 @@ enum AgentRequest {
             if let appendSystemPrompt { object["appendSystemPrompt"] = appendSystemPrompt }
         case .mode(let mode): object = ["type": "mode", "mode": mode.rawValue]
         case .permission(let id, let allow): object = ["type": "permission", "id": id, "allow": allow]
+        case .target(let id, let key):
+            object = ["type": "target", "id": id]
+            if let key { object["key"] = key }
         case .rules(let rules): object = ["type": "rules", "rules": rules.map(\.json)]
         case .interrupt: object = ["type": "interrupt"]
         }

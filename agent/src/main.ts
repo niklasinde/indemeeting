@@ -4,11 +4,12 @@ import { query, type HookCallback, type PermissionResult, type Query } from "@an
 import { chromeResultStatus, chromeServerStatus, isChromeTool } from "./chrome.js";
 import { mcpServers, sessionOptions, type PromptOptions } from "./options.js";
 import { parseMode, preToolDecision, type Decision, type Mode } from "./permissions.js";
-import { parseRules, suggestRules, type Rule } from "./rules.js";
+import { delegateTool, hasDelegateRules, matchDelegate, parseRules, suggestRules, type Rule } from "./rules.js";
 
 type Input =
   | ({ type: "prompt"; text: string; model?: string; permissionMode?: string } & PromptOptions)
   | { type: "permission"; id: string; allow: boolean }
+  | { type: "target"; id: string; key?: string }
   | { type: "mode"; mode: string }
   | { type: "interrupt" }
   | { type: "rules"; rules: unknown };
@@ -23,6 +24,8 @@ const resultLimit = 4000;
 const authErrors = ["authentication_failed", "oauth_org_not_allowed"];
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"].includes(key)));
 
+const resolving = new Map<string, (key?: string) => void>();
+const resolveTimeout = 5000;
 const pending = new Map<string, (result: PermissionResult) => void>();
 let running: { query: Query; abort: AbortController } | undefined;
 let nextPermission = 0;
@@ -31,6 +34,23 @@ let mode: Mode = "default";
 const hookAllowed = new Set<string>();
 /// A hook waits as long as the user takes to answer.
 const hookTimeout = 24 * 3600;
+
+/// The key the app would deliver this send_to_agent call to, resolved by the same code as the tool; undefined when unclear.
+function resolveTarget(input: Record<string, unknown>): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const id = String(++nextPermission);
+    const timer = setTimeout(() => resolving.delete(id) && resolve(undefined), resolveTimeout);
+    resolving.set(id, (key) => (clearTimeout(timer), resolve(key)));
+    send({ type: "resolve_target", id, input });
+  });
+}
+
+/// The decision for a call; a send_to_agent from a Main is looked at against its delegate rules first.
+async function decide(tool: string, input: Record<string, unknown>, options: PromptOptions) {
+  const check = tool === delegateTool && hasDelegateRules(rules, options.delegateFrom);
+  const delegated = check ? matchDelegate(rules, options.delegateFrom, await resolveTarget(input)) : undefined;
+  return preToolDecision(tool, input, options.cwd, rules, mode, options.allowedMcpTools, delegated);
+}
 
 function ask(tool: string, input: Record<string, unknown>, cwd: string): Promise<PermissionResult> {
   return new Promise((resolve) => {
@@ -48,11 +68,12 @@ function allowed(decision: Extract<Decision, { kind: "allow" }>, toolUseID: stri
 
 /// Runs before the mode decides, so the read-only list and saved rules apply in every mode and send_to_agent is asked
 /// of the user even where the auto mode classifier would otherwise answer.
-function preToolUse(cwd: string, allowedMcp?: string[]): HookCallback {
+function preToolUse(options: PromptOptions): HookCallback {
   return async (hook) => {
     if (hook.hook_event_name !== "PreToolUse") return {};
     const input = (hook.tool_input ?? {}) as Record<string, unknown>;
-    const decision = preToolDecision(hook.tool_name, input, cwd, rules, mode, allowedMcp);
+    const cwd = options.cwd;
+    const decision = await decide(hook.tool_name, input, options);
     if (decision.kind === "defer") return {};
     if (decision.kind === "deny") {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: decision.reason } };
@@ -145,10 +166,10 @@ async function run(input: Extract<Input, { type: "prompt" }>) {
       env,
       mcpServers: mcpServers(process.env),
       abortController: abort,
-      hooks: { PreToolUse: [{ hooks: [preToolUse(input.cwd, input.allowedMcpTools)], timeout: hookTimeout }] },
+      hooks: { PreToolUse: [{ hooks: [preToolUse(input)], timeout: hookTimeout }] },
       canUseTool: async (tool, toolInput, { toolUseID }) => {
         if (hookAllowed.delete(toolUseID)) return { behavior: "allow" };
-        const decision = preToolDecision(tool, toolInput, input.cwd, rules, mode, input.allowedMcpTools);
+        const decision = await decide(tool, toolInput, input);
         if (decision.kind === "deny") return { behavior: "deny", message: decision.reason };
         return decision.kind === "allow" ? allowed(decision, toolUseID) : ask(tool, toolInput, input.cwd);
       },
@@ -191,6 +212,12 @@ function handle(line: string) {
       const resolve = pending.get(input.id);
       pending.delete(input.id);
       resolve?.(input.allow ? { behavior: "allow" } : { behavior: "deny", message: "The user denied this tool call." });
+      break;
+    }
+    case "target": {
+      const resolve = resolving.get(input.id);
+      resolving.delete(input.id);
+      resolve?.(input.key);
       break;
     }
     case "mode":

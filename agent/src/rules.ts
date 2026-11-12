@@ -2,15 +2,16 @@ import { dirname, resolve, sep } from "node:path";
 import { isChromeTool } from "./chrome.js";
 import { builtInAllowed, commandParts } from "./readonly.js";
 
-export type Rule = { kind: "bash" | "edits" | "tool"; value: string };
+export type Rule = { kind: "bash" | "edits" | "tool" | "delegate"; value: string };
 
 const editTools = ["Edit", "Write"];
 /// Tools that are asked about every time, so they are never offered or matched as a rule.
 const alwaysAsk = new Set(builtInAllowed.alwaysAsk);
+export const delegateTool = "mcp__worktime__send_to_agent";
 
 export function parseRules(value: unknown): Rule[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((r): r is Rule => ["bash", "edits", "tool"].includes(r?.kind) && typeof r?.value === "string" && r.value.trim() !== "");
+  return value.filter((r): r is Rule => ["bash", "edits", "tool", "delegate"].includes(r?.kind) && typeof r?.value === "string" && r.value.trim() !== "");
 }
 
 /// The rule saved for one command: its first word, plus the second when it reads like a subcommand (`git fetch`,
@@ -29,14 +30,15 @@ function isInside(path: string, folder: string): boolean {
   return path === folder || path.startsWith(folder.endsWith(sep) ? folder : folder + sep);
 }
 
-/// What Always allow would save for a call: one prefix rule per Bash command that is not read-only, the project folder
+/// What Always allow would save for a call: one prefix rule per Bash command that is not read-only (none when the line writes
+/// a file outside the scratchpad, which no rule covers), the project folder
 /// (or the file's folder outside it) for edits, the tool itself otherwise. Empty when nothing can be offered.
 export function suggestRules(tool: string, input: Record<string, unknown>, cwd: string): Rule[] {
   if (alwaysAsk.has(tool) || isChromeTool(tool)) return [];
   if (tool === "Bash") {
     const parts = typeof input.command === "string" ? commandParts(input.command) : undefined;
     const prefixes = parts?.map((p) => prefixRule(p.words));
-    if (!prefixes?.length || prefixes.some((p) => p === undefined)) return [];
+    if (!prefixes?.length || prefixes.some((p) => p === undefined) || parts?.some((p) => p.redirected)) return [];
     return [...new Set(prefixes as string[])].map((value) => ({ kind: "bash", value }));
   }
   if (editTools.includes(tool)) {
@@ -46,6 +48,19 @@ export function suggestRules(tool: string, input: Record<string, unknown>, cwd: 
   }
   return [{ kind: "tool", value: tool }];
 }
+
+/// The rule saved when Main of `workspace` may message the agent with canonical key `target`.
+export const delegateRule = (workspace: string, target: string) => `delegate:${workspace}:${target}`;
+
+/// The delegate rule allowing Main of `workspace` to message `target`, which the app resolved from the call; never matched
+/// on the call's own text.
+export function matchDelegate(rules: Rule[], workspace: string | undefined, target: string | undefined): string | undefined {
+  if (!workspace || !target) return undefined;
+  return rules.find((r) => r.kind === "delegate" && r.value === delegateRule(workspace, target))?.value;
+}
+
+export const hasDelegateRules = (rules: Rule[], workspace: string | undefined) =>
+  workspace !== undefined && rules.some((r) => r.kind === "delegate" && r.value.startsWith(delegateRule(workspace, "")));
 
 function startsWith(words: string[], prefix: string): boolean {
   const wanted = prefix.split(" ").filter(Boolean);
@@ -58,7 +73,7 @@ export function matchRules(rules: Rule[], tool: string, input: Record<string, un
   if (alwaysAsk.has(tool) || isChromeTool(tool)) return undefined;
   if (tool === "Bash") {
     const parts = typeof input.command === "string" ? commandParts(input.command) : undefined;
-    if (!parts?.length) return undefined;
+    if (!parts?.length || parts.some((p) => p.redirected)) return undefined;
     const used = parts.map((p) => rules.find((r) => r.kind === "bash" && startsWith(p.words, r.value))?.value);
     return used.every(Boolean) ? [...new Set(used)].join(", ") : undefined;
   }

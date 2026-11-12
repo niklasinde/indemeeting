@@ -1,16 +1,17 @@
 import builtIn from "./builtin-allowed.json" with { type: "json" };
+import { scratchCommands, scratchPath } from "./scratch.js";
 
 /// What runs without asking, also listed in WorkTime's Settings, which reads this file from the build.
 export const builtInAllowed: { tools: string[]; mcpPrefix: string; alwaysAsk: string[]; commands: { name: string; anyArgs?: boolean; note?: string }[] } = builtIn;
 
-type Token = { word: string; start: number; end: number } | { op: string };
+type Token = { word: string; start: number; end: number } | { op: string } | { redirect: string; start: number; end: number };
 type Word = { word: string; start: number; end: number };
 
 const harmlessRedirects = new Set([">/dev/null", "2>/dev/null", "&>/dev/null", "2>&1", "1>&2", ">&2"]);
 const operators = ["&&", "||", "|", ";", "\n"];
 
 /// Splits a command line into words and control operators. Returns undefined for anything it does not fully
-/// understand or that could write or run other code: redirection to files, backticks, subshells, heredocs, `&`.
+/// understand or that could run other code: redirection other than `>` and `>>` to a file (checked by `commandParts`), backticks, subshells, heredocs, `&`.
 function tokenize(command: string): Token[] | undefined {
   const tokens: Token[] = [];
   let word = "", inWord = false, start = 0, i = 0;
@@ -65,6 +66,12 @@ function tokenize(command: string): Token[] | undefined {
       const redirect = inWord ? undefined
         : [...harmlessRedirects].find((r) => command.startsWith(r, i) && /^([\s;|&]|$)/.test(command.charAt(i + r.length)));
       if (redirect) {
+        i += redirect.length;
+        continue;
+      }
+      if (!inWord && c === ">") {
+        const redirect = command.startsWith(">>", i) ? ">>" : ">";
+        tokens.push({ redirect, start: i, end: i + redirect.length });
         i += redirect.length;
         continue;
       }
@@ -209,7 +216,7 @@ function isReadOnlySimple(words: string[]): boolean {
   const [name, ...args] = words;
   if (!name || name.includes("/") || name.includes("=") || name.includes("$")) return false;
   if (anyArgs.has(name)) return true;
-  return checkedCommands.get(name)?.(args) ?? false;
+  return (checkedCommands.get(name) ?? scratchCommands.get(name))?.(args) ?? false;
 }
 
 /// The commands allowed with some arguments only, each with its check.
@@ -232,7 +239,7 @@ const checkedCommands = new Map<string, (args: string[]) => boolean>([
 
 /// Every command name the checks know, so the listed ones can be kept the same.
 export function handledCommands(): string[] {
-  return [...anyArgs, ...checkedCommands.keys()];
+  return [...anyArgs, ...checkedCommands.keys(), ...scratchCommands.keys()];
 }
 
 const assignment = /^([A-Za-z_]\w*)=(.*)$/s;
@@ -247,7 +254,8 @@ function expand(words: string[], variables: Map<string, string>): string[] {
   });
 }
 
-export type Part = { text: string; words: string[] };
+/// `redirected` when the part writes to a file outside the scratchpad, which no rule covers.
+export type Part = { text: string; words: string[]; redirected?: boolean };
 
 /// The simple commands of a Bash command line that are not read-only: their text as it appears in the line and their
 /// words with variables set earlier in the line expanded. Empty when the whole command only reads: allowed commands
@@ -258,10 +266,22 @@ export function commandParts(command: string): Part[] | undefined {
   const tokens = tokenize(trimmed);
   if (!tokens || tokens.length === 0) return undefined;
   const segments: Word[][] = [[]];
+  const redirects: Word[][] = [[]];
+  let redirecting = false;
   for (const token of tokens) {
-    if ("op" in token) segments.push([]);
-    else segments[segments.length - 1].push(token);
+    if ("op" in token) {
+      if (redirecting) return undefined;
+      segments.push([]);
+      redirects.push([]);
+    } else if ("redirect" in token) {
+      if (redirecting) return undefined;
+      redirecting = true;
+    } else {
+      (redirecting ? redirects : segments)[segments.length - 1].push(token);
+      redirecting = false;
+    }
   }
+  if (redirecting) return undefined;
   const variables = new Map<string, string>();
   const assign = (name: string, value: string) => {
     if (variables.has(name) || name in process.env || sensitiveVariable.test(name)) return false;
@@ -270,15 +290,18 @@ export function commandParts(command: string): Part[] | undefined {
   };
   const parts: Part[] = [];
   let loops = 0, groups = 0;
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
+    const written = redirects[index];
     let rest = segment;
     while (rest[0]?.word === "{" || rest[0]?.word === "do") {
       if (rest[0].word === "do" && loops === 0) return undefined;
       if (rest[0].word === "{") groups++;
       rest = rest.slice(1);
     }
-    if (rest.length === 0) continue;
+    if (rest.length === 0 && written.length === 0) continue;
+    if (rest.length === 0) return undefined;
     const words = rest.map((t) => t.word);
+    if (written.length > 0 && (words[0] === "for" || words.every((w) => assignment.test(w)) || words.length === 1 && ["}", "done"].includes(words[0]))) return undefined;
     if (words.length === 1 && words[0] === "}") {
       if (--groups < 0) return undefined;
       continue;
@@ -293,7 +316,7 @@ export function commandParts(command: string): Part[] | undefined {
       if (!assign(words[1], expand(words.slice(3), variables).join(" "))) parts.push({ text: trimmed.slice(rest[0].start, rest[rest.length - 1].end), words });
       continue;
     }
-    const text = trimmed.slice(rest[0].start, rest[rest.length - 1].end);
+    const text = trimmed.slice(rest[0].start, Math.max(rest[rest.length - 1].end, ...written.map((t) => t.end)));
     if (words.every((w) => assignment.test(w))) {
       for (const w of words) {
         const [, name, value] = assignment.exec(w)!;
@@ -302,7 +325,8 @@ export function commandParts(command: string): Part[] | undefined {
       continue;
     }
     const expanded = expand(words, variables);
-    if (!isReadOnlySimple(expanded)) parts.push({ text, words: expanded });
+    const redirected = expand(written.map((t) => t.word), variables).some((target) => !scratchPath(target));
+    if (redirected || !isReadOnlySimple(expanded)) parts.push({ text, words: expanded, ...(redirected ? { redirected } : {}) });
   }
   return loops === 0 && groups === 0 ? parts : undefined;
 }

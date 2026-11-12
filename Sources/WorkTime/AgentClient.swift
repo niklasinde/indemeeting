@@ -476,7 +476,7 @@ final class AgentModel: ObservableObject {
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
         busy = true
         let auto = model == AgentLogic.auto, chosen = model, previous = lastModel, cwd = folder
-        let system = systemPrompt, allowedTools = assistant.map { Assistants.allowedTools($0.role) }
+        let system = systemPrompt, allowedTools = assistant.map { Assistants.allowedTools($0.role) }, delegateFrom = isMain ? workspace : nil
         let signals = AgentLogic.RouteSignals(mentions: AgentLogic.mentions(in: text).count, isReview: prURL != nil,
                                               turns: items.filter { if case .user = $0.kind { true } else { false } }.count - 1)
         routing = Task { @MainActor [weak self] in
@@ -487,7 +487,8 @@ final class AgentModel: ObservableObject {
             turnIsAuto = auto
             client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
                                 appendSystemPrompt: system, mode: permissionMode, chrome: chrome,
-                                fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords), allowedTools: allowedTools))
+                                fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords), allowedTools: allowedTools,
+                                delegateFrom: delegateFrom))
         }
         return true
     }
@@ -582,7 +583,17 @@ final class AgentModel: ObservableObject {
     }
 
     private func receive(_ line: String) {
-        guard let event = AgentEvent.decode(line, cwd: folder) else { return }
+        let object = AgentDelegation.object(line)
+        if object?["type"] as? String == "resolve_target", let workspace {
+            let key = AgentDelegation.target(object?["input"] as? [String: Any] ?? [:], workspace: workspace)?.key
+            client?.send(.target(id: object?["id"] as? String ?? "", key: key))
+            return
+        }
+        guard var event = AgentEvent.decode(line, cwd: folder) else { return }
+        if case .permissionRequest(let id, let tool, let summary, let detail, _) = event, isMain, let workspace,
+           let rule = AgentDelegation.rule(tool: tool, input: object?["input"] as? [String: Any] ?? [:], workspace: workspace) {
+            event = .permissionRequest(id: id, tool: tool, summary: summary, detail: detail, offer: [rule])
+        }
         if case .chrome(let problem) = event { return chromeProblem = chrome ? problem : nil }
         if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { adopt(session) }
         if case .idle = event { finishTurn() }

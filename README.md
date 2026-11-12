@@ -547,6 +547,11 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   The SDK's cost estimate is not shown, since a plan is not charged per token.
 - **Context.** The sidecar registers WorkTime's own read-only MCP server (`WorkTime --mcp`) as `worktime`, so the agent can read
   meetings and activity.
+- **Delegation.** Main hands work to an assistant, a pull request's agent or a topic with `send_to_agent`, which asks in every
+  permission mode. The card offers **Always allow Main → Reviewer**, saved as a rule for that workspace's Main and that one agent
+  (listed in Settings > Agent as "Main (Work) may message Reviewer"); other agents, other workspaces and unclear names still ask,
+  and only a Main can use such a rule. Bash commands writing with `>` or `>>`, `mkdir`, `cp`, `mv`, `rm`, `touch` and `tee`
+  run without asking when everything they write is in the agent's own scratchpad (`/tmp/claude-<uid>/…/scratchpad`).
 - **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.
   Type `@` to pick a file of the folder (`git ls-files`, or a bounded walk); `@path:10-40` adds a line range. On send the
   referenced files are listed by absolute path under the prompt, not inlined. `path/file.swift:123` references and Markdown

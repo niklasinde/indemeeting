@@ -883,7 +883,7 @@ private struct AgentPermissionRow: View {
                 HStack {
                     Button("Allow once") { answer(true, false) }
                     if !offer.isEmpty {
-                        Button("Always allow") { answer(true, true) }
+                        Button(AgentRules.offerButton(offer)) { answer(true, true) }
                             .help("Saved in Settings \u{203A} Agent, for every agent")
                     }
                     Button("Deny") { answer(false, false) }
@@ -909,7 +909,7 @@ struct AgentSettingsSection: View {
 
     @ViewBuilder private var sections: some View {
         SettingsSection("Always allowed", footer: "Saved with Always allow on a permission prompt and used by every agent. A command is "
-                        + "allowed when each part that is not read-only starts with one of these; send to agent and Claude in Chrome\u{2019}s actions are always asked.") {
+                        + "allowed when each part that is not read-only starts with one of these; Claude in Chrome\u{2019}s actions are always asked, and so is send to agent, unless you allowed Main to message that agent.") {
             if store.rules.isEmpty {
                 SettingsRow("Nothing yet", detail: "Choose Always allow when an agent asks to run something") {}
             }
@@ -932,7 +932,7 @@ struct AgentSettingsSection: View {
             AgentAddRuleRow(store: store, builtIn: builtIn)
         }
         SettingsSection("Always allowed (built in)", footer: "What every agent runs without asking. Commands only when every part of the "
-                        + "line is one of these; anything the check is unsure about is asked.") {
+                        + "line is one of these, also with output redirected (> or >>) into the agent\u{2019}s own scratchpad; anything the check is unsure about is asked.") {
             if let builtIn {
                 DisclosureGroup("\(builtIn.tools.count + 1) tools, \(builtIn.commands.count) commands") {
                     VStack(alignment: .leading, spacing: 3) {

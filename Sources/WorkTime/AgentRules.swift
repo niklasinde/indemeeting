@@ -3,24 +3,44 @@ import Foundation
 /// A call the user chose to always allow, for every agent: a Bash command prefix, edits in a folder, or one tool.
 struct AgentRule: Codable, Hashable {
     enum Kind: String, Codable {
-        case bash, edits, tool
+        case bash, edits, tool, delegate
     }
 
     let kind: Kind
     let value: String
+    /// For a delegate rule, what the target and the workspace are called, to list and offer it by name.
+    var title: String?
+    var workspaceName: String?
 
-    init(kind: Kind, value: String) {
+    init(kind: Kind, value: String, title: String? = nil, workspaceName: String? = nil) {
         self.kind = kind
         self.value = value
+        self.title = title
+        self.workspaceName = workspaceName
+    }
+
+    /// Main of `workspace` may send to `target` without asking.
+    static func delegate(workspace: Workspace, target: AgentTarget) -> AgentRule {
+        AgentRule(kind: .delegate, value: "delegate:\(workspace.id):\(target.key)", title: target.title, workspaceName: workspace.name)
+    }
+
+    static func == (lhs: AgentRule, rhs: AgentRule) -> Bool { lhs.kind == rhs.kind && lhs.value == rhs.value }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(kind)
+        hasher.combine(value)
     }
 
     init?(_ object: Any) {
         guard let object = object as? [String: Any], let kind = (object["kind"] as? String).flatMap(Kind.init),
               let value = object["value"] as? String, !value.isEmpty else { return nil }
-        self.init(kind: kind, value: value)
+        self.init(kind: kind, value: value, title: object["title"] as? String, workspaceName: object["workspaceName"] as? String)
     }
 
     var json: [String: String] { ["kind": kind.rawValue, "value": value] }
+
+    /// Who may message whom, for a delegate rule: `Main (Work) may message Reviewer`.
+    var delegateLabel: String { "Main (\(workspaceName ?? "?")) may message \(title ?? value)" }
 }
 
 enum AgentRules {
@@ -44,7 +64,14 @@ enum AgentRules {
         case .bash: return rule.value
         case .edits: return "Edits in " + abbreviated(rule.value)
         case .tool: return AgentLogic.displayName(rule.value)
+        case .delegate: return rule.delegateLabel
         }
+    }
+
+    /// The Always allow button of a permission card.
+    static func offerButton(_ rules: [AgentRule]) -> String {
+        guard let rule = rules.first, rule.kind == .delegate else { return "Always allow" }
+        return "Always allow Main \u{2192} \(rule.title ?? rule.value)"
     }
 
     /// The Always allow line of a permission card, naming exactly what will be saved.
@@ -54,6 +81,7 @@ enum AgentRules {
         case .bash: return "Always allow: " + rules.map(\.value).joined(separator: ", ")
         case .edits: return "Always allow edits in " + abbreviated(first.value)
         case .tool: return "Always allow " + AgentLogic.displayName(first.value)
+        case .delegate: return first.delegateLabel + " without asking"
         }
     }
 
@@ -91,6 +119,28 @@ enum AgentRules {
 
     private static func abbreviated(_ path: String, home: String = NSHomeDirectory()) -> String {
         path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+    }
+}
+
+/// Main's send_to_agent, which is asked about unless the user allowed Main of that workspace to message that agent.
+enum AgentDelegation {
+    static let tool = "mcp__worktime__send_to_agent"
+
+    static func object(_ line: String) -> [String: Any]? {
+        line.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+
+    /// The agent a Main of `workspace` would message with these send_to_agent arguments, nil when that is unclear.
+    static func target(_ input: [String: Any], workspace: String, sources: MCPServer.AgentSources = MCPServer.AgentSources()) -> AgentTarget? {
+        sources.delegation(input, from: workspace)
+    }
+
+    /// What Always allow saves for a send_to_agent call; nil for another tool or an agent that cannot be named.
+    static func rule(tool name: String, input: [String: Any], workspace id: String,
+                     sources: MCPServer.AgentSources = MCPServer.AgentSources()) -> AgentRule? {
+        guard name == tool, let found = Workspaces.workspace(id, in: sources.workspaces.file().workspaces),
+              let target = target(input, workspace: id, sources: sources) else { return nil }
+        return .delegate(workspace: found, target: target)
     }
 }
 

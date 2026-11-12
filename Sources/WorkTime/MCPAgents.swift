@@ -31,6 +31,56 @@ extension MCPServer {
         var replyTimeout: TimeInterval = 10
         /// Slack mentions and unread DMs as Markdown, nil when Slack is not signed in.
         var slack: () -> String? = { MCPServer.slackAttention() }
+
+        func agents() -> [AgentState] { (try? Data(contentsOf: stateFile)).flatMap(AgentOverview.decode)?.agents ?? [] }
+
+        func assistantEntries(_ args: [String: Any]) throws -> [AssistantEntry] {
+            let scope = try workspaces.scope(args)
+            return workspaces.file().workspaces.filter { Workspaces.includes($0.id, in: scope) }.flatMap { workspace in
+                assistants.list(workspace.id).map { AssistantEntry(workspace: workspace.id, role: $0) }
+            }
+        }
+
+        /// The agent `agent` or `pr_url` names: an assistant, a pull request or a topic, nil when neither is given.
+        func target(_ args: [String: Any]) throws -> AgentTarget? {
+            guard let text = [args["agent"], args["pr_url"]].compactMap({ $0 as? String })
+                .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
+            switch Assistants.resolve(text, in: try assistantEntries(args)) {
+            case .success(let target)?: return target
+            case .failure(let error)?: throw MCPToolError(error.message)
+            case nil: break
+            }
+            switch TopicAgents.resolve(text, topics: TopicAgents.decode(try? Data(contentsOf: topics))) {
+            case .success(let target): return target
+            case .failure(let error): throw MCPToolError(error.message)
+            }
+        }
+
+        func workspace(of target: AgentTarget, in agents: [AgentState]) -> String? {
+            if let id = Assistants.parse(key: target.key)?.workspace { return id }
+            if let state = agents.first(where: { $0.key == target.key }) { return state.workspace }
+            let saved = workspaces.file()
+            return GitHubLink.pullRequest(at: target.key) != nil
+                ? Workspaces.assign(Workspaces.prSubject(target.key, override: saved.overrides[target.key]), in: saved.workspaces) : nil
+        }
+
+        func checkDelegation(_ target: AgentTarget, args: [String: Any], agents: [AgentState]) throws {
+            let scope = try workspaces.scope(args)
+            if let problem = Workspaces.delegationProblem(target: workspace(of: target, in: agents), scope: scope,
+                                                         workspaces: workspaces.file().workspaces) {
+                throw MCPToolError(problem)
+            }
+        }
+
+        /// The agent a Main of `workspace` would send to with these arguments, as send_to_agent resolves it; nil when it is
+        /// unclear, belongs to another workspace or the call names a workspace itself.
+        func delegation(_ args: [String: Any], from workspace: String) -> AgentTarget? {
+            var sources = self
+            sources.workspaces.environment = { workspace }
+            guard (args["workspace"] as? String)?.trimmingCharacters(in: .whitespaces).isEmpty ?? true,
+                  let target = try? sources.target(args), (try? sources.checkDelegation(target, args: args, agents: sources.agents())) != nil else { return nil }
+            return GitHubLink.pullRequest(at: target.key).map { AgentTarget(key: $0.url, title: target.title) } ?? target
+        }
     }
 
     static let agentProperty: [String: Any] = ["type": "string",
@@ -45,44 +95,11 @@ extension MCPServer {
             guard let file = AgentOverview.decode(data) else { throw MCPToolError("\(sources.stateFile.path) could not be read.") }
             return file
         }
-        func assistantEntries(_ args: [String: Any]) throws -> [AssistantEntry] {
-            let scope = try sources.workspaces.scope(args)
-            return sources.workspaces.file().workspaces.filter { Workspaces.includes($0.id, in: scope) }.flatMap { workspace in
-                sources.assistants.list(workspace.id).map { AssistantEntry(workspace: workspace.id, role: $0) }
-            }
-        }
-        func target(_ args: [String: Any]) throws -> AgentTarget? {
-            guard let text = [args["agent"], args["pr_url"]].compactMap({ $0 as? String })
-                .first(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) else { return nil }
-            switch Assistants.resolve(text, in: try assistantEntries(args)) {
-            case .success(let target)?: return target
-            case .failure(let error)?: throw MCPToolError(error.message)
-            case nil: break
-            }
-            switch TopicAgents.resolve(text, topics: TopicAgents.decode(try? Data(contentsOf: sources.topics))) {
-            case .success(let target): return target
-            case .failure(let error): throw MCPToolError(error.message)
-            }
-        }
         func scoped(_ args: [String: Any]) throws -> (scope: WorkspaceScope, file: AgentOverview.File) {
             var file = try stateFile()
             let scope = try sources.workspaces.scope(args)
             file.agents = Workspaces.filter(file.agents, in: scope)
             return (scope, file)
-        }
-        func workspace(of target: AgentTarget, in agents: [AgentState]) -> String? {
-            if let id = Assistants.parse(key: target.key)?.workspace { return id }
-            if let state = agents.first(where: { $0.key == target.key }) { return state.workspace }
-            let saved = sources.workspaces.file()
-            return GitHubLink.pullRequest(at: target.key) != nil
-                ? Workspaces.assign(Workspaces.prSubject(target.key, override: saved.overrides[target.key]), in: saved.workspaces) : nil
-        }
-        func checkDelegation(_ target: AgentTarget, args: [String: Any], agents: [AgentState]) throws {
-            let scope = try sources.workspaces.scope(args)
-            if let problem = Workspaces.delegationProblem(target: workspace(of: target, in: agents), scope: scope,
-                                                         workspaces: sources.workspaces.file().workspaces) {
-                throw MCPToolError(problem)
-            }
         }
         return [
             MCPTool(name: "agents_overview",
@@ -105,11 +122,11 @@ extension MCPServer {
                 var session = (args["session_id"] as? String)?.trimmingCharacters(in: .whitespaces)
                 var cwd: String?
                 let agents = (try? stateFile())?.agents ?? []
-                if let target = try target(args) {
+                if let target = try sources.target(args) {
                     guard let agent = agents.first(where: { $0.key == target.key }) else {
                         throw MCPToolError("No agent for \(target.title) in agents_overview.")
                     }
-                    try checkDelegation(target, args: args, agents: agents)
+                    try sources.checkDelegation(target, args: args, agents: agents)
                     guard let id = agent.sessionID else { throw MCPToolError("The agent \(target.title) has no session yet.") }
                     session = id
                     cwd = agent.folder
@@ -159,8 +176,8 @@ extension MCPServer {
                                  "workspace": workspaceProperty,
                                  "text": ["type": "string", "maxLength": AgentInbox.textLimit, "description": "The prompt for that agent."]],
                     required: ["text"], readOnly: false) { args in
-                guard let target = try target(args) else { throw MCPToolError("agent is required.") }
-                try checkDelegation(target, args: args, agents: (try? stateFile())?.agents ?? [])
+                guard let target = try sources.target(args) else { throw MCPToolError("agent is required.") }
+                try sources.checkDelegation(target, args: args, agents: sources.agents())
                 let request: AgentInbox.Request
                 switch AgentInbox.request(agent: target.key, text: args["text"] as? String ?? "", now: now()) {
                 case .success(let made): request = made

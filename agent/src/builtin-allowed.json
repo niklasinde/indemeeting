@@ -37,6 +37,12 @@
     { "name": "date", "note": "showing the date only" },
     { "name": "printf", "note": "not -v" },
     { "name": "env", "note": "without arguments" },
-    { "name": "exit", "note": "with a status at most" }
+    { "name": "exit", "note": "with a status at most" },
+    { "name": "mkdir", "note": "-p, only inside the agent's scratchpad" },
+    { "name": "touch", "note": "only inside the agent's scratchpad" },
+    { "name": "tee", "note": "-a, only inside the agent's scratchpad" },
+    { "name": "cp", "note": "into the agent's scratchpad only" },
+    { "name": "mv", "note": "within the agent's scratchpad only" },
+    { "name": "rm", "note": "inside the agent's scratchpad only, recursive too" }
   ]
 }

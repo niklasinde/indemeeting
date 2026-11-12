@@ -235,6 +235,36 @@ let assistantTests: [(name: String, run: () throws -> Void)] = [
         let overview = (try? tools("work").first { $0.name == "agents_overview" }!.run([:])) ?? ""
         check(overview.contains("assistant Developer") && overview.contains("assistant:work:developer") && !overview.contains("assistant:personal"), overview)
     }),
+    ("assistants: Always allow for send_to_agent is offered per target, for a Main's own workspace only", {
+        let folder = try scratch()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let files = AssistantFiles(folder: folder.appendingPathComponent("Workspaces"), home: folder.path)
+        files.ensureDefaults("work")
+        files.ensureDefaults("personal")
+        files.write("---\nname: Planner\n---\n", workspace: "work", slug: "planner")
+        var sources = MCPServer.AgentSources(stateFile: folder.appendingPathComponent("agents.json"), inbox: folder, projects: folder, slack: { nil })
+        sources.assistants = files
+        sources.workspaces = MCPServer.WorkspaceSource(file: { WorkspaceFile(workspaces: Workspaces.defaults) }, environment: { nil })
+        func rule(_ workspace: String, _ args: [String: Any], tool: String = AgentDelegation.tool) -> AgentRule? {
+            AgentDelegation.rule(tool: tool, input: args, workspace: workspace, sources: sources)
+        }
+        let developer = rule("work", ["agent": "Developer assistant", "text": "Review https://github.com/o/r/pull/1"])
+        check(developer?.value == "delegate:work:assistant:work:developer", developer?.value ?? "nil")
+        check(developer?.delegateLabel == "Main (Work) may message Developer" && AgentRules.offerButton([developer!]) == "Always allow Main \u{2192} Developer", "named")
+        check(developer == rule("work", ["agent": "developer", "text": "other text"]), "the same rule whatever the free text")
+        check(rule("personal", ["agent": "developer"])?.value == "delegate:personal:assistant:personal:developer", "each workspace its own")
+        check(rule("personal", ["agent": "assistant:work:developer"]) == nil, "another workspace's agent")
+        check(rule("personal", ["agent": "developer", "workspace": "work"]) == nil, "a workspace argument pointing elsewhere")
+        check(rule("work", ["agent": "nobody"]) == nil && rule("work", ["agent": "planner"]) == nil && rule("work", ["text": "x"]) == nil, "unknown, broken, none")
+        check(rule("work", ["agent": "developer"], tool: "Bash") == nil && rule("nowhere", ["agent": "developer"]) == nil, "only send_to_agent, only a known workspace")
+        let pr = rule("work", ["pr_url": "https://github.com/quiddly-com/finq.api/pull/12"])
+        check(pr?.title != nil && pr?.value.hasPrefix("delegate:work:https://github.com/quiddly-com/finq.api/pull/12") == true, pr?.value ?? "nil")
+        let saved = AgentRules.decode(AgentRules.encode([developer!]))
+        check(saved == [developer!] && saved.first?.title == "Developer" && saved.first?.workspaceName == "Work", "kept with its names")
+        check(AgentRules.adding([AgentRule(kind: .delegate, value: developer!.value)], to: saved) == saved, "not added twice")
+        check(developer!.json == ["kind": "delegate", "value": developer!.value], "the sidecar gets the kind and value")
+        check(AgentRules.offer([developer!]) == "Main (Work) may message Developer without asking" && AgentRules.offerButton([]) == "Always allow", "card text")
+    }),
     ("assistants: the sidecar is sent the tools the assistant may call and nothing else", {
         let developer = Assistants.template("developer")!.role
         let allowed = Assistants.allowedTools(developer)

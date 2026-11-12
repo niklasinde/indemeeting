@@ -21,10 +21,11 @@ export function mcpDenied(tool: string, allowed: string[] | undefined): boolean 
 }
 
 /// Claude in Chrome acts in the user's own browser, so only its reads run without asking, in every mode and whatever the rules.
-export function preToolDecision(tool: string, input: Record<string, unknown>, cwd: string, rules: Rule[], mode: Mode, allowedMcp?: string[]): Decision {
+/// `delegated` is the delegate rule that lets this call of send_to_agent through, the only thing that does.
+export function preToolDecision(tool: string, input: Record<string, unknown>, cwd: string, rules: Rule[], mode: Mode, allowedMcp?: string[], delegated?: string): Decision {
   if (mcpDenied(tool, allowedMcp)) return { kind: "deny", reason: `${tool} is not one of this assistant's tools. Its role file lists the tools it may use.` };
   if (isChromeTool(tool)) return isChromeRead(tool, input) ? { kind: "allow", readOnly: true } : { kind: "ask" };
-  if (builtInAllowed.alwaysAsk.includes(tool)) return { kind: "ask" };
+  if (builtInAllowed.alwaysAsk.includes(tool)) return delegated ? { kind: "allow", rule: delegated } : { kind: "ask" };
   if (isAutoAllowedTool(tool)) return { kind: "allow" };
   if (tool === "Bash" && typeof input.command === "string" && isReadOnlyCommand(input.command)) return { kind: "allow", readOnly: true };
   if (mode === "plan") return { kind: "defer" };
