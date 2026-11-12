@@ -44,7 +44,8 @@ struct GeneralSettingsView: View {
                     if upgrade.ready { Button("Restart to upgrade") { upgrade.restartNow() } }
                 }
                 Divider().padding(.leading, 14)
-                SettingsRow("Setup & Help", detail: "Permissions and a tour of the app") {
+                SettingsRow("Setup & Help", detail: Permissions.allGranted ? "Permissions and a tour of the app"
+                                                                           : "Some permissions are missing") {
                     Button("Open\u{2026}") { OnboardingWindow.shared.show() }
                 }
             }

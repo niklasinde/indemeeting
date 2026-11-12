@@ -401,12 +401,14 @@ struct MainView: View {
                 page
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                Text(UpgradeLogic.versionLabel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(.bar)
+                if library.section != .settings {
+                    Text(UpgradeLogic.versionLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                        .background(.bar)
+                }
             }
         }
         .toolbar(removing: .sidebarToggle)
@@ -468,10 +470,11 @@ struct MainView: View {
 
     @ViewBuilder private var statusNotices: some View {
         let messages = [recorder.notice, recorder.errorMessage, processor.errorMessage].compactMap { $0 }
-        if !messages.isEmpty || !Permissions.allGranted {
+        let permissionsMissing = !Permissions.allGranted && library.section != .settings
+        if !messages.isEmpty || permissionsMissing {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(messages, id: \.self) { Text($0) }
-                if !Permissions.allGranted {
+                if permissionsMissing {
                     Text("Some permissions are missing")
                     Button("Open Setup\u{2026}") { OnboardingWindow.shared.show() }
                         .buttonStyle(.link)
