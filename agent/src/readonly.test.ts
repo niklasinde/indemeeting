@@ -161,11 +161,11 @@ test("nonReadOnlyParts names only the parts that are not read-only", () => {
   assert.deepEqual(nonReadOnlyParts("git log -1"), []);
 });
 
-test("worktime tools run without asking, except send_to_agent", () => {
-  for (const tool of ["Read", "Grep", "Glob", "mcp__worktime__attention", "mcp__worktime__agent_session", "mcp__worktime__github_pr"]) {
+test("worktime tools run without asking, except send_to_agent and complete_reminder", () => {
+  for (const tool of ["Read", "Grep", "Glob", "mcp__worktime__add_reminder", "mcp__worktime__reminders", "mcp__worktime__attention", "mcp__worktime__agent_session", "mcp__worktime__github_pr"]) {
     assert.equal(isAutoAllowedTool(tool), true, tool);
   }
-  for (const tool of ["mcp__worktime__send_to_agent", "Edit", "Write", "Bash", "mcp__other__read"]) {
+  for (const tool of ["mcp__worktime__send_to_agent", "mcp__worktime__complete_reminder", "Edit", "Write", "Bash", "mcp__other__read"]) {
     assert.equal(isAutoAllowedTool(tool), false, tool);
   }
   for (const tool of ["mcp__worktime__jira_issue", "mcp__worktime__jira_search", "mcp__worktime__slack_thread", "mcp__worktime__slack_search"]) {

@@ -232,7 +232,8 @@ let agentTopicTests: [(name: String, run: () throws -> Void)] = [
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .appendingPathComponent("agent/src/\(AgentBuiltIn.fileName)")
         guard let builtIn = AgentBuiltIn.decode(try? Data(contentsOf: file)) else { return check(false, "\(file.path) decodes") }
-        check(builtIn.alwaysAsk == [builtIn.mcpPrefix + "send_to_agent"] && MCPServer.toolNames.contains("send_to_agent"), "send_to_agent always asks")
+        check(builtIn.alwaysAsk == ["send_to_agent", "complete_reminder"].map { builtIn.mcpPrefix + $0 }
+              && ["send_to_agent", "complete_reminder"].allSatisfy(MCPServer.toolNames.contains), "send_to_agent and complete_reminder always ask")
         check(builtIn.tools == ["Read", "Grep", "Glob"], "\(builtIn.tools)")
         check(builtIn.lines.contains("ls") && builtIn.lines.contains { $0.hasPrefix("sed \u{2014} no -i") }, "\(builtIn.lines)")
         check(builtIn.commands.allSatisfy { $0.anyArgs == true || $0.note != nil }, "every limited command explains its limit")

@@ -140,23 +140,28 @@ enum NoticeLogic {
                                     state: at == nil ? .shown : .scheduled))
     }
 
-    /// `at` as a date: ISO 8601 with or without an offset (without one it is local time), or `HH:mm` today, tomorrow once past.
-    static func time(_ text: String, now: Date, timeZone: TimeZone = .current) -> Result<Date, NoticeError> {
+    /// `at` (or `name`) as a date: ISO 8601 with or without an offset (without one it is local time), or `HH:mm` today,
+    /// tomorrow once past; never in the past or more than 30 days ahead.
+    static func time(_ text: String, now: Date, timeZone: TimeZone = .current, name: String = "at") -> Result<Date, NoticeError> {
         let text = text.trimmingCharacters(in: .whitespaces)
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
-        let date: Date
-        if let match = text.wholeMatch(of: #/(\d{1,2})[:.](\d{2})/#), let hour = Int(match.1), let minute = Int(match.2), hour < 24, minute < 60 {
-            guard let today = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) else { return .failure(NoticeError("at \(text) could not be read.")) }
-            date = today > now ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today
-        } else if let parsed = isoDate(text, timeZone: timeZone) {
-            date = parsed
-        } else {
-            return .failure(NoticeError("at must be an ISO 8601 date-time like 2026-11-12T13:15 or 2026-11-12T13:15:00+01:00, or HH:mm for today, not \(text)."))
+        guard let date = parse(text, now: now, timeZone: timeZone) else {
+            return .failure(NoticeError("\(name) must be an ISO 8601 date-time like 2026-11-12T13:15 or 2026-11-12T13:15:00+01:00, or HH:mm for today, not \(text)."))
         }
-        guard date > now else { return .failure(NoticeError("at \(text) is in the past.")) }
-        guard date.timeIntervalSince(now) <= maxAhead else { return .failure(NoticeError("at \(text) is more than 30 days away.")) }
+        guard date > now else { return .failure(NoticeError("\(name) \(text) is in the past.")) }
+        guard date.timeIntervalSince(now) <= maxAhead else { return .failure(NoticeError("\(name) \(text) is more than 30 days away.")) }
         return .success(date)
+    }
+
+    /// ISO 8601 or `HH:mm` (today, tomorrow once past) as a date, without the checks `time` makes.
+    static func parse(_ text: String, now: Date, timeZone: TimeZone = .current) -> Date? {
+        let text = text.trimmingCharacters(in: .whitespaces)
+        if let match = text.wholeMatch(of: #/(\d{1,2})[:.](\d{2})/#), let hour = Int(match.1), let minute = Int(match.2), hour < 24, minute < 60 {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = timeZone
+            guard let today = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) else { return nil }
+            return today > now ? today : calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        }
+        return isoDate(text, timeZone: timeZone)
     }
 
     private static func isoDate(_ text: String, timeZone: TimeZone) -> Date? {

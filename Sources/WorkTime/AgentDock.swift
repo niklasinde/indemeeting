@@ -242,21 +242,13 @@ final class AgentInboxWatcher {
     }
 
     private func poll() {
-        let fileManager = FileManager.default
-        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where NoticeLogic.isRequest(name) {
-            let url = folder.appendingPathComponent(name)
-            let data = try? Data(contentsOf: url)
-            try? fileManager.removeItem(at: url)
-            guard let request = data.flatMap({ AgentInbox.decode(NoticeRequest.self, from: $0) }) else { continue }
-            try? AgentInbox.encode(NoticeCenter.shared.handle(request)).write(to: folder.appendingPathComponent(AgentInbox.replyName(request.id)),
-                                                                               options: .atomic)
+        for request in take(NoticeRequest.self, where: NoticeLogic.isRequest) {
+            answer(NoticeCenter.shared.handle(request), to: request.id)
         }
-        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where AgentInbox.isRequest(name) {
-            let url = folder.appendingPathComponent(name)
-            let data = try? Data(contentsOf: url)
-            try? fileManager.removeItem(at: url)
-            guard let request = data.flatMap({ AgentInbox.decode(AgentInbox.Request.self, from: $0) }) else { continue }
-            let replyURL = folder.appendingPathComponent(AgentInbox.replyName(request.id))
+        for request in take(ReminderRequest.self, where: ReminderLogic.isRequest) {
+            Task { @MainActor in answer(await TodoModel.shared.handle(request), to: request.id) }
+        }
+        for request in take(AgentInbox.Request.self, where: AgentInbox.isRequest) {
             Task { @MainActor in
                 let reply: AgentInbox.Reply
                 if let problem = AgentInbox.problem(request, now: Date()) {
@@ -268,8 +260,23 @@ final class AgentInboxWatcher {
                 } else {
                     reply = await PRAgents.shared.deliver(request)
                 }
-                try? AgentInbox.encode(reply).write(to: replyURL, options: .atomic)
+                answer(reply, to: request.id)
             }
         }
+    }
+
+    /// Takes the inbox's requests of one kind off the folder, dropping any that cannot be read.
+    private func take<Request: Decodable>(_ type: Request.Type, where isRequest: (String) -> Bool) -> [Request] {
+        let fileManager = FileManager.default
+        return ((try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? []).filter(isRequest).compactMap { name in
+            let url = folder.appendingPathComponent(name)
+            let data = try? Data(contentsOf: url)
+            try? fileManager.removeItem(at: url)
+            return data.flatMap { AgentInbox.decode(type, from: $0) }
+        }
+    }
+
+    private func answer<Reply: Encodable>(_ reply: Reply, to id: String) {
+        try? AgentInbox.encode(reply).write(to: folder.appendingPathComponent(AgentInbox.replyName(id)), options: .atomic)
     }
 }

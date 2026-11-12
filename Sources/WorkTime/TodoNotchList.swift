@@ -9,7 +9,7 @@ final class TodoModel: ObservableObject {
     @Published private(set) var access = TodoAccess.unknown
     @Published private(set) var lists: [TodoList] = []
     @Published private(set) var list: String?
-    private var reminders: (any TodoStore)?
+    private var reminders: (any ReminderStore)?
     private var store: MeetingStore?
     private var observers: [NSObjectProtocol] = []
 
@@ -84,6 +84,15 @@ final class TodoModel: ObservableObject {
     func delete(_ id: String) {
         withAnimation(.easeOut(duration: 0.2)) { todos.removeAll { $0.id == id } }
         try? reminders?.delete(id)
+    }
+
+    /// An agent's add_reminder, reminders or complete_reminder, handed over by the MCP server through the agent inbox.
+    func handle(_ request: ReminderRequest) async -> NoticeReply {
+        let reply = await ReminderLogic.handle(request, store: reminders, stored: UserDefaults.standard.string(forKey: TodoLogic.listKey),
+                                               addedBy: request.source.label(titles: NoticeCenter.shared.titles()), jiraSite: JiraModel.shared.site,
+                                               now: Date())
+        if request.action != .list { reloadReminders() }
+        return reply
     }
 
     #if DEBUG

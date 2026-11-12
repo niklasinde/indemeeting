@@ -558,6 +558,11 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   on its GitHub page here, an agent key in Agents, anything else in the browser) and the row names the sender.
   `scheduled_notifications` and `cancel_notification` (own ones, or any from a Main) manage the schedule; repeats within a
   minute collapse, ten per minute per sender at most. All three run without asking, even for assistants with a tool list.
+- **Apple Reminders.** `add_reminder(title, notes?, due?, list?, link?, priority?)` adds to the user's Reminders through the
+  running app (it holds the permission): `due` reads like notify's `at` and sets an alarm, a date alone is all-day; `list`
+  defaults to the one the notch bar shows; the notes name the sender, and an open one with the same title and due in that list
+  is returned instead of a duplicate. It runs without asking, like notify. `reminders(list?, due_before?)` lists open ones;
+  `complete_reminder(id)` always asks.
 - **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.
   Type `@` to pick a file of the folder (`git ls-files`, or a bounded walk); `@path:10-40` adds a line range. On send the
   referenced files are listed by absolute path under the prompt, not inlined. `path/file.swift:123` references and Markdown

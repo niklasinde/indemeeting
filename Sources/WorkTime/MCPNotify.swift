@@ -14,8 +14,12 @@ extension MCPServer {
         func notices() -> [AgentNotice] { NoticeLogic.decode(try? Data(contentsOf: file)) }
 
         func send(_ request: NoticeRequest) throws -> NoticeReply {
-            let reply: NoticeReply = try exchange(AgentInbox.encode(request), id: request.id, name: NoticeLogic.requestName(request.id),
-                                                  inbox: inbox, timeout: replyTimeout, what: "the notification")
+            try ask(AgentInbox.encode(request), id: request.id, name: NoticeLogic.requestName(request.id), what: "the notification")
+        }
+
+        /// Hands the app a request and returns its answer, or throws the app's reason when it says no.
+        func ask(_ data: Data, id: String, name: String, what: String) throws -> NoticeReply {
+            let reply: NoticeReply = try exchange(data, id: id, name: name, inbox: inbox, timeout: replyTimeout, what: what)
             guard reply.ok else { throw MCPToolError(reply.message) }
             return reply
         }

@@ -88,6 +88,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/MCPResume.swift \
     Sources/WorkTime/NoticeLogic.swift \
     Sources/WorkTime/MCPNotify.swift \
+    Sources/WorkTime/ReminderLogic.swift \
+    Sources/WorkTime/MCPReminders.swift \
     Sources/WorkTime/InCallLogic.swift \
     Sources/WorkTime/InCallStore.swift \
     Tests/WorkTimeTests/Tests.swift \
@@ -139,6 +141,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/WorkspaceTests.swift \
     Tests/WorkTimeTests/AssistantTests.swift \
     Tests/WorkTimeTests/NoticeTests.swift \
+    Tests/WorkTimeTests/ReminderTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

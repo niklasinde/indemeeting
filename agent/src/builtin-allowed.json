@@ -1,8 +1,8 @@
 {
   "tools": ["Read", "Grep", "Glob"],
   "mcpPrefix": "mcp__worktime__",
-  "alwaysAsk": ["mcp__worktime__send_to_agent"],
-  "everyAgent": ["mcp__worktime__notify", "mcp__worktime__scheduled_notifications", "mcp__worktime__cancel_notification"],
+  "alwaysAsk": ["mcp__worktime__send_to_agent", "mcp__worktime__complete_reminder"],
+  "everyAgent": ["mcp__worktime__notify", "mcp__worktime__scheduled_notifications", "mcp__worktime__cancel_notification", "mcp__worktime__add_reminder"],
   "commands": [
     { "name": "ls", "anyArgs": true },
     { "name": "cat", "anyArgs": true },

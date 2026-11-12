@@ -103,7 +103,8 @@ final class NoticeCenter: ObservableObject {
         }
     }
 
-    private func titles() -> [String: String] {
+    /// The agents' titles by key, to name who sent something.
+    func titles() -> [String: String] {
         Dictionary(AgentStateWriter.shared.states().map { ($0.key, $0.title) }) { first, _ in first }
     }
 
