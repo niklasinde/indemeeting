@@ -24,6 +24,8 @@ enum AppPaths {
     static var agentInbox: URL { support.appendingPathComponent("agent-inbox", isDirectory: true) }
     /// Notifications agents asked for, written by the app and read by the MCP server.
     static var notices: URL { support.appendingPathComponent(NoticeLogic.fileName) }
+    /// The meetings a brief was already made for, so a restart does not repeat one.
+    static var briefed: URL { support.appendingPathComponent(MeetingBriefLogic.fileName) }
     /// The topic agents, read by the MCP server to find one by name.
     static var topicAgents: URL { support.appendingPathComponent("topic-agents.json") }
     /// Each topic agent's own working folder.

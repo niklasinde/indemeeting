@@ -482,6 +482,7 @@ struct SettingsView: View {
                 }
             }
             InCallSettingsSection()
+            MeetingBriefSettingsSection()
             section("Summary", footer: "Ministral runs on this Mac once it is downloaded below. When the chosen engine is "
                     + "missing or fails, the others take over.") {
                 row("Summarise with") {

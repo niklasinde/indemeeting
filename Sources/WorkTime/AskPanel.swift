@@ -24,7 +24,7 @@ final class AskPanel {
         }
         let models = [GitHubModel.shared.objectWillChange, JiraModel.shared.objectWillChange, TodoModel.shared.objectWillChange,
                       SlackModel.shared.objectWillChange, NotchPanelsModel.shared.objectWillChange, ResumeModel.shared.objectWillChange,
-                      InCallHelp.shared.objectWillChange, NoticeCenter.shared.objectWillChange]
+                      InCallHelp.shared.objectWillChange, NoticeCenter.shared.objectWillChange, MeetingBriefModel.shared.objectWillChange]
         lists = Publishers.MergeMany(models).sink { _ in
             MainActor.assumeIsolated { AskPanel.shared.bars.filter(\.expanded).forEach { $0.position() } }
         }
@@ -35,7 +35,12 @@ final class AskPanel {
     /// Opens the bar on the main screen on the resume card alone, for a few seconds unless the pointer comes over it.
     func peekResume() {
         guard UserDefaults.standard.bool(forKey: Self.shownKey) else { return }
-        (bars.first { $0.screen == NSScreen.main } ?? bars.first)?.peek()
+        peek()
+    }
+
+    /// Opens the bar on the main screen for a few seconds unless the pointer comes over it.
+    func peek(for seconds: TimeInterval = 8) {
+        (bars.first { $0.screen == NSScreen.main } ?? bars.first)?.peek(for: seconds)
     }
 
     private func screensChanged() {
@@ -287,6 +292,7 @@ private struct AskPanelView: View {
     @ObservedObject private var slack = SlackModel.shared
     @ObservedObject private var resume = ResumeModel.shared
     @ObservedObject private var inCall = InCallHelp.shared
+    @ObservedObject private var briefs = MeetingBriefModel.shared
     @ObservedObject private var notices = NoticeCenter.shared
     @AppStorage(SidebarLogic.showChatKey) private var showChat = true
 
@@ -302,6 +308,7 @@ private struct AskPanelView: View {
                         marks(wings.middle, height: 22).padding(.bottom, -8)
                     }
                     if let card = resume.card { ResumeCardView(card: card, onClose: panel.collapse) }
+                    if !briefs.visible.isEmpty { MeetingBriefNotchStack() }
                     if inCall.meeting != nil && !inCall.visible.isEmpty { InCallNotchStack() }
                     if !panel.peeking && showChat { AskBar(onSubmit: panel.collapse, onType: panel.type, autofocus: !panel.openedByHover) }
                     if !panel.peeking && shown.contains(panel.list) {
@@ -335,9 +342,10 @@ private struct AskPanelView: View {
             .frame(width: collapsedWidth, height: panel.barHeight)
             .contentShape(Rectangle())
             .onTapGesture { panel.expand() }
-            if !panel.expanded && (resume.unseen || inCall.unseen > 0) {
+            if !panel.expanded && (resume.unseen || inCall.unseen > 0 || briefs.unseen > 0) {
                 HStack(spacing: 6) {
                     if resume.unseen { ResumeNotchDot { panel.peek() } }
+                    if briefs.unseen > 0 { InCallNotchBadge(count: briefs.unseen, icon: "calendar", help: "Meeting brief") { panel.peek(for: 15) } }
                     if inCall.meeting != nil && inCall.unseen > 0 { InCallNotchBadge(count: inCall.unseen) { panel.peek(for: 15) } }
                 }
                 .padding(.top, panel.barHeight)

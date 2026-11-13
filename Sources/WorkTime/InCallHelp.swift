@@ -227,38 +227,27 @@ final class InCallHelp: ObservableObject {
     }
 
     private func lookUpTicket(_ key: String) {
-        let id = "ticket:\(key)", generation = recording, jira = JiraModel.shared
-        let directory = GitHubModel.shared.directory
-        let url = jira.site.flatMap { JiraLogic.browseURL(site: $0, key: key) } ?? directory.url(for: key)
-        insert(InCallCard(id: id, kind: .ticket(.init(key: key, summary: directory.titles[key], url: url)), added: Date()))
-        guard online, jira.ready, let client = jira.client() else { return }
+        let id = "ticket:\(key)", generation = recording
+        insert(InCallCard(id: id, kind: .ticket(EntityLookups.ticketPlaceholder(key)), added: Date()))
+        guard online else { return }
         Task {
-            guard let issue = try? await client.issue(key), generation == recording else { return }
-            insert(InCallCard(id: id, kind: .ticket(.init(key: key, summary: issue.summary, status: issue.status, assignee: issue.assignee ?? "Unassigned",
-                                                          url: url)), added: Date()))
+            guard let ticket = await EntityLookups.ticket(key), generation == recording else { return }
+            insert(InCallCard(id: id, kind: .ticket(ticket), added: Date()))
         }
     }
 
     private func lookUpPullRequest(_ entity: SpottedEntity) {
-        guard let said = entity.pullRequest else { return }
-        let github = GitHubModel.shared
-        let cached = (github.prs.values.flatMap { $0 } + github.watchedPRs)
-        let matching = cached.filter { $0.number == said.number && (said.repo == nil || $0.repo == said.repo) }
-        guard let repo = said.repo ?? (Set(matching.map(\.repo)).count == 1 ? matching.first?.repo : nil) else { return }
-        let id = "pr:\(repo)#\(said.number)", generation = recording
-        if let pr = matching.first(where: { $0.repo == repo }) {
-            insert(InCallCard(id: id, kind: .pullRequest(Self.card(pr)), added: Date()))
+        guard let said = entity.pullRequest, let found = EntityLookups.resolve(pullRequest: said) else { return }
+        let id = "pr:\(found.repo)#\(said.number)", generation = recording
+        if let cached = found.cached {
+            insert(InCallCard(id: id, kind: .pullRequest(cached), added: Date()))
             return
         }
-        insert(InCallCard(id: id, kind: .pullRequest(.init(repo: repo, number: said.number)), added: Date()))
-        guard online, github.enabled else { return }
-        let cli = GitHubLogic.findCLI()
+        insert(InCallCard(id: id, kind: .pullRequest(.init(repo: found.repo, number: said.number)), added: Date()))
+        guard online else { return }
         Task {
-            let result = await Task.detached { GitHubClient.fetchDetail(cli: cli, repo: repo, number: said.number) }.value
-            guard generation == recording, case .success(let fetched) = result else { return }
-            let detail = fetched.detail
-            insert(InCallCard(id: id, kind: .pullRequest(.init(repo: repo, number: said.number, title: detail.title, state: Self.state(detail.state, draft: detail.isDraft),
-                                                               checks: Self.checks(detail.rollup), review: Self.review(detail.review))), added: Date()))
+            guard let fetched = await EntityLookups.fetch(pullRequest: said.number, repo: found.repo), generation == recording else { return }
+            insert(InCallCard(id: id, kind: .pullRequest(fetched), added: Date()))
         }
     }
 
@@ -283,6 +272,66 @@ final class InCallHelp: ObservableObject {
                 }
             }
         }
+    }
+
+    #if DEBUG
+    func showSample(cards: [InCallCard], meeting: URL?, unseen: Int, store: MeetingStore? = nil) {
+        if let store { self.store = store }
+        self.cards = cards
+        self.meeting = meeting
+        self.unseen = unseen
+    }
+
+    /// Runs the spotter over `lines` as if heard live, with `store` as the library, for `--render-incall`.
+    func replay(_ lines: [LiveLine], store: MeetingStore, meeting: URL, event: CalendarEventInfo?) {
+        online = false
+        self.store = store
+        self.meeting = meeting
+        vocabulary = (try? store.inCallVocabulary()) ?? InCallVocabulary()
+        if let event { show(event, agenda: CalendarLogic.agenda(event.notes), file: meeting.lastPathComponent, save: true) }
+        var transcript = LiveTranscript()
+        transcript.hear(lines.map { TranscriptSegment(start: $0.start, text: $0.text) }, from: .others, isFinal: true)
+        hear(transcript)
+    }
+    #endif
+}
+
+/// The Jira and GitHub lookups in-call help and the meeting brief share. Both skip quietly when the service is not set up.
+@MainActor
+enum EntityLookups {
+    static func ticketPlaceholder(_ key: String) -> InCallCard.Ticket {
+        let directory = GitHubModel.shared.directory
+        let url = JiraModel.shared.site.flatMap { JiraLogic.browseURL(site: $0, key: key) } ?? directory.url(for: key)
+        return InCallCard.Ticket(key: key, summary: directory.titles[key], url: url)
+    }
+
+    static func ticket(_ key: String) async -> InCallCard.Ticket? {
+        let jira = JiraModel.shared
+        guard jira.ready, let client = jira.client(), let issue = try? await client.issue(key) else { return nil }
+        var ticket = ticketPlaceholder(key)
+        ticket.summary = issue.summary
+        ticket.status = issue.status
+        ticket.assignee = issue.assignee ?? "Unassigned"
+        return ticket
+    }
+
+    /// The repository a pull request is in, and its cached state when the GitHub lists hold it.
+    static func resolve(pullRequest said: (repo: String?, number: Int)) -> (repo: String, cached: InCallCard.PullRequest?)? {
+        let github = GitHubModel.shared
+        let cached = github.prs.values.flatMap { $0 } + github.watchedPRs
+        let matching = cached.filter { $0.number == said.number && (said.repo == nil || $0.repo == said.repo) }
+        guard let repo = said.repo ?? (Set(matching.map(\.repo)).count == 1 ? matching.first?.repo : nil) else { return nil }
+        return (repo, matching.first { $0.repo == repo }.map(card))
+    }
+
+    static func fetch(pullRequest number: Int, repo: String) async -> InCallCard.PullRequest? {
+        guard GitHubModel.shared.enabled else { return nil }
+        let cli = GitHubLogic.findCLI()
+        let result = await Task.detached { GitHubClient.fetchDetail(cli: cli, repo: repo, number: number) }.value
+        guard case .success(let fetched) = result else { return nil }
+        let detail = fetched.detail
+        return InCallCard.PullRequest(repo: repo, number: number, title: detail.title, state: state(detail.state, draft: detail.isDraft),
+                                      checks: checks(detail.rollup), review: review(detail.review))
     }
 
     static func card(_ pr: GitHubPR) -> InCallCard.PullRequest {
@@ -311,27 +360,6 @@ final class InCallHelp: ObservableObject {
         case nil: nil
         }
     }
-
-    #if DEBUG
-    func showSample(cards: [InCallCard], meeting: URL?, unseen: Int, store: MeetingStore? = nil) {
-        if let store { self.store = store }
-        self.cards = cards
-        self.meeting = meeting
-        self.unseen = unseen
-    }
-
-    /// Runs the spotter over `lines` as if heard live, with `store` as the library, for `--render-incall`.
-    func replay(_ lines: [LiveLine], store: MeetingStore, meeting: URL, event: CalendarEventInfo?) {
-        online = false
-        self.store = store
-        self.meeting = meeting
-        vocabulary = (try? store.inCallVocabulary()) ?? InCallVocabulary()
-        if let event { show(event, agenda: CalendarLogic.agenda(event.notes), file: meeting.lastPathComponent, save: true) }
-        var transcript = LiveTranscript()
-        transcript.hear(lines.map { TranscriptSegment(start: $0.start, text: $0.text) }, from: .others, isFinal: true)
-        hear(transcript)
-    }
-    #endif
 }
 
 /// The user's calendars through EventKit, read only when access was given from the in-call help setting.
@@ -350,6 +378,13 @@ final class InCallCalendar {
         return CalendarLogic.pick(events, at: start, sourceApp: sourceApp)
     }
 
+    /// Events starting in `from..<to`, as the user's calendars hold them.
+    func events(from: Date, to: Date) -> [CalendarEventInfo] {
+        guard hasAccess else { return [] }
+        return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil)).map(Self.info)
+            .filter { $0.start >= from && $0.start < to }.sorted { $0.start < $1.start }
+    }
+
     private static func info(_ event: EKEvent) -> CalendarEventInfo {
         let attendees = (event.attendees ?? []).filter { !$0.isCurrentUser }.map { person in
             let address = person.url.absoluteString.lowercased().hasPrefix("mailto:") ? String(person.url.absoluteString.dropFirst(7)) : nil
@@ -357,7 +392,9 @@ final class InCallCalendar {
         }
         return CalendarEventInfo(id: event.calendarItemIdentifier, seriesID: event.hasRecurrenceRules ? event.calendarItemExternalIdentifier : nil,
                                  title: event.title ?? "", start: event.startDate, end: event.endDate, attendees: attendees, notes: event.notes,
-                                 url: event.url?.absoluteString, location: event.location)
+                                 url: event.url?.absoluteString, location: event.location, isAllDay: event.isAllDay,
+                                 declined: event.attendees?.contains { $0.isCurrentUser && $0.participantStatus == .declined } ?? false,
+                                 cancelled: event.status == .canceled)
     }
 }
 

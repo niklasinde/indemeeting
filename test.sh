@@ -92,6 +92,8 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Sources/WorkTime/MCPReminders.swift \
     Sources/WorkTime/MCPFilters.swift \
     Sources/WorkTime/InCallLogic.swift \
+    Sources/WorkTime/MeetingBriefLogic.swift \
+    Sources/WorkTime/MCPBrief.swift \
     Sources/WorkTime/InCallStore.swift \
     Tests/WorkTimeTests/Tests.swift \
     Tests/WorkTimeTests/StoreTests.swift \
@@ -144,6 +146,7 @@ swiftc -swift-version 5 -target "$(uname -m)-apple-macos26.0" \
     Tests/WorkTimeTests/NoticeTests.swift \
     Tests/WorkTimeTests/ReminderTests.swift \
     Tests/WorkTimeTests/MCPFilterTests.swift \
+    Tests/WorkTimeTests/MeetingBriefTests.swift \
     Tests/Runner/main.swift \
     -o "$OUT"
 "$OUT"

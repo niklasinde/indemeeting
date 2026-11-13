@@ -135,10 +135,12 @@ struct InCallNotchStack: View {
 /// Below the closed notch while a call is recorded and cards wait: their count. Hovering opens the bar on them.
 struct InCallNotchBadge: View {
     let count: Int
+    var icon = "lightbulb"
+    var help = "Help during this call"
     let onHover: () -> Void
 
     var body: some View {
-        Label("\(count)", systemImage: "lightbulb")
+        Label("\(count)", systemImage: icon)
             .font(.system(size: 9, weight: .semibold))
             .foregroundStyle(.white.opacity(0.85))
             .padding(.horizontal, 8).padding(.vertical, 3)
@@ -146,7 +148,7 @@ struct InCallNotchBadge: View {
             .contentShape(Rectangle())
             .onHover { if $0 { onHover() } }
             .onTapGesture(perform: onHover)
-            .help("Help during this call")
+            .help(help)
     }
 }
 
@@ -214,22 +216,37 @@ struct InCallSettingsSection: View {
                 Toggle("Use Ministral", isOn: $ministral).labelsHidden().toggleStyle(.switch).controlSize(.small).disabled(!enabled)
             }
             Divider().padding(.leading, 14)
-            SettingsRow("Calendar", detail: calendarAccess ? "The invitation of the meeting being recorded is read"
-                        : "Allow access to see what the meeting is about") {
-                if calendarAccess {
-                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                } else if !InCallHelp.shared.calendar.canAsk {
-                    Text("Off in System Settings").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Button("Allow\u{2026}", action: requestCalendar).disabled(!enabled)
-                }
+            CalendarAccessRow(granted: "The invitation of the meeting being recorded is read", missing: "Allow access to see what the meeting is about",
+                              enabled: enabled, access: $calendarAccess)
+        }
+    }
+
+    private func requestCalendar() { CalendarAccessRow.request { calendarAccess = $0 } }
+}
+
+/// The calendar permission row of the settings that read the calendar: a tick once granted, else the button that asks.
+struct CalendarAccessRow: View {
+    let granted: String
+    let missing: String
+    var enabled = true
+    @Binding var access: Bool
+
+    var body: some View {
+        SettingsRow("Calendar", detail: access ? granted : missing) {
+            if access {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            } else if !InCallHelp.shared.calendar.canAsk {
+                Text("Off in System Settings").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Button("Allow\u{2026}") { Self.request { access = $0 } }.disabled(!enabled)
             }
         }
     }
 
-    private func requestCalendar() {
+    /// Asks for calendar access when it was not asked for yet, and tells the result.
+    static func request(_ done: @escaping (Bool) -> Void) {
         let calendar = InCallHelp.shared.calendar
         guard calendar.canAsk else { return }
-        Task { calendarAccess = await calendar.requestAccess() }
+        Task { done(await calendar.requestAccess()) }
     }
 }

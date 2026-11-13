@@ -77,6 +77,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: NoticeLogic.identifier(notice.id), content: content, trigger: trigger))
     }
 
+    /// A meeting brief shortly before the meeting; a click opens the brief in the notch bar.
+    static func postBrief(title: String, body: String, key: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        content.userInfo = [MeetingBriefLogic.userInfoKey: key]
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "brief:" + key, content: content, trigger: nil))
+    }
+
     static func withdrawNotice(_ id: String) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [NoticeLogic.identifier(id)])
@@ -113,6 +123,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let action = response.actionIdentifier
         if let id = content.userInfo[NoticeLogic.userInfoKey] as? String {
             if action == UNNotificationDefaultActionIdentifier { await NoticeCenter.shared.open(id) }
+            return
+        }
+        if content.userInfo[MeetingBriefLogic.userInfoKey] != nil {
+            if action == UNNotificationDefaultActionIdentifier { await MeetingBriefModel.shared.show() }
             return
         }
         if let path = content.userInfo[Self.meetingKey] as? String {

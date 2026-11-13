@@ -13,6 +13,9 @@ enum Main {
         if let output = InCallPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { InCallPreview.run(to: output) }
         }
+        if let output = MeetingBriefPreview.outputFolder(CommandLine.arguments) {
+            MainActor.assumeIsolated { MeetingBriefPreview.run(to: output) }
+        }
         if let output = NotchPreview.outputFolder(CommandLine.arguments) {
             MainActor.assumeIsolated { NotchPreview.run(to: output) }
         }
@@ -236,6 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AgentInboxWatcher.shared.start()
         InCallHelp.shared.openMeeting = { [weak self] in self?.mainWindow.show(meeting: $0, at: nil) }
         InCallHelp.shared.start(recorder: recorder, store: store)
+        MeetingBriefModel.shared.startRecording = { [weak self] in if self?.recorder.isRecording == false { self?.toggleRecording() } }
+        MeetingBriefModel.shared.start(recorder: recorder, store: store)
         AskPanel.shared.start()
         OnboardingWindow.shared.recorder = recorder
         OnboardingWindow.shared.tracker = tracker

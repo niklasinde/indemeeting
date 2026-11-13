@@ -563,6 +563,15 @@ menu bar menu or the **Agent** row in the main window's sidebar.
   defaults to the one the notch bar shows; the notes name the sender, and an open one with the same title and due in that list
   is returned instead of a duplicate. It runs without asking, like notify. `reminders(list?, due_before?)` lists open ones;
   `complete_reminder(id)` always asks.
+- **Meeting briefs.** Settings > Meetings > Meeting briefs (on by default only once calendar access is given, from there or from
+  Help during calls): 5, 10 or 15 minutes before a calendar meeting that is not all-day, declined or cancelled and has someone else
+  invited or a call link, WorkTime posts a notification ("<title> in 10 min", click opens the notch bar) and keeps a card there
+  until the meeting starts or it is dismissed. The card lists who is in it, the decisions of the best matching earlier meeting (same
+  recurring event, people, tickets, title; the in-call retrieval), action items still open from those meetings, the Jira status
+  and GitHub state of tickets and pull requests named in the invitation, and its agenda; Ministral adds a short aim on mains power.
+  One brief per occurrence, remembered in `briefed-meetings.json`; with no history, tickets or agenda a meeting with attendees gets
+  only who and when, one without is skipped. `meeting_brief(event?)` returns the same text for a meeting by title or id, else the
+  next one today; it needs the app running and runs without asking like the other read tools.
 - **Window.** The folder defaults to the repository of the Claude session in the current activity, else the last one used.
   Type `@` to pick a file of the folder (`git ls-files`, or a bounded walk); `@path:10-40` adds a line range. On send the
   referenced files are listed by absolute path under the prompt, not inlined. `path/file.swift:123` references and Markdown

@@ -93,7 +93,9 @@ extension MeetingStore {
         guard let file = try self.meeting(id: meeting.id)?.audioFile, let content = try content(of: file) else { return meeting }
         var filled = meeting
         filled.decisions = content.summary.sections.flatMap { section in section.lines.map(\.text) }
-        filled.actionItems = content.summary.actionItems.map { item in item.owner.map { "\($0): \(item.task)" } ?? item.task }
+        func text(_ item: ChecklistItem) -> String { item.owner.map { "\($0): \(item.task)" } ?? item.task }
+        filled.actionItems = content.summary.actionItems.map(text)
+        filled.openItems = content.summary.actionItems.filter { !$0.done }.map(text)
         return filled
     }
 

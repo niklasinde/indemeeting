@@ -94,7 +94,7 @@ struct MCPServer {
     /// The names of every tool the server offers.
     static var toolNames: [String] {
         let none = Result<MeetingStore, Error>.failure(MCPToolError(""))
-        return (meetingTools(none) + githubTools(none) + agentTools(none) + topicTools() + resumeTools(none) + noticeTools() + reminderTools()).map(\.name)
+        return (meetingTools(none) + githubTools(none) + agentTools(none) + topicTools() + resumeTools(none) + noticeTools() + reminderTools() + briefTools()).map(\.name)
     }
 
     /// `--mcp`: serves the read-only tools over stdin and stdout until stdin closes.
@@ -103,7 +103,7 @@ struct MCPServer {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let github = githubTools(store)
         let server = MCPServer(tools: meetingTools(store) + github + agentTools(store, github: github) + topicTools() + resumeTools(store) + noticeTools()
-                                   + reminderTools(),
+                                   + reminderTools() + briefTools(),
                                version: version)
         while let line = readLine() {
             guard !line.trimmingCharacters(in: .whitespaces).isEmpty, let response = server.handle(line) else { continue }

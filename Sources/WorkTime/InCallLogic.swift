@@ -328,6 +328,7 @@ struct PastMeeting: Equatable, Identifiable {
     var line: String? = nil
     var decisions: [String] = []
     var actionItems: [String] = []
+    var openItems: [String] = []
 }
 
 struct RetrievalContext: Equatable {
@@ -486,6 +487,9 @@ struct CalendarEventInfo: Equatable {
     var notes: String?
     var url: String?
     var location: String?
+    var isAllDay = false
+    var declined = false
+    var cancelled = false
 }
 
 enum CalendarLogic {
