@@ -37,9 +37,9 @@ struct AgentWorkMapView: View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let map = model.workMap
             VStack(spacing: 0) {
-                WorkMapDiagram(map: map, now: timeline.date)
+                WorkMapDiagram(map: map, selected: model.model, now: timeline.date)
                     .frame(height: 318)
-                Text(map.status)
+                Text(map.status(selected: model.model))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -107,6 +107,7 @@ private struct WorkMapRow: View {
 
 private struct WorkMapDiagram: View {
     let map: WorkMap
+    let selected: String
     let now: Date
 
     private static let nodeSize: CGFloat = 38
@@ -163,7 +164,7 @@ private struct WorkMapDiagram: View {
                 .frame(width: Self.centreSize + 10, height: Self.centreSize + 10)
             VStack(spacing: 2) {
                 Text("CLAUDE").font(.system(size: 12, weight: .bold, design: .monospaced)).tracking(1.5)
-                Text(map.modelLabel).font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
+                Text(map.modelLabel(selected: selected)).font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(width: Self.centreSize - 10)
             if let context = map.contextText {

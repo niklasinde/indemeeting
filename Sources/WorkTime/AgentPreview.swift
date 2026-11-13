@@ -456,7 +456,7 @@ enum AgentPreview {
                   + "- Deny sends `allow: false`, which the SDK turns into a refusal."),
             .result(sessionID: "preview-session", isError: false, text: "", turns: 5, model: "claude-sonnet-5-5"),
         ]
-        answer.forEach { AgentLogic.apply($0, to: &items, auto: true) }
+        answer.forEach { AgentLogic.apply($0, to: &items) }
         items.append(AgentItem(id: "user-\(items.count)", kind: .user("Run the tests")))
         let command = (["swift build 2>&1 | tail -5 && ./test.sh && python3 - <<'EOF'", "import json, subprocess",
                         "result = json.loads(subprocess.check_output(['gh', 'pr', 'view', '2483', '--json', 'files']))"]

@@ -68,48 +68,13 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         check(AgentLogic.reviewPrompt(url: url, repo: "o/r", hasCheckout: false).contains("no local checkout of o/r"), "no checkout")
     }),
 
-    ("agent: models are a fixed list with Auto first and the default", {
-        check(AgentLogic.models.map(\.id) == ["auto", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], "ids")
-        check(AgentLogic.storedModel(nil) == "auto" && AgentLogic.storedModel("gpt") == "auto", "Auto by default")
+    ("agent: models are a fixed list, Sonnet by default, and the retired Auto choice becomes it", {
+        check(AgentLogic.models.map(\.id) == ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"], "ids")
+        check(AgentLogic.storedModel(nil) == "claude-sonnet-5-5" && AgentLogic.storedModel("gpt") == "claude-sonnet-5-5", "Sonnet by default")
+        check(AgentLogic.storedModel("auto") == AgentLogic.defaultModel, "a stored Auto migrates")
         check(AgentLogic.storedModel("claude-haiku-5-5") == "claude-haiku-5-5", "a saved choice")
         check(AgentLogic.modelName("claude-sonnet-5-5") == "Sonnet 5.5" && AgentLogic.modelName("other") == "other", "names")
         check(AgentRequest.prompt(text: "x", cwd: "/", sessionID: nil, model: "claude-haiku-5-5").line.contains(#""model":"claude-haiku-5-5""#), "sent")
-    }),
-
-    ("agent: Auto asks the local model for a tier with a schema and parses its answer", {
-        let model = (AgentLogic.routeSchema["properties"] as? [String: Any])?["model"] as? [String: Any]
-        check(model?["enum"] as? [String] == ["haiku", "sonnet", "opus"], "schema")
-        let user = AgentLogic.routeUser(prompt: "Refactor @a.swift", signals: .init(mentions: 1, isReview: true, turns: 2))
-        check(user.contains("Referenced files: 1") && user.contains("review: yes") && user.contains("turns in this session: 2"), user)
-        check(AgentLogic.routeTier(fromAnswer: #"{"model": "opus"}"#) == "opus", "opus")
-        check(AgentLogic.routeTier(fromAnswer: #"{"model":"gpt"}"#) == nil, "unknown tier")
-        check(AgentLogic.routeTier(fromAnswer: "nope") == nil, "garbage")
-    }),
-
-    ("agent: Auto falls back to Sonnet and does not downgrade a follow-up", {
-        let opus = "claude-opus-5-5", sonnet = "claude-sonnet-5-5", haiku = "claude-haiku-5-5"
-        check(AgentLogic.routedModel(tier: "haiku", previous: nil, prompt: "what branch") == haiku, "classified")
-        check(AgentLogic.routedModel(tier: nil, previous: nil, prompt: "x") == sonnet, "no answer means Sonnet")
-        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "continue") == opus, "a follow-up keeps Opus")
-        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "Fix it.") == opus, "fix it")
-        check(AgentLogic.routedModel(tier: "haiku", previous: opus, prompt: "what is the time zone of the server config") == haiku, "a new question")
-        check(AgentLogic.routedModel(tier: "opus", previous: haiku, prompt: "continue") == opus, "a follow-up may go up")
-        check(AgentLogic.isFollowUp("ok, go ahead") && !AgentLogic.isFollowUp("continue the refactor of the whole store layer across all files"), "heuristic")
-        try blocking {
-            let picked = await AgentLogic.route(prompt: "rename across files", signals: .init(), previous: nil) { system, user in
-                check(system == AgentLogic.routeSystem && user.contains("rename across files"), "the prompt is sent")
-                return #"{"model":"opus"}"#
-            }
-            check(picked == opus, "a mocked model picks Opus: \(picked)")
-            let down = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil) { _, _ in throw LocalLLMError.notInstalled }
-            check(down == sonnet, "no local model means Sonnet")
-            let start = Date()
-            let slow = await AgentLogic.route(prompt: "x", signals: .init(), previous: nil, timeout: 0.2) { _, _ in
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-                return ""
-            }
-            check(slow == sonnet && Date().timeIntervalSince(start) < 2, "a slow model times out to Sonnet")
-        }
     }),
 
     ("agent: requests encode as single JSON lines", {
@@ -182,8 +147,6 @@ let agentTests: [(name: String, run: () throws -> Void)] = [
         items.remove(at: 2)
         check(AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 1, model: nil), to: &items) == "s2", "result session")
         check(items.last?.kind == .status("Done \u{00B7} 1 turn"), "status \(String(describing: items.last))")
-        AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 4, model: "claude-sonnet-5-5"), to: &items, auto: true)
-        check(items.last?.kind == .status("Done \u{00B7} 4 turns \u{00B7} Auto \u{2192} Sonnet 5.5"), "auto status \(String(describing: items.last))")
         AgentLogic.apply(.result(sessionID: "s2", isError: false, text: "", turns: 2, model: "claude-opus-5-5"), to: &items)
         check(items.last?.kind == .status("Done \u{00B7} 2 turns \u{00B7} Opus 5.5"), "fixed model status")
         AgentLogic.apply(.result(sessionID: nil, isError: true, text: "Context window exceeded", turns: 1, model: nil), to: &items)

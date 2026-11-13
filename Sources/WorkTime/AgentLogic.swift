@@ -172,9 +172,8 @@ enum AgentLogic {
     // MARK: Transcript
 
     /// Folds one event into the transcript. Returns the session to keep, if the event names one.
-    /// `auto` says the model was picked by Auto, so the status line says so.
     @discardableResult
-    static func apply(_ event: AgentEvent, to items: inout [AgentItem], auto: Bool = false) -> String? {
+    static func apply(_ event: AgentEvent, to items: inout [AgentItem]) -> String? {
         switch event {
         case .ready, .idle, .chrome: return nil
         case .session(let id): return id
@@ -195,7 +194,7 @@ enum AgentLogic {
             } else if isError {
                 items.append(AgentItem(id: "error-\(items.count)", kind: .error(text.isEmpty ? "The agent stopped with an error." : text)))
             } else {
-                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns, model: model, auto: auto, mode: mode))))
+                items.append(AgentItem(id: "status-\(items.count)", kind: .status(resultLine(turns: turns, model: model, mode: mode))))
             }
             return sessionID
         case .error(let message):
@@ -227,8 +226,8 @@ enum AgentLogic {
         return parts.count == 3 && parts[0] == "permission" ? String(parts[1]) : nil
     }
 
-    static func resultLine(turns: Int?, model: String? = nil, auto: Bool = false, mode: AgentPermissionMode? = nil) -> String {
-        let model = model.map { (auto ? "Auto \u{2192} " : "") + modelName($0) }
+    static func resultLine(turns: Int?, model: String? = nil, mode: AgentPermissionMode? = nil) -> String {
+        let model = model.map(modelName)
         let mode = mode.flatMap { $0 == .ask ? nil : $0.status }
         return (["Done", turns.map { "\($0) turn\($0 == 1 ? "" : "s")" }, mode, model] as [String?]).compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
@@ -569,91 +568,18 @@ enum AgentLogic {
     }
 
     static let modelKey = "agentModel"
-    static let auto = "auto"
-    static let models = [ModelChoice(id: auto, name: "Auto", tier: nil),
-                         ModelChoice(id: "claude-opus-5-5", name: "Opus 5.5", tier: "opus"),
-                         ModelChoice(id: "claude-sonnet-5-5", name: "Sonnet 5.5", tier: "sonnet"),
+    static let defaultModel = "claude-sonnet-5-5"
+    static let models = [ModelChoice(id: "claude-opus-5-5", name: "Opus 5.5", tier: "opus"),
+                         ModelChoice(id: defaultModel, name: "Sonnet 5.5", tier: "sonnet"),
                          ModelChoice(id: "claude-haiku-5-5", name: "Haiku 5.5", tier: "haiku")]
-    static let tiers = ["haiku", "sonnet", "opus"]
-    static let fallbackTier = "sonnet"
 
     static func modelName(_ id: String) -> String { models.first { $0.id == id }?.name ?? id }
 
     static func modelID(tier: String) -> String? { models.first { $0.tier == tier }?.id }
 
-    /// The saved choice, or Auto when there is none or it is no longer offered.
+    /// The saved choice, or the default when there is none or it is no longer offered (the retired `auto` included).
     static func storedModel(_ raw: String?) -> String {
-        raw.flatMap { raw in models.first { $0.id == raw }?.id } ?? auto
-    }
-
-    // MARK: Auto
-
-    struct RouteSignals: Equatable {
-        var mentions = 0
-        var isReview = false
-        var turns = 0
-    }
-
-    static let routeSystem = """
-        Pick the Claude model for a coding agent's next prompt. Answer with JSON {"model": "haiku" | "sonnet" | "opus"}.
-        haiku: quick lookups, status checks, single-fact questions.
-        sonnet: everyday coding, reviews of small diffs, explanations.
-        opus: multi-file changes, debugging, architecture, large reviews.
-        """
-
-    static let routeTimeout: TimeInterval = 3
-    static let routeSchema: [String: Any] = ["type": "object", "properties": ["model": ["type": "string", "enum": tiers]], "required": ["model"]]
-
-    static func routeUser(prompt: String, signals: RouteSignals) -> String {
-        "Referenced files: \(signals.mentions)\nPull request review: \(signals.isReview ? "yes" : "no")\n"
-            + "Earlier turns in this session: \(signals.turns)\n\nPrompt:\n\(prompt.prefix(4000))"
-    }
-
-    /// The tier in the model's JSON answer, or nil when it holds none.
-    static func routeTier(fromAnswer answer: String) -> String? {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(answer.utf8)) as? [String: Any],
-              let tier = object["model"] as? String, tiers.contains(tier) else { return nil }
-        return tier
-    }
-
-    private static let followUps = ["continue", "go on", "keep going", "fix it", "fix that", "fix this", "fix them", "do it", "try again",
-                                    "again", "yes", "ok", "okay", "go ahead", "proceed", "and the rest", "next"]
-
-    /// A short prompt that carries on the previous turn rather than asking something new.
-    static func isFollowUp(_ prompt: String) -> Bool {
-        let text = prompt.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
-        guard text.split(separator: " ").count <= 6 else { return false }
-        return followUps.contains { text == $0 || text.hasPrefix($0 + " ") || text.hasPrefix($0 + ",") }
-    }
-
-    /// The model Auto runs a prompt on: the classified tier, Sonnet when there is none, and never below the previous
-    /// turn's model for a follow-up.
-    static func routedModel(tier: String?, previous: String?, prompt: String) -> String {
-        let picked = tier.flatMap(modelID) ?? modelID(tier: fallbackTier) ?? auto
-        guard let previous, isFollowUp(prompt), rank(previous) > rank(picked) else { return picked }
-        return previous
-    }
-
-    private static func rank(_ id: String) -> Int {
-        models.first { $0.id == id }?.tier.flatMap { tiers.firstIndex(of: $0) } ?? -1
-    }
-
-    /// Asks the local model through `ask` (the system and user prompts in, its JSON answer out) and gives up after
-    /// `timeout` seconds.
-    static func route(prompt: String, signals: RouteSignals, previous: String?, timeout: TimeInterval = routeTimeout,
-                      ask: @escaping @Sendable (_ system: String, _ user: String) async throws -> String) async -> String {
-        let user = routeUser(prompt: prompt, signals: signals)
-        let tier = await withTaskGroup(of: String?.self) { group in
-            group.addTask { (try? await ask(routeSystem, user)).flatMap(routeTier) }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next() ?? nil
-            group.cancelAll()
-            return first
-        }
-        return routedModel(tier: tier, previous: previous, prompt: prompt)
+        raw.flatMap { raw in models.first { $0.id == raw }?.id } ?? defaultModel
     }
 
     static let quickActions: [(title: String, prompt: String)] = [

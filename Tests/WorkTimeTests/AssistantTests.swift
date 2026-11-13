@@ -47,8 +47,10 @@ let assistantTests: [(name: String, run: () throws -> Void)] = [
         check(parsed.name == "Dev's" && parsed.summary == "Reviews code" && parsed.model == "haiku" && parsed.permissionMode == "plan", "\(parsed)")
         check(parsed.tools == ["jira_issue", "slack_thread"] && parsed.folder == "own" && parsed.body == "Body here.", "\(parsed)")
         let inline = Assistants.parse(slug: "x", text: "---\nname: X\ndescription: y\ntools: [a, b , \"c\"]\n---\nz")
-        check(inline.tools == ["a", "b", "c"] && inline.model == "auto" && inline.permissionMode == "ask" && inline.icon == Assistants.defaultIcon, "\(inline)")
+        check(inline.tools == ["a", "b", "c"] && inline.model == "sonnet" && inline.permissionMode == "ask" && inline.icon == Assistants.defaultIcon, "\(inline)")
         check(Assistants.parse(slug: "x", text: "---\nname: X\ndescription: y\ntools: a, b, a\n---\n").tools == ["a", "b"], "listed once")
+        let legacy = Assistants.parse(slug: "x", text: "---\nname: X\ndescription: y\nmodel: auto\n---\n")
+        check(legacy.model == "sonnet" && legacy.problems.isEmpty, "a file written for Auto reads as Sonnet: \(legacy)")
     }),
     ("assistants: a malformed file never fails; it comes back with its problems and as much as could be read", {
         func problems(_ text: String?) -> [AssistantProblem] { Assistants.parse(slug: "bad", text: text).problems }
@@ -279,8 +281,8 @@ let assistantTests: [(name: String, run: () throws -> Void)] = [
         check(!AgentRequest.prompt(text: "hi", cwd: "/r", sessionID: nil).line.contains("allowedMcpTools"), "an agent without a list is not restricted")
     }),
     ("assistants: model and permission mode defaults come from the file and map to what the pickers offer", {
-        check(Assistants.modelID("auto") == AgentLogic.auto && Assistants.modelID("opus") == "claude-opus-5-5" && Assistants.modelID("haiku") == "claude-haiku-5-5", "models")
-        check(Assistants.modelID("nope") == AgentLogic.auto, "unknown model")
+        check(Assistants.modelID("sonnet") == AgentLogic.defaultModel && Assistants.modelID("opus") == "claude-opus-5-5" && Assistants.modelID("haiku") == "claude-haiku-5-5", "models")
+        check(Assistants.modelID("nope") == AgentLogic.defaultModel && Assistants.modelID("auto") == AgentLogic.defaultModel, "unknown model")
         check(Assistants.permissionMode("ask") == .ask && Assistants.permissionMode("auto") == .auto && Assistants.permissionMode("acceptEdits") == .acceptEdits
               && Assistants.permissionMode("plan") == .plan && Assistants.permissionMode("x") == .ask, "modes")
         check(Assistants.wordCount("---\nname: X\ndescription: y\n---\n\none two\nthree") == 3 && Assistants.wordCount("") == 0, "words of the body only")

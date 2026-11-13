@@ -560,7 +560,7 @@ struct AgentModelPicker: View {
         }
         .labelsHidden()
         .fixedSize()
-        .help("The Claude model for the next prompt. Auto asks the local Ministral model to pick one.")
+        .help("The Claude model for the next prompt.")
     }
 }
 

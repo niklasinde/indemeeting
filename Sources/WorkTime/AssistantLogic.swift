@@ -13,7 +13,7 @@ struct AssistantRole: Equatable, Identifiable, Sendable {
     var name: String
     var icon = Assistants.defaultIcon
     var summary = ""
-    var model = "auto"
+    var model = "sonnet"
     var permissionMode = "ask"
     var tools: [String] = []
     var folder: String?
@@ -55,7 +55,7 @@ enum AssistantError: Error, Equatable {
 enum Assistants {
     static let prefix = "assistant:"
     static let defaultIcon = "sparkles"
-    static let models = ["auto", "opus", "sonnet", "haiku"]
+    static let models = ["opus", "sonnet", "haiku"]
     static let modes = ["ask", "auto", "acceptEdits", "plan"]
     static let ownFolder = "own"
     static let nameLimit = 60
@@ -155,7 +155,7 @@ enum Assistants {
             case "name": role.name = value
             case "icon": role.icon = value
             case "description": role.summary = value
-            case "model": role.model = value
+            case "model": role.model = value == "auto" ? "sonnet" : value
             case "permissionMode": role.permissionMode = value
             case "folder": role.folder = value.isEmpty ? nil : value
             default: role.tools = items ?? []
@@ -319,7 +319,7 @@ enum Assistants {
 
     /// The Claude model id a front matter `model` stands for.
     static func modelID(_ model: String) -> String {
-        model == "auto" ? AgentLogic.auto : AgentLogic.modelID(tier: model) ?? AgentLogic.auto
+        AgentLogic.modelID(tier: model) ?? AgentLogic.defaultModel
     }
 
     static func permissionMode(_ mode: String) -> AgentPermissionMode {
@@ -334,7 +334,7 @@ extension Assistants {
         AssistantTemplate(role: AssistantRole(
             slug: "developer", name: "Developer", icon: "hammer",
             summary: "Implements a ticket or fixes a pull request in its repository, runs the tests and reports what changed.",
-            model: "auto", permissionMode: "ask", tools: ["github_pr", "jira_issue", "jira_search"], folder: nil,
+            model: "sonnet", permissionMode: "ask", tools: ["github_pr", "jira_issue", "jira_search"], folder: nil,
             body: """
                 # Developer
 

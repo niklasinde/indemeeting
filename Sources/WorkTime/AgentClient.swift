@@ -118,17 +118,12 @@ final class AgentModel: ObservableObject {
     @Published private(set) var problem: String?
     @Published private(set) var files: [String] = []
     @Published var folder: String
-    /// Starting a prompt on Auto loads Ministral, so it is ready to route the prompt once it is sent.
-    @Published var draft = "" {
-        didSet { if oldValue.isEmpty, !draft.isEmpty, model == AgentLogic.auto, !OllamaSummarizer.isForced() { LocalLLM.shared.prepare() } }
-    }
+    @Published var draft = ""
 
     /// Beside a pull request: shows a referenced file in the pull request's diff, false when it is not one of its files.
     var reveal: ((String) -> Bool)?
     private var client: AgentClient?
-    private var routing: Task<Void, Never>?
     private var lastModel: String?
-    private var turnIsAuto = false
     private var rulesChanged: AnyCancellable?
 
     /// Replaced by the debug preview, so it never writes the app's own settings.
@@ -461,7 +456,7 @@ final class AgentModel: ObservableObject {
 
     /// A prompt from Main: started now or after the current turn, or refused while a permission prompt waits.
     func deliver(fromMain text: String) -> AgentInbox.Decision {
-        let decision = AgentInbox.decide(busy: busy || routing != nil, waitingForPermission: waitingForPermission, queued: queued.count)
+        let decision = AgentInbox.decide(busy: busy, waitingForPermission: waitingForPermission, queued: queued.count)
         switch decision {
         case .start:
             if !start(AgentInbox.prompt(text)) { return .reject(problem ?? AgentFolders.missingMessage(folder)) }
@@ -483,34 +478,13 @@ final class AgentModel: ObservableObject {
         workMap.prompt(model: model, at: Date())
         let prompt = AgentLogic.expandMentions(text, cwd: folder) { FileManager.default.fileExists(atPath: $0) }
         busy = true
-        let auto = model == AgentLogic.auto, chosen = model, previous = lastModel, cwd = folder
         let system = systemPrompt, allowedTools = assistant.map { Assistants.allowedTools($0.role) }, delegateFrom = isMain ? workspace : nil
-        let signals = AgentLogic.RouteSignals(mentions: AgentLogic.mentions(in: text).count, isReview: prURL != nil,
-                                              turns: items.filter { if case .user = $0.kind { true } else { false } }.count - 1)
-        routing = Task { @MainActor [weak self] in
-            let picked = auto ? await AgentLogic.route(prompt: text, signals: signals, previous: previous, ask: Self.classify) : chosen
-            guard let self, !Task.isCancelled else { return }
-            routing = nil
-            lastModel = picked
-            workMap.use(model: picked)
-            turnIsAuto = auto
-            client.send(.prompt(text: prompt, cwd: cwd, sessionID: sessionID, model: picked,
-                                appendSystemPrompt: system, mode: permissionMode, chrome: chrome,
-                                fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords), allowedTools: allowedTools,
-                                delegateFrom: delegateFrom))
-        }
+        lastModel = model
+        client.send(.prompt(text: prompt, cwd: folder, sessionID: sessionID, model: model,
+                            appendSystemPrompt: system, mode: permissionMode, chrome: chrome,
+                            fork: ClaudeImport.shouldFork(sessionID, records: Self.importRecords), allowedTools: allowedTools,
+                            delegateFrom: delegateFrom))
         return true
-    }
-
-    /// The built-in model, or Ollama when testing with it; Auto runs on Sonnet when neither answers.
-    @Sendable nonisolated static func classify(system: String, user: String) async throws -> String {
-        if !OllamaSummarizer.isForced(), LocalLLM.isAvailable {
-            return try await LocalLLM.shared.generate(system: system, prompt: user, schema: AgentLogic.routeSchema, maxTokens: 32,
-                                                      temperature: 0, urgent: true).text
-        }
-        guard OllamaSummarizer.isAllowed() else { throw LocalLLMError.notInstalled }
-        return try await OllamaSummarizer.chat(system: system, prompt: user, schema: AgentLogic.routeSchema, temperature: 0,
-                                               keepAlive: "10m", timeout: AgentLogic.routeTimeout)
     }
 
     /// `always` first saves the rules the card offers, so this and later calls of every agent that match them run without asking.
@@ -522,13 +496,6 @@ final class AgentModel: ObservableObject {
     }
 
     func stop() {
-        if let routing {
-            routing.cancel()
-            self.routing = nil
-            busy = false
-            workMap.finish(at: Date())
-            return
-        }
         client?.send(.interrupt)
     }
 
@@ -614,7 +581,7 @@ final class AgentModel: ObservableObject {
             event = .permissionRequest(id: id, tool: tool, summary: summary, detail: detail, offer: [rule])
         }
         if case .chrome(let problem) = event { return chromeProblem = chrome ? problem : nil }
-        if let session = AgentLogic.apply(event, to: &items, auto: turnIsAuto) { adopt(session) }
+        if let session = AgentLogic.apply(event, to: &items) { adopt(session) }
         if case .idle = event { finishTurn() }
     }
 

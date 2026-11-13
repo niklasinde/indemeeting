@@ -7,7 +7,6 @@ import Foundation
 /// models from elsewhere.
 enum LocalLLMCheck {
     static let flag = "--check-local-llm"
-    static let routePrompt = "Refactor the notch layout across all panels and fix the misalignment bug"
     static let sampleTranscript = [
         "[00:00] Anna: Okay, let's go through the release. The build for Friday is ready apart from the login bug.",
         "[00:12] Johan: I can fix the login bug tomorrow, it is the token refresh that fails after an hour.",
@@ -37,17 +36,6 @@ enum LocalLLMCheck {
         print("Model: \(model.name) at \(model.url().path)")
         let audio = PhoneCommandLine.value("--audio", in: arguments).map { URL(fileURLWithPath: $0) }
         if let audio { try await transcribe(audio, when: "before") }
-
-        let started = Date()
-        let route = try await LocalLLM.shared.generate(system: AgentLogic.routeSystem, prompt: AgentLogic.routeUser(
-            prompt: routePrompt, signals: .init()), schema: AgentLogic.routeSchema, maxTokens: 32, temperature: 0, urgent: true)
-        let load = Date().timeIntervalSince(started) - route.promptSeconds - route.generateSeconds
-        print(String(format: "Load: %.1f s", load))
-        print("Route: \(route.text) -> \(AgentLogic.routeTier(fromAnswer: route.text) ?? "none")")
-        report(route)
-        let warm = Date()
-        let picked = await AgentLogic.route(prompt: routePrompt, signals: .init(), previous: nil, ask: AgentModel.classify)
-        print(String(format: "Auto picks %@ in %.2f s, warm", picked, Date().timeIntervalSince(warm)))
 
         let language = PhoneCommandLine.value("--language", in: arguments).flatMap(MeetingLanguage.init) ?? .english
         let lines = try PhoneCommandLine.value("--transcript", in: arguments)

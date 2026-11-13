@@ -57,15 +57,6 @@ final class LocalLLM: @unchecked Sendable {
         } onCancel: { stop.set() }
     }
 
-    /// Loads the model ahead of a request that needs a quick answer.
-    func prepare() {
-        queue.async {
-            guard LocalLLM.isAvailable else { return }
-            try? self.load()
-            self.scheduleUnload()
-        }
-    }
-
     /// Lets the model go. `wait` stops a running request and returns once it is freed, as Metal needs before the
     /// process exits.
     func unload(wait: Bool = false) {

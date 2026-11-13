@@ -81,9 +81,10 @@ let localLLMTests: [(name: String, run: () throws -> Void)] = [
     }),
 
     ("a JSON schema becomes a grammar the model cannot leave", {
-        check(LocalLLMLogic.grammar(schema: AgentLogic.routeSchema).hasPrefix(
+        let tiers: [String: Any] = ["type": "object", "properties": ["model": ["type": "string", "enum": ["haiku", "sonnet", "opus"]]], "required": ["model"]]
+        check(LocalLLMLogic.grammar(schema: tiers).hasPrefix(
             #"root ::= "{" ws "\"model\"" ws ":" ws root-model "}" ws"# + "\n" + #"root-model ::= ("\"haiku\"" | "\"sonnet\"" | "\"opus\"") ws"#),
-              LocalLLMLogic.grammar(schema: AgentLogic.routeSchema))
+              LocalLLMLogic.grammar(schema: tiers))
         let summary = LocalLLMLogic.grammar(schema: ClaudeSummarizer.schema)
         let rules = Dictionary(summary.split(separator: "\n").map { line -> (String, String) in
             let parts = line.components(separatedBy: " ::= ")

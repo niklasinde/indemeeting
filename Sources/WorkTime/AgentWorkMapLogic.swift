@@ -58,11 +58,13 @@ struct WorkMap: Equatable {
 
     var isEmpty: Bool { events.isEmpty }
 
-    var modelLabel: String { model.map { AgentLogic.modelName($0).lowercased() } ?? "model" }
+    /// The model of the last turn, else the one picked for the next.
+    func modelLabel(selected: String = AgentLogic.defaultModel) -> String { AgentLogic.modelName(model ?? selected).lowercased() }
 
-    /// `Model: opus 5.5 · step 4 · context 10%`
-    var status: String {
-        (["Model: \(modelLabel)", "step \(step)"] + [contextText.map { "context \($0)" }].compactMap { $0 }).joined(separator: " \u{00B7} ")
+    /// `Model: opus 5.5 · step 4 · context 10%`, or `Model: sonnet 5.5 · no turns yet`.
+    func status(selected: String = AgentLogic.defaultModel) -> String {
+        (["Model: \(modelLabel(selected: selected))", step == 0 ? "no turns yet" : "step \(step)"] + [contextText.map { "context \($0)" }])
+            .compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
     var contextText: String? {
@@ -80,8 +82,8 @@ struct WorkMap: Equatable {
     // MARK: Events
 
     /// The user's prompt, after which the model starts thinking.
-    mutating func prompt(model: String?, at now: Date) {
-        if let model, model != AgentLogic.auto { use(model: model) }
+    mutating func prompt(model: String, at now: Date) {
+        use(model: model)
         add(.you, text: "new message", started: now, ended: now)
         startStep(at: now)
     }
@@ -156,7 +158,7 @@ struct WorkMap: Equatable {
     /// What a row says: a model step names the model as it is known now.
     func text(_ event: WorkMapEvent) -> String {
         guard event.category == .model, event.id.hasPrefix("step-") else { return event.text }
-        return "\(modelLabel) \u{00B7} step \(event.id.dropFirst("step-".count))"
+        return "\(modelLabel()) \u{00B7} step \(event.id.dropFirst("step-".count))"
     }
 
     // MARK: Classification

@@ -81,18 +81,20 @@ let agentWorkMapTests: [(name: String, run: () throws -> Void)] = [
         map.receive(["type": "idle"], cwd: "/repo", at: at(4.1))
         check(map.active == nil && map.events.count == 4, "nothing runs after the turn")
         check(map.counts == [.you: 1, .model: 2, .network: 1], "\(map.counts)")
-        check(map.status == "Model: opus 5.5 \u{00B7} step 2 \u{00B7} context 10%", map.status)
+        check(map.status() == "Model: opus 5.5 \u{00B7} step 2 \u{00B7} context 10%", map.status())
     }),
     ("work map: parallel calls keep the model waiting until the last result", {
         var map = WorkMap()
-        map.prompt(model: nil, at: at(0))
+        map.prompt(model: "claude-sonnet-5-5", at: at(0))
         map.receive(use("a", "Read", ["file_path": "/repo/a.swift"]), cwd: "/repo", at: at(1))
         map.receive(use("b", "Read", ["file_path": "/repo/b.swift"]), cwd: "/repo", at: at(1))
         map.receive(["type": "tool_result", "id": "a"], cwd: "/repo", at: at(2))
         check(map.step == 1 && map.active == .files, "one still runs")
         map.receive(["type": "tool_result", "id": "b"], cwd: "/repo", at: at(3))
         check(map.step == 2 && map.counts[.files] == 2, "both done")
-        check(map.status == "Model: model \u{00B7} step 2", map.status)
+        check(map.status() == "Model: sonnet 5.5 \u{00B7} step 2", map.status())
+        check(WorkMap().status() == "Model: sonnet 5.5 \u{00B7} no turns yet" && WorkMap().modelLabel() == "sonnet 5.5", "idle shows the default")
+        check(WorkMap().status(selected: "claude-haiku-5-5") == "Model: haiku 5.5 \u{00B7} no turns yet", "idle follows the picker")
     }),
     ("work map: a stopped turn drops the step that never answered and ends what ran", {
         var map = WorkMap()
@@ -100,7 +102,7 @@ let agentWorkMapTests: [(name: String, run: () throws -> Void)] = [
         map.receive(use("a", "Bash", ["command": "sleep 60"]), cwd: "/repo", at: at(1))
         map.finish(at: at(5))
         check(map.events.last?.durationText == "4.0 s" && map.active == nil, "the call ends with the turn")
-        map.prompt(model: nil, at: at(10))
+        map.prompt(model: "claude-sonnet-5-5", at: at(10))
         map.finish(at: at(11))
         check(map.step == 1 && map.counts[.model] == 1 && map.events.last?.category == .you, "\(map.step) \(map.counts)")
     }),
